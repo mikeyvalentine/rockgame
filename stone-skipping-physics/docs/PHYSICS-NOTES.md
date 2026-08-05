@@ -544,6 +544,13 @@ Anyone picking this up should attack the attitude dynamics during the surface-at
 phase, and should not bother tuning dissipation, `pitchMomentScale`, or the assist
 knobs — all three were tried and all three trade one symptom for another.
 
+**Update — `env.balanceRetention` (§13) closes this in the game profiles.** The advice
+above held: the fix was not any of those three knobs. It was correcting the attitude
+walk directly, once per contact, at the right instant. Runs on the game profiles now
+end at ~0.3 m/s instead of 11 m/s — they finally die of energy, as §11.4 said they
+should. `documentary` is deliberately left as described above, so this section still
+documents that profile accurately.
+
 
 ---
 
@@ -600,3 +607,134 @@ Everything below is now locked by permanent regression tests.
   near the threshold — but players will discover 10–15° as the meta.
 - `comOffset` shifts the centre of mass without the parallel-axis inertia correction;
   fine at the default 0 and small offsets.
+
+---
+
+## 13. Balance — closing the attitude gap (`env.balanceRetention`)
+
+§11.4 pinned the model's biggest defect precisely: runs end because the stone's
+attitude walks out of the skipping window, **not** because it runs out of energy.
+Measured at run end: 11 m/s remaining against a 2.6 m/s rebound floor, attack angle
+collapsed to 0.6°, bank at −24°. This section is the fix, and the player-facing stat
+built on it (`docs/02-gathering.md` calls it **Balance**).
+
+It is an admitted divergence from the literature, confined to the game profiles.
+`documentary` has `balanceRetention: 0` and is unchanged.
+
+### 13.1 Why the existing attitude hold could not just be turned up
+
+`attitudeAssist` is a per-substep *rate*, and its correction fraction is clamped
+(`clamp(attitudeAssist * authority * immersedFrac * dt, 0, 0.5)`). Past a certain gain
+every substep pins at that clamp, so the "nudge" becomes a snap fighting the contact
+physics it lives inside. Swept on the arcade profile, Steiner preset:
+
+| `attitudeAssist` | 20 | 32 | 100 | 500 | 2000 | 10000 |
+|---|---|---|---|---|---|---|
+| median skips | 39 | 38 | 35 | 53 | 57 | 47 (range 33–57) |
+
+Non-monotone, and erratic at the top. Not a knob that can be dialled to the answer.
+
+### 13.2 Timing is the mechanism
+
+The same rigid re-aim, applied **once per contact** instead of continuously, and at
+the moment the stone *touches* rather than when it *leaves*:
+
+| applied at | blend 0.3 | blend 1.0 |
+|---|---|---|
+| liftoff | 60 skips | 38 skips |
+| **contact start** | **83 skips** | 46 skips |
+
+Correcting at liftoff trims the stone against a velocity vector that is heading *up*;
+what governs the next bounce is its attitude at contact, heading *down*. Moving the
+same correction to contact start is worth ~23 skips on its own.
+
+### 13.3 Calibration
+
+Blend sweep (arcade), median of 25 jittered throws:
+
+```
+blend    0    0.05  0.10  0.15  0.20  0.25  0.30  0.35  0.40  0.45  0.50
+steiner  38   44    63    67    72    78    83    86    83    78    75
+truscott 40   51    68    75    78    84    89    92    86    83    80
+```
+
+Monotone to 0.35, falling after — so `BALANCE_MAX_BLEND = 0.35` and the 0..1 stat maps
+onto [0, 0.35]. The fall-off is not a bug to tune out: an over-held stone stops being
+*able* to end its run, skims past the run-end logic and reads as refusing to sink (the
+same failure the attitude hold has if left running after `runEnded`). Gameplay cannot
+reach that region.
+
+**The peak lands on the independent analytic ceiling.** Decaying Steiner's real
+19.2 m/s to the 2.6 m/s floor at the model's own 4.6% per-bounce loss allows ~85
+bounces; the measured peak is 86. At 41.6 m/s the arithmetic gives ~118 and the model
+reaches 92 median (top of range 152). So this closes the attitude gap rather than
+inflating past it — the remaining ceiling is energy, which is the honest one.
+
+### 13.4 Guard rails
+
+- **Viability gate.** Balance is withheld entirely below `BALANCE_AUTHORITY_KNEE`
+  (0.25 of gyroscopic authority). Without it an unspun stone collected 80% of its
+  rock's balance and scored 1 hop where it must score 0 — caught by the suite's
+  "no-spin still fails" check. The knee sits below the weakest playable throw
+  (`casual`, 12 rev/s → authority ~0.27).
+- **Rigid re-aim.** Orientation, ω and L rotate by the same quaternion, so |L| is
+  preserved, the nutation cone (the visible wobble) survives exactly, and no energy is
+  injected.
+- **Hemisphere targeting**, inherited from the attitude hold — a clockwise stone is
+  not asked to flip its spin axis 180°. Mirror symmetry stays exact: spin ±28 gives
+  drift ∓2.988 m.
+- **Determinism** unaffected: identical checksums at 240/144/60/30 Hz and under
+  stutter.
+
+### 13.5 Resulting envelope
+
+Steiner preset (19.2 m/s), 25-run ensemble median:
+
+| profile | `balanceRetention` | skips | distance |
+|---|---|---|---|
+| documentary | 0 | 13 [11–15] | 33.8 m |
+| game | 0.5 | 53 [46–62] | 29.9 m |
+| arcade | 0.8 | 83 [59–113] | 36.3 m |
+
+Skill curve intact on the game profile: casual 5, decent 12, strong 53, no-spin 0,
+nose-down 0. Balance raises the ceiling, not the floor.
+
+### 13.6 Convergence cost — read this before scoring on skips
+
+Balance buys skips at a measurable cost in **numerical convergence**. Substep sweep
+(1/2000 → 1/25000), game profile, Steiner throw, spread across the four refinements:
+
+| `balanceRetention` | taps | cleanHops | runDistance |
+|---|---|---|---|
+| 0.00 | 27 (99%) | **4 (25%)** | 1.9 m |
+| 0.25 | 38 (102%) | 14 (67%) | 1.4 m |
+| 0.50 | 52 (115%) | 12 (62%) | 1.2 m |
+| 0.75 | 52 (134%) | 17 (81%) | 1.7 m |
+| 1.00 | 47 (107%) | 9 (49%) | **1.0 m** |
+| *documentary (ref)* | *6 (38%)* | *5 (40%)* | *1.4 m* |
+
+**`cleanHops` stops being a converged quantity once Balance is on** — spread goes from
+4 at `balanceRetention: 0` to 12–17 above it. The suite's §9b convergence check still
+passes only because it runs the *documentary* profile, which Balance does not touch;
+it is not evidence that the game profile converges.
+
+The cause is structural, not a bug to tune out: Balance works by extending runs deep
+into the pitty-pat tail, and that tail is made of marginal grazes where a sub-millimetre
+numerical difference flips whether a contact registers. More tail ⇒ more coin-flips.
+
+**`runDistance` is unaffected — and is the only metric that stays converged at every
+Balance value** (≤1.9 m spread throughout, and it actually *improves* to 1.0 m at
+max Balance).
+
+Consequences to accept deliberately:
+
+- Determinism is **not** affected. Fixed build + fixed solver settings ⇒ identical
+  result, checksums equal at 240/144/60/30 Hz. The daily stays fair.
+- What is *not* stable is the number's meaning **across solver changes**: refine the
+  substep and every stored skip count shifts. Skip counts are therefore not comparable
+  between builds, and an all-time leaderboard spanning a solver change is comparing
+  different games.
+- `docs/05-scoring.md` currently makes **skips the ranked score and distance the
+  tiebreak**. This measurement is an argument for at least storing distance alongside
+  every score, and possibly for inverting that priority. Flagged as a design decision,
+  not changed here.

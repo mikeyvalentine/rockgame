@@ -39,6 +39,46 @@ A rock's mass and size affect its skipping physics **and** how hard it is to aim
 | Roughness | Drift **jitter** — feels unstable, twitchy |
 | Shape irregularity | Drift **bias** — pulls one direction; the player learns its lean |
 | Size / diameter | Release window width |
+| **Balance** | *No* control effect — acts after release. See below. |
+
+### Balance — hidden, and the only stat that acts after release
+
+Every property above is a **handling** property: it shapes the pre-release aiming
+drift. **Balance is the exception** — it does nothing to your aim and everything to
+what happens once the stone is gone.
+
+A stone's attitude (which way its face is pointed) walks a little with every bounce,
+by gyroscopic precession. Left alone it eventually walks out of the window where
+skipping is possible, and the run dies **with most of its speed still on the stone** —
+measured: 11 m/s against a 2.6 m/s floor. That, not running out of energy, is what
+ends most runs. Balance is how well a stone resists that walk.
+
+- **Hidden.** Never shown as a bar, unlike the properties above. The player infers it
+  from the rock's look — a stone that reads *true* holds its line; one that reads
+  *warped* gives up early — and from throwing it.
+- **Mostly the stone, a little the throw.** The rock supplies the value; a clean,
+  coherent release collects all of it and a sloppy one keeps most (not all) of it. An
+  **unspun stone gets none of it** — no rock is well-balanced enough to rescue a throw
+  with no gyroscopic authority, and the skill curve depends on that staying true.
+- **This is the tuned exception, spent deliberately.** `04-physics.md` permits going
+  "slightly above and beyond what's possible in real life"; Balance is where that
+  budget goes. The `documentary` profile does not have it.
+
+> **Naming:** "Balance" is the stat; **true** / **warped** is how it's described in
+> the fiction and in inspection copy. Do not call it *drift* — that word already means
+> the pre-release aiming wobble in the table above, which is a different system.
+
+**What it's worth** (game profile, Steiner-preset throw, 25-run ensemble median):
+
+| Rock | Skips |
+| --- | --- |
+| Warped (0.0) | 29 |
+| Average (0.5) | ~53 |
+| True (1.0) | 58 |
+
+Balance is a *ceiling raiser, not a floor raiser* — it can't make a bad throw good
+(casual stays at 5 skips, unspun stays at 0), it only lets a good throw run out its
+full length instead of dying early.
 
 ### Handling difficulty is TUNED, not simulated
 
@@ -75,6 +115,8 @@ Deterministic, correctable and legible reads as **craft**. Random, outpacing and
 
 Hand-tuned values, not derived. Record them here as they're set.
 
+- Balance → `env.balanceRetention` mapping per rock quality band — `TBD` (solver side
+  is calibrated: the 0..1 stat maps onto a 0..0.35 correction blend, peak measured)
 - Drift magnitude multiplier, per mass band — `TBD`
 - Drift frequency / oscillation rate — `TBD`
 - Drift bias strength from shape irregularity — `TBD`

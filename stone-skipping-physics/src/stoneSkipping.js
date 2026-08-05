@@ -116,6 +116,28 @@ const ZERO = Object.freeze({ x: 0, y: 0, z: 0 })
 const DEG = Math.PI / 180
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v)
 
+/**
+ * Fraction of the trim error `env.balanceRetention: 1` corrects at each contact.
+ *
+ * Measured peak, not a taste value. Sweeping the blend on the arcade profile:
+ *
+ *   blend    0    0.05  0.10  0.15  0.20  0.25  0.30  0.35  0.40  0.45  0.50
+ *   steiner  38   44    63    67    72    78    83    86    83    78    75
+ *   truscott 40   51    68    75    78    84    89    92    86    83    80
+ *
+ * Monotone up to 0.35 and falling after, for the reason given on `balanceRetention`:
+ * an over-held stone stops being able to end its run. The stat maps onto [0, 0.35]
+ * so gameplay cannot reach the falling side.
+ */
+const BALANCE_MAX_BLEND = 0.35
+
+/**
+ * Gyroscopic authority below which Balance is withheld entirely (see `_applyBalance`).
+ * Set under the weakest playable throw — the `casual` preset's 12 rev/s works out to
+ * ~0.27 — so it only ever zeroes stones that had no chance of skipping regardless.
+ */
+const BALANCE_AUTHORITY_KNEE = 0.25
+
 /* ------------------------------------------------------------------ *
  * Defaults
  * ------------------------------------------------------------------ */
@@ -284,6 +306,47 @@ export const DEFAULT_ENV = {
   attitudeAssist: 0,
   attitudeAssistRefSpin: 40,   // rev/s at which the assist reaches full strength
   /**
+   * BALANCE — how well the stone holds its trim across a whole run. 0..1, 0 = off.
+   *
+   * The player-facing stat is a hidden property of the rock (docs/02-gathering.md);
+   * this is the physics parameter it drives. Unlike `attitudeAssist`, which is a
+   * continuous per-substep RATE applied for as long as the stone is wet, this fires
+   * ONCE per contact, at the instant the stone first touches, and re-aims angular
+   * momentum a fixed FRACTION of the way toward the launch trim.
+   *
+   * Why once-at-contact rather than a stronger `attitudeAssist`:
+   *
+   *   - As a rate it saturates. `frac` is clamped to 0.5/substep, so past a certain
+   *     gain every substep pins at the clamp and the "nudge" becomes a snap that
+   *     fights the contact physics it is embedded in. Measured: skips peak near
+   *     attitudeAssist 500-2000 and then go erratic (median falls, range widens to
+   *     16-89). It is not a knob that can simply be turned up.
+   *   - Timing is the whole trick. Correcting at LIFTOFF aims the stone relative to a
+   *     velocity that is heading UP; what governs the next bounce is attitude at
+   *     CONTACT, heading down. Same correction, moved to contact start: median skips
+   *     on the Steiner preset go 60 -> 83.
+   *
+   * Effect at max (arcade, Steiner's real 19.2 m/s throw): median ~86 skips, and
+   * runs end at ~0.3 m/s instead of ~11 m/s — i.e. the stone finally dies of ENERGY,
+   * which is the documented goal (PHYSICS-NOTES §11.4: "they die of attitude, not
+   * energy"). That ~85 is also the independent velocity-limited ceiling implied by
+   * the model's own 4.6% per-bounce loss decaying 19.2 m/s to the 2.6 m/s floor, so
+   * this parameter closes the attitude gap rather than papering over it.
+   *
+   * Deliberately NOT monotonic past `BALANCE_MAX_BLEND`: beyond ~0.35 the stone is
+   * held so rigidly it stops being able to die, skims past the run-end logic and
+   * scores WORSE (and reads as "refusing to sink" — the same failure the attitude
+   * hold has when left running after `runEnded`). The stat is therefore mapped onto
+   * [0, BALANCE_MAX_BLEND] and cannot be dialled into that region from gameplay.
+   */
+  balanceRetention: 0,
+  /**
+   * How much of `balanceRetention` is withheld from a sloppy throw. The rock is the
+   * main driver by design ("mostly the stone, a little the throw"), so a maximally
+   * incoherent release still keeps 1 - this fraction of its stone's balance.
+   */
+  balanceThrowInfluence: 0.2,
+  /**
    * Spray-root loading. On a planing surface the pressure is NOT uniform over the
    * wetted patch — it spikes at the spray root (the just-wetted forward boundary)
    * and falls off toward the trailing edge (Wagner / Savitsky planing theory; it is
@@ -421,12 +484,22 @@ export const PHYSICS_PROFILES = {
    * that is a physics-envelope task (rebound/energy retention), not an assist
    * knob — flagged in docs/audit-2026-08-05.md.
    */
-  /** Restrained champion play. */
+  /**
+   * Restrained champion play.
+   *
+   * `balanceRetention` here is the value for an AVERAGE rock — the game layer
+   * overwrites it per stone from the rock's hidden Balance stat, so a well-balanced
+   * find reads above this and a warped one below. `documentary` leaves it at 0: the
+   * stat is an admitted divergence from the literature (docs/04-physics.md's
+   * "slightly above and beyond what's possible in real life"), so the honest profile
+   * must not have it.
+   */
   game: {
     hopSpeedFraction: 0.05,
     attitudeAssist: 20,
     attitudeAssistRefSpin: 40,
     bounceSpeedTax: 0.02,
+    balanceRetention: 0.5,
   },
   /** Showpiece. */
   arcade: {
@@ -434,6 +507,7 @@ export const PHYSICS_PROFILES = {
     attitudeAssist: 32,
     attitudeAssistRefSpin: 40,
     bounceSpeedTax: 0,
+    balanceRetention: 0.8,
   },
 }
 
@@ -1047,6 +1121,64 @@ export class StoneSkipSim {
   }
 
   /** I_world * omega, with I_world = R I_body R^T. */
+  /**
+   * BALANCE — re-aim angular momentum a fixed fraction toward the launch trim, once,
+   * at the moment of contact. See `env.balanceRetention`.
+   *
+   * Geometry is deliberately identical to the attitude hold's: target `L` rather than
+   * the instantaneous face normal (so the nutation cone, i.e. the visible wobble, is
+   * preserved exactly), and target the hemisphere `L` already occupies (so a
+   * clockwise stone is not asked to flip its spin axis 180 degrees — the handedness
+   * defect fixed in the v0.8.0 audit). Orientation, omega and L are rotated by the
+   * SAME quaternion, which makes this a rigid re-aim: |L| is unchanged, no energy is
+   * injected, and the stone still decays and still dies.
+   */
+  _applyBalance() {
+    const env = this.env
+    if (!(env.balanceRetention > 0) || this.runEnded || !this.throwParams) return
+    const st = this.state
+    const hMag = Math.hypot(st.velocity.x, st.velocity.z)
+    // Below this there is no meaningful heading to trim against, and the stone is
+    // settling rather than skipping.
+    if (hMag <= 0.5) return
+
+    const faceNormalWorld = Q.rotate(st.orientation, { x: 0, y: 1, z: 0 })
+    const authority = this._assistAuthority(faceNormalWorld)
+    // Hard viability gate FIRST. No balance is a rock stat good enough to rescue a
+    // stone with no gyroscopic authority: an unspun stone must still tumble and score
+    // zero, or the skill curve the assists exist to protect is gone. Caught by the
+    // suite's "no-spin still fails" check — a plain (1 - influence*(1-authority))
+    // factor floors at 0.8 and handed an unspun stone most of its rock's balance.
+    // The knee sits below the weakest real throw (12 rev/s -> authority ~0.27), so
+    // this only ever zeroes stones that were never going to skip anyway.
+    const gate = clamp(authority / BALANCE_AUTHORITY_KNEE, 0, 1)
+    if (gate <= 0) return
+    // Then, within the viable band: mostly the stone, a little the throw.
+    const throwFactor = gate * (1 - env.balanceThrowInfluence * (1 - authority))
+    const blend = clamp(env.balanceRetention, 0, 1) * BALANCE_MAX_BLEND * throwFactor
+    if (blend <= 0) return
+
+    const hHat = { x: st.velocity.x / hMag, y: 0, z: st.velocity.z / hMag }
+    const trim = (this.throwParams.attackAngleDeg ?? 20) * DEG
+    const nDes = V.normalize({
+      x: -hHat.x * Math.sin(trim),
+      y: Math.cos(trim),
+      z: -hHat.z * Math.sin(trim),
+    })
+    const Lmag = V.length(st.angularMomentum)
+    if (Lmag <= 1e-9) return
+    const Ldir = V.scale(st.angularMomentum, 1 / Lmag)
+    const tgt = V.dot(Ldir, nDes) >= 0 ? nDes : V.scale(nDes, -1)
+    const axis = V.cross(Ldir, tgt)
+    const sinA = V.length(axis)
+    if (sinA <= 1e-6) return
+    const angle = Math.atan2(sinA, clamp(V.dot(Ldir, tgt), -1, 1))
+    const corr = Q.fromAxisAngle(V.scale(axis, 1 / sinA), angle * blend)
+    st.orientation = Q.normalize(Q.mul(corr, st.orientation))
+    st.angularVelocity = Q.rotate(corr, st.angularVelocity)
+    st.angularMomentum = Q.rotate(corr, st.angularMomentum)
+  }
+
   _inertiaTimesOmega(q, omega) {
     const ob = Q.rotateInverse(q, omega)
     const Ib = this.inertiaBody
@@ -1511,6 +1643,11 @@ export class StoneSkipSim {
 
     // --- contact bookkeeping & events ---
     if (nowWet && wasAirborne) {
+      // BALANCE. Fires here, before the diagnostics snapshot below, so `attackDegIn`
+      // records the attitude the contact is actually resolved with rather than the
+      // pre-correction one. See `env.balanceRetention` for why this is a one-shot at
+      // contact start instead of a stronger `attitudeAssist` rate.
+      this._applyBalance()
       const d = this.getDiagnostics()
       this._contact = {
         index: this.contacts.length,
