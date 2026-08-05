@@ -54,8 +54,14 @@ export const STONE_STAT_TARGETS = {
   mass: { label: "mass", ideal: 170, tolerance: 150, unit: "g" },
   size: { label: "size", ideal: 8.5, tolerance: 4.5, unit: "cm" },
   flatness: { label: "flatness", ideal: 0.075, tolerance: 0.14, unit: "" },
-  roundness: { label: "roundness", ideal: 1.0, tolerance: 0.42, unit: "" },
 };
+
+/**
+ * How much of the flatness score an entirely oblong face can take away, and the
+ * b/a shortfall at which that penalty is fully paid.
+ */
+const FLATNESS_OBLONG_WEIGHT = 0.45;
+const FLATNESS_OBLONG_TOLERANCE = 0.45;
 
 /**
  * Relative weights in the overall score. Flatness leads because a stone that is not
@@ -65,7 +71,33 @@ export const STONE_STAT_TARGETS = {
  * multiplier, but it is not a rated stat: it is close to invisible on a real stone
  * and its effect is a fraction of a percent of a run.
  */
-const STAT_WEIGHTS = { flatness: 0.34, roundness: 0.2, balance: 0.26, size: 0.2 };
+const STAT_WEIGHTS = { flatness: 0.45, balance: 0.3, size: 0.25 };
+
+/**
+ * FLATNESS, 0..1 — one stat for "how much like a skipping disc is this".
+ *
+ * Flatness and face-shape used to be two stats, and that was wrong in a way worth
+ * recording: "roundness" meant the face ellipse ratio b/a, so a **sphere scored
+ * 5/5** on it — a ball rated ideal. The word is ambiguous. A circular *face* is
+ * good; a *round solid* is the worst possible skipping stone. One stat now measures
+ * both, and a ball reads 0/5 as it should.
+ *
+ * Thinness is the dominant term (`c/a` against the ideal 0.075), scaled down for an
+ * oblong face, which meets the water differently every half turn instead of
+ * presenting the same profile each rotation.
+ *
+ * Note `b/a` also appears inside `balanceFromMetrics` for that same physical reason,
+ * so an oblong stone is marked down twice — once for being a poor disc, once for the
+ * forcing that causes. That is deliberate but it is a real overlap, which is why the
+ * penalty here is partial rather than a gate.
+ */
+export function flatnessScore(metrics) {
+  const [a, b, c] = metrics.sortedCm; // a >= b >= c
+  if (!(a > 0)) return 0;
+  const thin = scoreAgainst(c / a, STONE_STAT_TARGETS.flatness);
+  const oblong = clamp01((1 - b / a) / FLATNESS_OBLONG_TOLERANCE);
+  return clamp01(thin * (1 - FLATNESS_OBLONG_WEIGHT * oblong));
+}
 
 /** 0..1 for one stat: 1 at the ideal, falling to 0 at `tolerance` away. */
 function scoreAgainst(value, target) {
@@ -113,8 +145,7 @@ export function skipRating(metrics) {
   const stats = {
     mass: scoreAgainst(metrics.massGrams, STONE_STAT_TARGETS.mass),
     size: scoreAgainst(a, STONE_STAT_TARGETS.size),
-    flatness: scoreAgainst(flatness, STONE_STAT_TARGETS.flatness),
-    roundness: scoreAgainst(roundness, STONE_STAT_TARGETS.roundness),
+    flatness: flatnessScore(metrics),
     // Balance is already a divergence-style score: it peaks for a stone whose mass
     // and radius are in the right relationship, and falls off both ways. Renormalised
     // against what a stone can actually reach (the raw curve saturates around 0.7).
@@ -127,7 +158,6 @@ export function skipRating(metrics) {
   // Uncommon.
   const shape =
     STAT_WEIGHTS.flatness * stats.flatness +
-    STAT_WEIGHTS.roundness * stats.roundness +
     STAT_WEIGHTS.balance * stats.balance +
     STAT_WEIGHTS.size * stats.size;
   const score = clamp01(shape * stats.mass);
@@ -145,10 +175,11 @@ export function skipRating(metrics) {
     verdict = metrics.massGrams > STONE_STAT_TARGETS.mass.ideal
       ? "Too heavy to throw properly." : "Too light — the wind will take it.";
   } else if (worst === "flatness") {
-    verdict = flatness > STONE_STAT_TARGETS.flatness.ideal
-      ? "Too thick — it'll plunge." : "Thin as a wafer, it won't hold a line.";
-  } else if (worst === "roundness") verdict = "Too oblong — it'll wobble every turn.";
-  else if (worst === "balance") verdict = "Won't hold its attitude. Dies early.";
+    // Name whichever way it failed to be a disc — too thick, too oblong, or too thin.
+    if (roundness < 0.6) verdict = "Too oblong — it'll wobble every turn.";
+    else if (flatness > STONE_STAT_TARGETS.flatness.ideal) verdict = "Too thick — it'll plunge.";
+    else verdict = "Thin as a wafer, it won't hold a line.";
+  } else if (worst === "balance") verdict = "Won't hold its attitude. Dies early.";
   else verdict = "Wrong size for the hand.";
 
   return { score, stats, pips, rarity: rarityFor(score), verdict, flatness, roundness };

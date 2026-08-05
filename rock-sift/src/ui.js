@@ -22,7 +22,6 @@ export function createHud() {
       mass: el("stat-mass"),
       size: el("stat-size"),
       flatness: el("stat-flatness"),
-      roundness: el("stat-roundness"),
       balance: el("stat-balance"),
     },
   };

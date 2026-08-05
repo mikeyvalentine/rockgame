@@ -26,9 +26,22 @@ would hold its attitude (balance 5/5) and is genuinely unthrowable (mass 0/5).
 | --- | --- | --- |
 | Mass | **170 g** | 100–200 g good band; the solver's validated default is 172 g |
 | Size | **8.5 cm** across | 5–10 cm; skimming championship caps entries at 76 mm |
-| Flatness | **0.075** (thickness ÷ longest face dim) | λ = R/d wants 5–10, and flatness = 1/(2λ) |
-| Roundness | **1.0** (circular face) | a round face meets the water identically every rotation |
+| Flatness | **0.075** (thickness ÷ longest dim), circular face | λ = R/d wants 5–10, and flatness = 1/(2λ) |
 | Balance | peaks at the right mass-to-radius | `PHYSICS-NOTES.md` §14 |
+
+### Flatness is one stat, and "round" is a trap
+
+Flatness and face-shape were briefly two stats. That was wrong: the second measured
+the face ellipse ratio, so **a sphere scored full marks on it** — a ball rated ideal.
+
+The word *round* means two opposite things here. A round **face** is good; a round
+**solid** is the worst skipping stone there is. One stat now covers both, measuring
+how much like a skipping disc the rock is:
+
+- **A ball is 0/5.** Thickness equal to width is as far from a disc as a rock gets.
+- **A flat circular stone is 5/5.**
+- **A flat oblong stone is middling** — genuinely flat, but it meets the water
+  differently every half turn instead of presenting the same profile each rotation.
 
 **Rarity is the weighted sum of those**, shown as a colour and a word — Common grey,
 Uncommon green, Rare blue, Epic purple, Legendary orange. The player never sees the
