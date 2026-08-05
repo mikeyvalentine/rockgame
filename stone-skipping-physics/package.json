@@ -9,11 +9,12 @@
     "./babylon": "./src/babylonAdapter.js"
   },
   "scripts": {
-    "test": "node test/headless-sweep.mjs && node test/api-audit.mjs",
+    "test": "node test/headless-sweep.mjs && node test/api-audit.mjs && node test/mesh-audit.mjs",
     "debug": "node test/debug-contact.mjs",
     "serve": "node tools/dev-server.mjs 5291",
     "test:physics": "node test/headless-sweep.mjs",
-    "test:api": "node test/api-audit.mjs"
+    "test:api": "node test/api-audit.mjs",
+    "test:mesh": "node test/mesh-audit.mjs"
   },
   "license": "MIT",
   "private": true

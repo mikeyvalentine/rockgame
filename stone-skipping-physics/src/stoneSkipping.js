@@ -29,6 +29,18 @@
  * (degrees only at the throw API boundary).
  */
 
+// The one import, and it keeps the package dependency-free: exact rigid-body
+// properties of a triangle mesh, for stones supplied as real geometry rather than as
+// an idealised disc. Re-exported so callers have a single entry point.
+import {
+  massProperties as meshMassProperties,
+  shapeDescriptors as meshShapeDescriptors,
+} from './meshMassProperties.js'
+
+export {
+  massProperties, principalAxes, shapeDescriptors, alignMeshToFaceAxis,
+} from './meshMassProperties.js'
+
 /* ------------------------------------------------------------------ *
  * Minimal vector / quaternion math (plain objects, no allocation-free
  * heroics — the panel loop uses scalars, which is where the cost is)
@@ -181,8 +193,23 @@ export const DEFAULT_STONE = {
   edgeRoundness: 0.5,     // 0 = sharp square rim (catches hard), 1 = fully rounded
   roughness: 1.0,         // multiplier on skin friction
   /** Fraction of the radius the centre of mass sits off-centre, in body XZ.
-   *  Real stones are never balanced; this is a big source of wobble. */
+   *  Real stones are never balanced; this is a big source of wobble.
+   *  Ignored when `mesh` is supplied — a mesh carries its own real offset. */
   comOffset: { x: 0, z: 0 },
+  /**
+   * OPTIONAL real geometry: `{ positions, indices }`, a closed triangle mesh in
+   * metres, in body axes (Y = the face normal the stone spins about).
+   *
+   * When present the stone stops being an idealised disc. Mass, centre of mass and
+   * the full inertia tensor are computed exactly from the mesh
+   * (`meshMassProperties.js`), and the hydrodynamic panels are built from its real
+   * surface, so the rock wobbles, catches and splashes as the shape it actually is.
+   * `radius`/`thickness`/`aspect` are then derived from the mesh for the terms that
+   * still need a scalar size, not read from the fields above.
+   *
+   * Costs a one-off mesh pass per stone (not per step), so set it at build time.
+   */
+  mesh: null,
 }
 
 /**
@@ -235,13 +262,24 @@ const BALANCE_ASPECT_WEIGHT = 0.35
  * paid for in the contact physics. Charging thickness again here would penalise one
  * flaw twice, and the second charge would be measurably false.
  */
-export function balanceFromStone(stone = {}) {
+export function balanceFromStone(stone = {}, meshShape = null) {
   const s = { ...DEFAULT_STONE, ...stone }
   const com = { ...DEFAULT_STONE.comOffset, ...(stone.comOffset || {}) }
-  const R = s.radius
-  if (!(R > 0)) return 0
-  const m = s.mass != null ? s.mass : s.density * Math.PI * R * R * s.aspect * s.thickness
-  if (!(m > 0)) return 0
+  let R = s.radius
+  let m = s.mass != null ? s.mass : s.density * Math.PI * R * R * s.aspect * s.thickness
+  let off = Math.hypot(com.x || 0, com.z || 0)
+  let oblong = 1 - s.aspect
+
+  // Real geometry wins over the authored disc fields. Measured values, not guesses:
+  // `lopsidedness` is the true centre-of-mass offset and `asymmetry` the true
+  // transverse-inertia imbalance, both read off the mesh.
+  if (meshShape && !meshShape.degenerate) {
+    R = Math.max(meshShape.extent.x, meshShape.extent.z) / 2
+    m = s.mass != null ? s.mass : meshShape.mass
+    off = meshShape.lopsidedness * BALANCE_COM_TOLERANCE
+    oblong = meshShape.asymmetry * BALANCE_ASPECT_TOLERANCE
+  }
+  if (!(R > 0) || !(m > 0)) return 0
 
   // Gyroscopic authority per unit disturbing torque. Saturating: doubling the mass of
   // an already-heavy stone helps less than doubling a light one, which is both the
@@ -250,14 +288,13 @@ export function balanceFromStone(stone = {}) {
   const gyro = mOverR / (mOverR + BALANCE_MR_REFERENCE)
 
   // The literal balance term — an off-centre centre of mass, exactly like an
-  // unbalanced wheel. `comOffset` is already a fraction of the radius.
-  const off = Math.hypot(com.x || 0, com.z || 0)
+  // unbalanced wheel.
   const comTerm = 1 - BALANCE_COM_WEIGHT * clamp(off / BALANCE_COM_TOLERANCE, 0, 1)
 
   // An oblong face presents a different wetted patch every half turn, so the stone is
   // forced at spin frequency instead of meeting the water the same way each time.
   const roundTerm =
-    1 - BALANCE_ASPECT_WEIGHT * clamp((1 - s.aspect) / BALANCE_ASPECT_TOLERANCE, 0, 1)
+    1 - BALANCE_ASPECT_WEIGHT * clamp(oblong / BALANCE_ASPECT_TOLERANCE, 0, 1)
 
   return clamp(gyro * comTerm * roundTerm, 0, 1)
 }
@@ -729,6 +766,122 @@ export const Outcome = {
  * estimate unbiased — that matters, because the whole pitching torque is a
  * centre-of-pressure offset.
  */
+/**
+ * Hydrodynamic panels from a real mesh surface.
+ *
+ * The disc builder below lays panels out analytically; this one takes them from the
+ * triangles the rock is actually made of, so a jagged rim really does catch, and a
+ * lopsided outline really does throw its spray to one side.
+ *
+ * Two things have to survive decimation, because the solver's physics rests on them:
+ *
+ *   1. **Total area**, which sets the pressure force. Merged panels sum their areas.
+ *   2. **Surface closure.** Buoyancy is not a special case in this solver — it falls
+ *      out of integrating hydrostatic pressure over a closed surface, which recovers
+ *      Archimedes exactly. A closed surface satisfies `sum(area * normal) = 0`, so
+ *      merging is done with AREA-WEIGHTED normal sums, which preserves that identity
+ *      to rounding. `meshPanelClosureError` reports it; the tests assert on it.
+ *
+ * Triangles are merged into buckets keyed by direction and position, so a coarse but
+ * faithful surface survives at a bounded panel count — the solver's own quadrature is
+ * only 144 panels, and this runs every substep of every contact.
+ */
+function buildMeshPanels(mesh, shape, solver) {
+  const { positions, indices } = mesh
+  const maxPanels = solver.meshPanelBudget ?? 192
+  const c = shape.bboxCentre
+  // Body Y is the face normal; a panel is "rim" when its normal lies near the face
+  // plane, since those are the ones presented edge-on to the flow.
+  const rimCos = solver.meshRimNormalCos ?? 0.5
+
+  const tris = []
+  for (let f = 0; f < indices.length; f += 3) {
+    const ia = indices[f] * 3, ib = indices[f + 1] * 3, ic = indices[f + 2] * 3
+    const ax = positions[ia] - c.x, ay = positions[ia + 1] - c.y, az = positions[ia + 2] - c.z
+    const bx = positions[ib] - c.x, by = positions[ib + 1] - c.y, bz = positions[ib + 2] - c.z
+    const cx2 = positions[ic] - c.x, cy = positions[ic + 1] - c.y, cz = positions[ic + 2] - c.z
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az
+    const e2x = cx2 - ax, e2y = cy - ay, e2z = cz - az
+    // Cross product magnitude is twice the triangle area; its direction is the normal.
+    let nx = e1y * e2z - e1z * e2y
+    let ny = e1z * e2x - e1x * e2z
+    let nz = e1x * e2y - e1y * e2x
+    const len = Math.hypot(nx, ny, nz)
+    if (!(len > 1e-18)) continue
+    const area = len / 2
+    nx /= len; ny /= len; nz /= len
+    tris.push({
+      px: (ax + bx + cx2) / 3, py: (ay + by + cy) / 3, pz: (az + bz + cz) / 3,
+      nx, ny, nz, area,
+    })
+  }
+  if (!tris.length) return []
+
+  // Winding may be inside-out; the mesh volume already told us which. Flip so every
+  // normal points OUT, because the ventilation weighting keys off exactly that.
+  if (shape.windingFlipped) {
+    for (const t of tris) { t.nx = -t.nx; t.ny = -t.ny; t.nz = -t.nz }
+  }
+
+  // Pick the FINEST position grid that fits the panel budget, by starting fine and
+  // coarsening until it fits — starting coarse and stopping at the first fit wastes
+  // most of the budget (the disc came out at 64 panels against a budget of 192, and
+  // its run distance sat 18% off the analytic disc it was meant to reproduce).
+  // Normals are bucketed into facing classes too, so a face and the rim never merge.
+  const ext = shape.extent
+  for (let div = 20; div >= 1; div--) {
+    const buckets = new Map()
+    for (const t of tris) {
+      const gx = ext.x > 0 ? Math.min(div - 1, Math.max(0, Math.floor(((t.px / ext.x) + 0.5) * div))) : 0
+      const gy = ext.y > 0 ? Math.min(div - 1, Math.max(0, Math.floor(((t.py / ext.y) + 0.5) * div))) : 0
+      const gz = ext.z > 0 ? Math.min(div - 1, Math.max(0, Math.floor(((t.pz / ext.z) + 0.5) * div))) : 0
+      const isRim = Math.abs(t.ny) < rimCos
+      // Rim panels additionally split by facing, so opposite sides of the rim (whose
+      // normals would cancel) are never averaged into one useless panel.
+      const dir = isRim
+        ? 2 + (t.nx >= 0 ? 1 : 0) * 2 + (t.nz >= 0 ? 1 : 0)
+        : (t.ny >= 0 ? 1 : 0)
+      const key = ((gx * div + gy) * div + gz) * 8 + dir
+      let b = buckets.get(key)
+      if (!b) { b = { px: 0, py: 0, pz: 0, nx: 0, ny: 0, nz: 0, area: 0, isRim }; buckets.set(key, b) }
+      b.area += t.area
+      b.px += t.px * t.area; b.py += t.py * t.area; b.pz += t.pz * t.area
+      // AREA-WEIGHTED normal sum: this is what keeps sum(area*normal) == 0, i.e. what
+      // keeps the decimated surface closed and buoyancy exact.
+      b.nx += t.nx * t.area; b.ny += t.ny * t.area; b.nz += t.nz * t.area
+    }
+    if (buckets.size > maxPanels && div > 1) continue
+
+    const panels = []
+    for (const b of buckets.values()) {
+      if (!(b.area > 1e-14)) continue
+      const nl = Math.hypot(b.nx, b.ny, b.nz)
+      if (!(nl > 1e-18)) continue
+      // Scale area by how much the merged normals agreed. Panels whose normals
+      // cancelled (a fold merged into one bucket) present less to the flow than their
+      // raw area, and this is the term that preserves closure through the merge.
+      panels.push({
+        px: b.px / b.area, py: b.py / b.area, pz: b.pz / b.area,
+        nx: b.nx / nl, ny: b.ny / nl, nz: b.nz / nl,
+        area: nl,
+        isRim: b.isRim,
+      })
+    }
+    return panels
+  }
+  return []
+}
+
+/** Residual of `sum(area * normal)` over a panel set, normalised by total area.
+ *  Zero for a closed surface; the mesh-panel tests assert it stays near zero. */
+export function meshPanelClosureError(panels) {
+  let sx = 0, sy = 0, sz = 0, a = 0
+  for (const p of panels) {
+    sx += p.nx * p.area; sy += p.ny * p.area; sz += p.nz * p.area; a += p.area
+  }
+  return a > 0 ? Math.hypot(sx, sy, sz) / a : 0
+}
+
 function buildPanels(stone, solver) {
   const { radius: R, thickness: h, aspect, edgeRoundness } = stone
   const { radialSamples: Nr, angularSamples: Na, rimSamples: Nrim } = solver
@@ -992,6 +1145,78 @@ export class StoneSkipSim {
   /** Recompute mass, inertia and the panel set. Call after mutating `stone`. */
   _recomputeBody() {
     const s = this.stone
+    if (s.mesh && s.mesh.positions && s.mesh.indices && s.mesh.indices.length >= 3) {
+      this._recomputeFromMesh(s)
+    } else {
+      this._recomputeFromDisc(s)
+    }
+    /** This stone's Balance, 0..1. Used when `env.balanceRetention === 'auto'`. */
+    this.stoneBalance = balanceFromStone(s, this.meshShape)
+
+    // scratch for the two-pass panel integration (allocated once, reused per substep)
+    const n = this.panels.length
+    this._scratch = {
+      wx: new Float64Array(n), wy: new Float64Array(n), wz: new Float64Array(n),
+      nx: new Float64Array(n), ny: new Float64Array(n), nz: new Float64Array(n),
+      depth: new Float64Array(n), weight: new Float64Array(n),
+      wet: new Uint8Array(n),
+    }
+  }
+
+  /**
+   * Real geometry: mass, centre of mass and inertia measured off the mesh.
+   *
+   * The mesh is taken in the orientation it is given, with body Y the face normal the
+   * player spins about — deliberately NOT re-aligned to the rock's principal axes.
+   * For a well-formed stone those coincide; for a warped one they do not, and that
+   * mismatch is exactly why a warped stone wobbles. Re-aligning would quietly delete
+   * the effect by making the spin axis principal by construction. Callers holding a
+   * scan in arbitrary orientation should run it through `alignMeshToFaceAxis()` first,
+   * which is a deliberate act rather than a silent one.
+   */
+  _recomputeFromMesh(s) {
+    const mp = meshMassProperties(s.mesh.positions, s.mesh.indices, s.density)
+    if (mp.degenerate) {
+      // Not a closed solid — fall back rather than divide by zero downstream.
+      this._recomputeFromDisc(s)
+      return
+    }
+    const shape = meshShapeDescriptors(s.mesh.positions, s.mesh.indices, s.density)
+    this.meshShape = shape
+
+    this.volume = mp.volume
+    // An explicit mass still wins, as it does for a disc; the mesh then supplies only
+    // the DISTRIBUTION. Inertia scales linearly with mass, so rescaling is exact.
+    const scale = s.mass != null && mp.mass > 0 ? s.mass / mp.mass : 1
+    this.mass = s.mass != null ? s.mass : mp.mass
+    this.effectiveDensity = this.mass / this.volume
+    this.inertiaBody = {
+      xx: mp.inertia.xx * scale, yy: mp.inertia.yy * scale, zz: mp.inertia.zz * scale,
+      xy: mp.inertia.xy * scale, xz: mp.inertia.xz * scale, yz: mp.inertia.yz * scale,
+    }
+
+    // Panels are built in a frame centred on the bounding box, matching the disc case
+    // (panels straddle the origin, and `comBody` carries the offset to the real CoM).
+    const c = shape.bboxCentre
+    this.comBody = { x: mp.com.x - c.x, y: mp.com.y - c.y, z: mp.com.z - c.z }
+
+    // Scalar size, for the terms that still need one (added mass, bow wave, air drag).
+    // span is sorted descending; body Y is the face normal, so its extent is thickness.
+    const ext = shape.extent
+    this.effRadius = Math.max(ext.x, ext.z) / 2
+    this.effThickness = ext.y
+    this.effAspect = ext.x > 0 && ext.z > 0 ? Math.min(ext.x, ext.z) / Math.max(ext.x, ext.z) : 1
+    // Real projected area of the face, not pi*R^2 of a circle it is not.
+    this.faceArea = shape.faceArea > 0
+      ? shape.faceArea
+      : Math.PI * this.effRadius * this.effRadius * this.effAspect
+
+    this.panels = buildMeshPanels(s.mesh, shape, this.solver)
+  }
+
+  /** The idealised elliptic disc — unchanged, and still the default. */
+  _recomputeFromDisc(s) {
+    this.meshShape = null
     const R = s.radius, h = s.thickness
     const volume = Math.PI * R * R * s.aspect * h
     this.volume = volume
@@ -1033,17 +1258,9 @@ export class StoneSkipSim {
     this.panels = buildPanels(s, this.solver)
     this.faceArea = Math.PI * R * R * s.aspect
     this.comBody = { x: s.comOffset.x * R, y: 0, z: s.comOffset.z * R }
-    /** This stone's Balance, 0..1. Used when `env.balanceRetention === 'auto'`. */
-    this.stoneBalance = balanceFromStone(s)
-
-    // scratch for the two-pass panel integration (allocated once, reused per substep)
-    const n = this.panels.length
-    this._scratch = {
-      wx: new Float64Array(n), wy: new Float64Array(n), wz: new Float64Array(n),
-      nx: new Float64Array(n), ny: new Float64Array(n), nz: new Float64Array(n),
-      depth: new Float64Array(n), weight: new Float64Array(n),
-      wet: new Uint8Array(n),
-    }
+    this.effRadius = R
+    this.effThickness = h
+    this.effAspect = s.aspect
   }
 
   /**
@@ -1323,7 +1540,7 @@ export class StoneSkipSim {
     const Lb = Q.rotateInverse(q, L)
     const I = this.inertiaBody
     const add = this.env.addedInertiaCoefficient * this.env.waterDensity *
-      Math.pow(this.stone.radius, 5) * immersedFrac
+      Math.pow(this.effRadius, 5) * immersedFrac
     // Added inertia loads the TRANSVERSE axes only — along the spin axis it is
     // negligible, as before. With a full tensor that is a diagonal inflation.
     const ob = solveSymmetric3(
@@ -1353,7 +1570,7 @@ export class StoneSkipSim {
         // resolve the contact by distance travelled, not by wall-clock
         const sp = V.length(this.state.velocity)
         if (sp > 1e-3) {
-          base = Math.min(base, this.solver.maxTravelPerStepRadii * this.stone.radius / sp)
+          base = Math.min(base, this.solver.maxTravelPerStepRadii * this.effRadius / sp)
         }
       }
       // once the stone is fully under and slow there are no sharp impacts left, so
@@ -1384,7 +1601,7 @@ export class StoneSkipSim {
     const surfaceY = w.height + this._bowWave
 
     // --- panel integration ---
-    const R = this.stone.radius
+    const R = this.effRadius
     const cavityDepth = env.cavityCloseDepthRadii * R
     const centreDepth = surfaceY - comWorld.y
 
@@ -1533,7 +1750,7 @@ export class StoneSkipSim {
       const penUndisturbed = Math.max(0, depthMax - this._bowWave)
       const target = Math.min(
         env.bowWaveGain * penUndisturbed,
-        env.bowWaveMaxRadii * this.stone.radius)
+        env.bowWaveMaxRadii * this.effRadius)
       const tau = target > this._bowWave ? env.bowWaveRiseTime : env.bowWaveFallTime
       this._bowWave += (target - this._bowWave) * Math.min(1, dt / Math.max(1e-6, tau))
       if (this._bowWave < 1e-6) this._bowWave = 0
@@ -1603,7 +1820,7 @@ export class StoneSkipSim {
         const vn = V.dot(relAir, nHat)
         // projected area: face area seen edge-on shrinks to the rim strip
         const projArea = this.faceArea * Math.abs(vn) / sp +
-          2 * this.stone.radius * this.stone.thickness * Math.sqrt(Math.max(0, 1 - (vn / sp) ** 2))
+          2 * this.effRadius * this.effThickness * Math.sqrt(Math.max(0, 1 - (vn / sp) ** 2))
         const drag = 0.5 * env.airDensity * env.airDragCoefficient * projArea * sp
         Fx -= drag * relAir.x
         Fy -= drag * relAir.y
@@ -1611,7 +1828,7 @@ export class StoneSkipSim {
 
         // Magnus: F ~ Cm * rho * R^3 * (omega x v)
         const m = V.cross(omega, relAir)
-        const km = env.magnusCoefficient * env.airDensity * Math.pow(this.stone.radius, 3)
+        const km = env.magnusCoefficient * env.airDensity * Math.pow(this.effRadius, 3)
         Fx += km * m.x
         Fy += km * m.y
         Fz += km * m.z
@@ -1636,7 +1853,7 @@ export class StoneSkipSim {
           // non-spinning skip. The previous +sign weathervaned the stone toward zero
           // attack instead, nosing unspun throws into the water before first contact.
           const mag = -env.pitchMomentAirCoefficient * q * this.faceArea *
-            this.stone.radius * sinAlpha
+            this.effRadius * sinAlpha
           Tx += (axis.x / axLen) * mag
           Ty += (axis.y / axLen) * mag
           Tz += (axis.z / axLen) * mag
@@ -1654,7 +1871,7 @@ export class StoneSkipSim {
         const wtz = omega.z - spinRate * faceNormalWorld.z
         const wtMag = Math.hypot(wtx, wty, wtz)
         if (wtMag > 1e-6) {
-          const kw = env.wobbleDampingAirCoefficient * Math.pow(this.stone.radius, 5) *
+          const kw = env.wobbleDampingAirCoefficient * Math.pow(this.effRadius, 5) *
             env.airDensity * wtMag
           Tx -= kw * wtx
           Ty -= kw * wty
@@ -1864,7 +2081,7 @@ export class StoneSkipSim {
       // were never really bounces.
       if (!this.runEnded && this._lastBounceTime < c.startTime &&
           st.time - this._lastBounceTime > this._minBounceInterval &&
-          c.maxDepth > 0.01 * this.stone.radius) {
+          c.maxDepth > 0.01 * this.effRadius) {
         this.ripples++
         this.skips = Math.max(0, this.ripples - 1)
         this._lastBounceTime = st.time
@@ -1893,7 +2110,7 @@ export class StoneSkipSim {
   /** Regime / termination detection. */
   _classify(events) {
     const st = this.state
-    const R = this.stone.radius
+    const R = this.effRadius
     const d = this.getDiagnostics()
 
     // A clean hop is a liftoff followed by real airtime. Counted one at a time and
@@ -2100,7 +2317,7 @@ export class StoneSkipSim {
       distance: this._distanceTravelled,
       time: st.time,
       /** Froude number of the current speed. */
-      froude: (speed * speed) / (this.env.gravity * this.stone.radius),
+      froude: (speed * speed) / (this.env.gravity * this.effRadius),
     }
   }
 
@@ -2110,7 +2327,7 @@ export class StoneSkipSim {
    */
   getAnalyticEstimates(attackAngleDeg = 20) {
     const { gravity: g, waterDensity: rho, pressureCoefficient: C } = this.env
-    const a = 2 * this.stone.radius
+    const a = 2 * this.effRadius
     const M = this.mass
     const theta = attackAngleDeg * DEG
 
@@ -2122,10 +2339,10 @@ export class StoneSkipSim {
     const mu = Math.sin(theta) * C + Math.cos(theta) * this.env.frictionCoefficient
     const nVelocityLimited = (v0 * v0) / (2 * g * Math.max(1e-6, mu) * ell)
     // gyroscopic stability floor and spin-limited bounce count
-    const spinFloor = Math.sqrt(g / this.stone.radius) / (2 * Math.PI)  // rev/s
+    const spinFloor = Math.sqrt(g / this.effRadius) / (2 * Math.PI)  // rev/s
     const spinRPS = this.throwParams ? this.throwParams.spinRPS : 15
     const phiDot = spinRPS * 2 * Math.PI
-    const nSpinLimited = (this.stone.radius * phiDot * phiDot) / g
+    const nSpinLimited = (this.effRadius * phiDot * phiDot) / g
 
     return {
       criticalSpeed: vCritical,
@@ -2222,7 +2439,7 @@ export class StoneSkipSim {
       z: st.position.z,
       crestHeight: this._bowWave,
       displacedVolume: this._displacedVolume,
-      radius: this.stone.radius * (1 + 2 * this._bowWave / this.stone.radius),
+      radius: this.effRadius * (1 + 2 * this._bowWave / this.effRadius),
       contact: !this._airborne,
       speed: sp,
       impulse: this.mass * Math.max(0, -this._vyContactApproach),
