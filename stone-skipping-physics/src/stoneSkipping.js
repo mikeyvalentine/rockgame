@@ -109,7 +109,7 @@ export const Q = {
  * Bump on any change that alters simulation output. Shown in the demo HUD so it is
  * obvious at a glance whether the browser is running current code or a cached module.
  */
-export const VERSION = '0.8.1-air-nutation-damping'
+export const VERSION = '0.8.2-anchor-retune'
 
 const UP = Object.freeze({ x: 0, y: 1, z: 0 })
 const ZERO = Object.freeze({ x: 0, y: 0, z: 0 })
@@ -386,8 +386,17 @@ export const DEFAULT_ENV = {
    * diverged from 38 skips to 13. Damping nutation specifically (not spin, which should
    * persist) shrinks that divergence over a long run while barely touching the first
    * few bounces, which is also the physically correct place for it to matter least.
+   *
+   * Lowered 4.0 -> 2.0 (0.8.2): at 4.0 the damping over-stabilised low-attack
+   * arrivals and the emergent optimum attack angle slid to ~10 deg, failing the
+   * validated 20 deg anchor (headless-sweep section 3: 20 deg scored 12 against
+   * 18 at 10 deg, ratio 0.67). A 4x3 matrix over this coefficient and
+   * pitchMomentAirCoefficient put the anchor back at 0.86 with this value and
+   * P left at its documented 0.05 calibration; halving the damping keeps most
+   * of the divergence benefit it exists for. Re-measure BOTH the anchor and
+   * the cross-engine divergence before touching either constant again.
    */
-  wobbleDampingAirCoefficient: 4.0,
+  wobbleDampingAirCoefficient: 2.0,
   wind: { x: 0, y: 0, z: 0 },
 }
 
@@ -402,15 +411,24 @@ export const DEFAULT_ENV = {
 export const PHYSICS_PROFILES = {
   /** Pure model. Matches every measurement in docs/PHYSICS-NOTES.md. ~13 clean hops. */
   documentary: {},
-  /** Champion-range play: 40-80 skips on a well-spun throw. Not physical. */
-  /** Restrained: champion ~28 hops over ~61 m in ~10 s. */
+  /**
+   * Measured on 0.8.2 (Steiner-preset ensemble, median of 9 jittered throws):
+   * game ~27 skips over ~30 m, arcade ~40 skips over ~38 m. Earlier comments
+   * here claimed ~61 m and ~115 m — those were true of an older dissipation
+   * envelope and are NOT reachable on the current model by assist tuning
+   * alone (bounceSpeedTax 0.02 -> 0 moves game distance only 30 -> 36 m while
+   * inflating hops to ~39). If champion runs should read longer on screen,
+   * that is a physics-envelope task (rebound/energy retention), not an assist
+   * knob — flagged in docs/audit-2026-08-05.md.
+   */
+  /** Restrained champion play. */
   game: {
     hopSpeedFraction: 0.05,
     attitudeAssist: 20,
     attitudeAssistRefSpin: 40,
     bounceSpeedTax: 0.02,
   },
-  /** Showpiece: champion ~63 hops over ~115 m in ~14 s. */
+  /** Showpiece. */
   arcade: {
     hopSpeedFraction: 0.05,
     attitudeAssist: 32,
