@@ -8,12 +8,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/shape-test.mjs && node tools/winding-check.mjs && node tools/shader-check.mjs && node tools/packing-check.mjs && node tools/collision-test.mjs",
+    "test": "node tools/shape-test.mjs && node tools/winding-check.mjs && node tools/shader-check.mjs && node tools/packing-check.mjs && node tools/collision-test.mjs && node tools/solver-bridge-test.mjs",
     "test:shape": "node tools/shape-test.mjs",
     "test:collision": "node tools/collision-test.mjs",
     "test:winding": "node tools/winding-check.mjs",
     "test:packing": "node tools/packing-check.mjs",
-    "test:shader": "node tools/shader-check.mjs"
+    "test:shader": "node tools/shader-check.mjs",
+    "test:solver": "node tools/solver-bridge-test.mjs"
   },
   "license": "ISC",
   "dependencies": {
