@@ -1,3 +1,21 @@
+/* ABC Stefan Bubble, two-tone (docs/06: Stefan Bubble). These are the
+   COLR/CPAL colour fonts baked in Desktop/DINAMO-twotone — every glyph is a
+   solid white bubble with a black outline, both tones IN the font, so no CSS
+   stroke tricks are needed and `color` does not tint the glyphs. Tight is the
+   body/UI face; the wider cut is for display and CTAs (the README's own
+   assignment). TRIAL-derived — re-bake from the licensed fonts before this is
+   anything more than a lab. */
+@font-face {
+  font-family: "ABC Stefan Bubble Tight Twotone";
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTightTwotone.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "ABC Stefan Bubble Twotone";
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTwotone.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root {
   --bg: #0a1117;
   --bg-lift: #101b24;
@@ -12,7 +30,16 @@
   --shadow: 0 18px 50px rgb(0 0 0 / 45%);
 
   color-scheme: dark;
-  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  /* Every piece of product text wears the bubble; anything debug-flavoured
+     (the scribble dial panel, lab HUDs) carries its own monospace styles and
+     is deliberately untouched. */
+  font-family: "ABC Stefan Bubble Tight Twotone", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Display text and CTAs take the wider bubble cut, per the two-tone bake's
+   own README. The tones live in the font itself. */
+h1, .brand, .boot-mark, .btn-primary, .bigscore {
+  font-family: "ABC Stefan Bubble Twotone", ui-sans-serif, system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
