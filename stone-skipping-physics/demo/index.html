@@ -211,7 +211,19 @@ presetSel.addEventListener('change', () => {
 /* ---------------- babylon scene ---------------- */
 
 const canvas = $('c')
-const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false }, true)
+// Hardened browsers (LibreWolf, Tor Browser) ship with WebGL disabled for
+// anti-fingerprinting; Engine construction throws. Catch it and say so —
+// an uncaught stack trace reads as our bug, and it is their setting.
+let engine
+try {
+  engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false }, true)
+} catch (e) {
+  $('err').style.display = 'grid'
+  $('err').innerHTML = '<b>WebGL is disabled in this browser.</b><br>' +
+    'LibreWolf and other hardened browsers turn it off by default ' +
+    '(about:config &rarr; webgl.disabled &rarr; false), or open this page in a stock browser.'
+  throw e
+}
 const scene = new BABYLON.Scene(engine)
 scene.clearColor = new BABYLON.Color4(0.043, 0.063, 0.086, 1)
 scene.fogMode = BABYLON.Scene.FOGMODE_EXP2

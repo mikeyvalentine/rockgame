@@ -168,20 +168,29 @@ void main(void) {
 }
 `;
 
-// His dropShader.
+// His dropShader, batched (audit #B4). Every queued drop used to be its own
+// fullscreen pass — up to 13 per frame during a skip run, ~420 MB of texture
+// traffic. Drop writes are pure additions into the height channel, so they
+// are order-independent and a batch of N applied in one pass is bit-identical
+// to N sequential passes. 16 slots covers every real frame; overflow just
+// runs the pass again.
+const DROP_BATCH = 16;
 const DROP_FRAG = `
 precision highp float;
 const float PI = 3.141592653589793;
 varying vec2 vUV;
 uniform sampler2D prev;
-uniform vec2 center;
-uniform float radius;
-uniform float strength;
+uniform float dropCount;
+uniform vec4 drops[${DROP_BATCH}];   /* center.xy in [-1,1], radius, strength */
 void main(void) {
     vec4 info = texture2D(prev, vUV);
-    float drop = max(0.0, 1.0 - length(center * 0.5 + 0.5 - vUV) / radius);
-    drop = 0.5 - cos(drop * PI) * 0.5;
-    info.r += drop * strength;
+    for (int i = 0; i < ${DROP_BATCH}; i++) {
+        if (float(i) >= dropCount) break;
+        vec4 d = drops[i];
+        float drop = max(0.0, 1.0 - length(d.xy * 0.5 + 0.5 - vUV) / d.z);
+        drop = 0.5 - cos(drop * PI) * 0.5;
+        info.r += drop * d.w;
+    }
     gl_FragColor = info;
 }
 `;
@@ -516,7 +525,20 @@ const canvas = document.getElementById("c");
 // AUDIT #1 (docs/11): antialias off — MSAA anti-aliases geometry edges only,
 // does nothing for the specular sparkle (see the supersampling note below),
 // and the kept-aliasing art direction says this cost should not exist.
-const engine = new BABYLON.Engine(canvas, false, { preserveDrawingBuffer: false, stencil: false });
+//
+// Hardened browsers (LibreWolf, Tor Browser) disable WebGL entirely for
+// anti-fingerprinting and Engine construction throws — catch it and say so
+// in the HUD instead of white-screening.
+let engine;
+try {
+    engine = new BABYLON.Engine(canvas, false, { preserveDrawingBuffer: false, stencil: false });
+} catch (e) {
+    document.getElementById("hud").innerHTML =
+        "<b>WebGL is disabled in this browser.</b> LibreWolf and other hardened " +
+        "browsers turn it off by default (about:config → webgl.disabled → false), " +
+        "or open this page in a stock browser.";
+    throw e;
+}
 
 // Supersampling. This is the real cure for the sparkle, as opposed to fading
 // detail away: the speckle is a SAMPLING failure, one sample per pixel trying
@@ -643,7 +665,7 @@ function makePass(name, source, uniforms) {
     });
 }
 const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
-const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["center", "radius", "strength"]);
+const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops"]);
 const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
 const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
@@ -657,14 +679,15 @@ const windowTarget = { x: 0, z: 0 };
 const passScroll = new BABYLON.Vector2(0, 0);
 
 const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
-let passSrc = null, passDrop = { center: new BABYLON.Vector2(0, 0), radius: DROP_R, strength: 0 };
+let passSrc = null;
+const dropData = new Float32Array(DROP_BATCH * 4);
+let dropsInBatch = 0;
 
 // Uniforms go through onApply because EffectRenderer binds the effect itself.
 dropPass.onApplyObservable.add(() => {
     const eff = dropPass.effect;
-    eff.setVector2("center", passDrop.center);
-    eff.setFloat("radius", passDrop.radius);
-    eff.setFloat("strength", passDrop.strength);
+    eff.setFloat("dropCount", dropsInBatch);
+    eff.setFloatArray4("drops", dropData);
     if (passSrc) eff.setTexture("prev", passSrc);
 });
 scrollPass.onApplyObservable.add(() => {
@@ -709,13 +732,8 @@ function runPass(pass) {
 }
 
 // --- his Water API -----------------------------------------------------------
-/// addDrop(x, y, radius, strength) — x and y are in [-1, 1], matching the pool.
-function addDrop(x, y, radius, strength) {
-    passDrop.center.set(x, y);
-    passDrop.radius = radius;
-    passDrop.strength = strength;
-    return runPass(dropPass);
-}
+/// His addDrop is gone as a per-call pass — drops accumulate into dropData
+/// and flush as one batched pass in the drain loop (audit #B4).
 function stepSimulation() { return runPass(updatePass); }
 function updateNormals()  { return runPass(normalPass); }
 
@@ -2010,19 +2028,27 @@ scene.registerBeforeRender(() => {
     recenterWindow();
 
     while (dropQueue.length && dropPass.effect.isReady()) {
-        const d = dropQueue.shift();
-        // d.z, not d.y — the queue stores the pond's x/z plane. Reading d.y
-        // here fed addDrop undefined and silently killed every drop in the
-        // project: clicks, rain, the seed, impact ripples, landing ripples.
-        //
-        // World → window [-1, 1], against THIS frame's centre. A drop outside
-        // the window (a droplet landing behind a fast run) is skipped — the
-        // deviation field it would write into does not exist out there, and
-        // by construction whatever it would have contributed has no home.
-        const cx = (d.x - windowCenter.x) / HALF;
-        const cz = (d.z - windowCenter.y) / HALF;
-        if (Math.abs(cx) > 0.92 || Math.abs(cz) > 0.92) continue;
-        addDrop(cx, cz, d.radius, d.strength);
+        dropsInBatch = 0;
+        while (dropQueue.length && dropsInBatch < DROP_BATCH) {
+            const d = dropQueue.shift();
+            // d.z, not d.y — the queue stores the pond's x/z plane. Reading
+            // d.y here silently killed every drop in the project once.
+            //
+            // World → window [-1, 1], against THIS frame's centre. A drop
+            // outside the window (a droplet landing behind a fast run) is
+            // skipped — the deviation field it would write into does not
+            // exist out there.
+            const cx = (d.x - windowCenter.x) / HALF;
+            const cz = (d.z - windowCenter.y) / HALF;
+            if (Math.abs(cx) > 0.92 || Math.abs(cz) > 0.92) continue;
+            const o = dropsInBatch * 4;
+            dropData[o] = cx; dropData[o + 1] = cz;
+            dropData[o + 2] = d.radius; dropData[o + 3] = d.strength;
+            dropsInBatch++;
+        }
+        // One pass applies the whole batch — bit-identical to the old
+        // pass-per-drop, because drop writes are pure additions.
+        if (dropsInBatch > 0) runPass(dropPass);
     }
 
     // Then his per-frame loop: two simulation steps, one normal pass.
