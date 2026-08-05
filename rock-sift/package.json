@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:sift": "node tools/sift-test.mjs",
+    "test:rating": "node tools/rating-test.mjs",
     "test": "node tools/test.mjs",
     "bake": "node tools/bake-bed.mjs"
   },

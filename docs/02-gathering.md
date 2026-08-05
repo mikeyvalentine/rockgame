@@ -24,10 +24,20 @@ would hold its attitude (balance 5/5) and is genuinely unthrowable (mass 0/5).
 
 | Stat | Ideal | Source |
 | --- | --- | --- |
-| Mass | **170 g** | 100–200 g good band; the solver's validated default is 172 g |
+| Mass | **165 g** | 100–200 g good band; the solver's validated default is 172 g |
 | Size | **8.5 cm** across | 5–10 cm; skimming championship caps entries at 76 mm |
-| Flatness | **0.075** (thickness ÷ longest dim), circular face | λ = R/d wants 5–10, and flatness = 1/(2λ) |
+| Flatness | **0.129** — *derived, see below* | the thickness a 165 g, 8.5 cm stone must have |
 | Balance | peaks at the right mass-to-radius | `PHYSICS-NOTES.md` §14 |
+
+> ⚠️ **The targets are not independent — never set them separately.** For a stone of
+> density ρ, `mass = ρ·π·(D/2)²·t`, so fixing any two of {mass, diameter, thickness}
+> fixes the third. Choosing all three by hand produced a set no real rock could
+> satisfy — at 8.5 cm and a flatness of 0.075 a slate disc weighs 98 g, not 170 g —
+> and the top two rarity tiers silently became **undroppable**: the best score any
+> physically possible stone could reach was 0.816 against an Epic threshold of 0.82.
+> Nothing errored; the tiers just never appeared. Flatness is therefore *derived* from
+> mass and size. `rock-sift/tools/rating-test.mjs` sweeps every real disc and asserts
+> each tier is reachable, so this cannot come back quietly.
 
 ### Flatness is one stat, and "round" is a trap
 
