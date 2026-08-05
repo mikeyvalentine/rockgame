@@ -10,8 +10,7 @@
  *
  * ```
  *   pass        renders at   reads                        writes into
- *   ssr          full        scene, depth                 taa's texture
- *   taa          full        ssr result, history, depth   history[k]   (forced)
+ *   taa          full        scene, history, depth        history[k]   (forced)
  *   shafts       1/4         depth                        bloomA's texture
  *   bloomA       1/4         history[k]  (bright pass)    bloomB's texture
  *   bloomB       1/16        bloomA result               bloomC's texture
@@ -60,7 +59,10 @@ import { S } from "../core/settings.js";
 
 import postCommonLib from "../shaders/lib/postCommon.wgsl?raw";
 import taaFrag from "../shaders/post/taa.fragment.wgsl?raw";
-import ssrFrag from "../shaders/post/ssr.fragment.wgsl?raw";
+// AUDIT #4 (docs/11 "Avoid: screen-space reflections"): the SSR pass is
+// compiled out entirely, not just defaulted off — disabled passes still run
+// as full-res copies because the chain never detaches. The shader and its
+// settings key went with it; see git history to restore.
 import shaftsFrag from "../shaders/post/shafts.fragment.wgsl?raw";
 import bloomDownFrag from "../shaders/post/bloomDown.fragment.wgsl?raw";
 import bloomBlurFrag from "../shaders/post/bloomBlur.fragment.wgsl?raw";
@@ -84,7 +86,6 @@ function registerPostShaders() {
     registered = true;
     ShaderStore.IncludesShadersStoreWGSL["snowPostCommon"] = postCommonLib;
     ShaderStore.ShadersStoreWGSL["snowTaaPixelShader"] = taaFrag;
-    ShaderStore.ShadersStoreWGSL["snowSsrPixelShader"] = ssrFrag;
     ShaderStore.ShadersStoreWGSL["snowShaftsPixelShader"] = shaftsFrag;
     ShaderStore.ShadersStoreWGSL["snowBloomDownPixelShader"] = bloomDownFrag;
     ShaderStore.ShadersStoreWGSL["snowBloomBlurPixelShader"] = bloomBlurFrag;
@@ -145,8 +146,6 @@ export class PostChain {
         // ------------------------------------------------------------ passes
         // Attached in this order; see the table at the top of the file for what
         // each one's declared ratio actually controls.
-        this.ssr = this._pass("snowSsr", 1.0, ["projInfo", "invRes", "enabled", "strength"],
-            ["depthTex"], Constants.TEXTURETYPE_HALF_FLOAT);
         this.taa = this._pass("snowTaa", 1.0,
             ["prevViewProj", "invView", "projInfo", "invRes", "jitterNdc",
              "historyValid", "enabled", "feedback"],
@@ -175,7 +174,7 @@ export class PostChain {
             Constants.TEXTURETYPE_UNSIGNED_BYTE);
 
         this.passes = [
-            this.ssr, this.taa, this.shafts, this.bloomA, this.bloomB,
+            this.taa, this.shafts, this.bloomA, this.bloomB,
             this.bloomC, this.dof, this.composite, this.sharpen,
         ];
 
@@ -239,14 +238,6 @@ export class PostChain {
 
     _bind() {
         const depthTex = this.depth.rtt;
-
-        this.ssr.onApply = (e) => {
-            e.setVector2("projInfo", this._projInfo);
-            e.setVector2("invRes", this._invRes);
-            e.setFloat("enabled", S.ssr ? 1 : 0);
-            e.setFloat("strength", 1.0);
-            e.setTexture("depthTex", depthTex);
-        };
 
         this.taa.onApply = (e) => {
             e.setMatrix("prevViewProj", this._prevViewProj);

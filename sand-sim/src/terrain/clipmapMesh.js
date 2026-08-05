@@ -23,8 +23,11 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 
 /** Quads per side, per ring. Must be divisible by 4. */
 export const GRID_N = 160;
-/** Number of rings. */
-export const LEVELS = 8;
+/** Number of rings.
+ *  AUDIT #B2: 6 (was 8) — rings 7-8 reached ~1 km against a 512 m world
+ *  texture, rendering ~40k quads of terrain that has no data, into five
+ *  passes per frame (3 cascades + depth prepass + beauty). */
+export const LEVELS = 6;
 /**
  * Vertex spacing of the innermost ring, metres. Tightened from SNOWFLOW's
  * 0.085: dig craters bend the surface over ~30 cm, and 8.5 cm triangles showed

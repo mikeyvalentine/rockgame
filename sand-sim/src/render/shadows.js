@@ -27,7 +27,9 @@ import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
 
 export const CASCADE_COUNT = 3;
-const RESOLUTION = 2048;
+// AUDIT #B2: 1024 (was 2048) — three 2048² cascades were ~100 MB on an
+// integrated GPU, over a 333k-triangle clipmap rendered into every one.
+const RESOLUTION = 1024;
 
 /** Far distance of each cascade, metres. */
 const SPLITS = [26, 95, 330];

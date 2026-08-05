@@ -228,7 +228,11 @@ export class DeformationField {
         // simply not dispatched — the texture stays bound, the sand keeps
         // rendering, the GPU cost is zero. This is what buys the game's throw
         // its budget.
-        if (this._brushCount > 0) this._activeTimer = 4;
+        // AUDIT #6: 0.75 s of settling tail (was 4) — a single footstep was
+        // keeping the 2048² RGBA16F ping-pong (67 MB/frame of traffic) awake
+        // for four seconds. The visible settle finishes well inside 0.75 s;
+        // anything owed beyond it is banked in _relaxOwed and paid on wake.
+        if (this._brushCount > 0) this._activeTimer = 0.75;
         const moved = cx !== this.center.x || cy !== this.center.y;
         if (S.simGate && !moved && this._brushCount === 0 && this._activeTimer <= 0) {
             this.sleeping = true;

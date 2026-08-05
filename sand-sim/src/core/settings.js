@@ -12,7 +12,11 @@
 export const S = {
     // ---------------------------------------------------------------- quality
     preset: "ultra",
-    resolutionScale: 1.0,
+    // AUDIT #4 (docs/10 "render at 1x or 1.5x and upscale" / docs/11 "lower
+    // render resolution is stylistically defensible"): 0.75 fixed. This is
+    // the biggest lever on the floor machine; raise it back by eye if the
+    // softness reads wrong.
+    resolutionScale: 0.75,
 
     // ------------------------------------------------------------------- sun
     // Azimuth/elevation are seeded at load from the HDRI's own brightest texel
@@ -70,12 +74,15 @@ export const S = {
     grainBudget: 2048,
 
     // ------------------------------------------------------------------ post
-    taa: true,
-    // Off by default for sand: the SSR pass reconstructs normals from the
-    // depth buffer, which is per-facet on carved geometry — on a wet dig
-    // crater (wetness arms its gate) it renders as shattered-glass panes.
-    // The intended barely-there wet sheen isn't worth that; toggle to compare.
-    ssr: false,
+    // AUDIT #4 (docs/11 "aliasing kept as style — no MSAA/TAA needed"): TAA
+    // off by default. It was paying a full-res pass + two RGBA16F history
+    // buffers + per-frame projection jitter to erase exactly the aliasing the
+    // art direction keeps. The pass stays in the chain (its history plumbing
+    // feeds bloom/dof) and early-outs to a copy; flip this to compare.
+    taa: false,
+    // SSR was compiled out of the chain entirely (docs/11 names it the one
+    // technique to avoid; disabled passes still cost a full-res copy). See
+    // postChain.js and git history to restore.
     dof: true,
     bloom: true,
     grain: true,
@@ -175,7 +182,6 @@ export const SCHEMA = [
         group: "Post",
         items: [
             { k: "taa", l: "TAA", t: "b" },
-            { k: "ssr", l: "SSR (ice)", t: "b" },
             { k: "dof", l: "Depth of field", t: "b" },
             { k: "bloom", l: "Bloom", t: "b" },
             { k: "grain", l: "Film grain", t: "b" },
@@ -208,10 +214,10 @@ export const SCHEMA = [
 /** Quality presets. Only the keys that differ from `ultra` need listing. */
 export const PRESETS = {
     ultra: {},
-    high: { deformResolution: 2048, resolutionScale: 1.0, ssr: true, dof: true },
+    high: { deformResolution: 2048, resolutionScale: 1.0, dof: true },
     balanced: {
         deformResolution: 1024, resolutionScale: 0.85,
-        ssr: false, dof: false,
+        dof: false,
     },
 };
 
