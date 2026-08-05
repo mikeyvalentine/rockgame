@@ -11,6 +11,41 @@
 - Click any rock to inspect it.
 - **Sea glass** is found scattered through the field, independent of which rocks you inspect.
 
+## Every stat is divergence from the ideal stone — decided
+
+Stats are **not** magnitudes. A stat is *how close this rock is to the mathematically
+ideal skipping stone on that axis*, so every bar reads the same direction: full is
+perfect, empty is wrong. **Full pips on mass means "the right mass", not "heavy"** — a
+boulder and a pebble both score empty on mass, from opposite sides.
+
+This is what makes the bars comparable to each other, and it is why a rock can be
+5/5 on one axis and 0/5 on another without contradiction: a 1.5 kg boulder genuinely
+would hold its attitude (balance 5/5) and is genuinely unthrowable (mass 0/5).
+
+| Stat | Ideal | Source |
+| --- | --- | --- |
+| Mass | **170 g** | 100–200 g good band; the solver's validated default is 172 g |
+| Size | **8.5 cm** across | 5–10 cm; skimming championship caps entries at 76 mm |
+| Flatness | **0.075** (thickness ÷ longest face dim) | λ = R/d wants 5–10, and flatness = 1/(2λ) |
+| Roundness | **1.0** (circular face) | a round face meets the water identically every rotation |
+| Balance | peaks at the right mass-to-radius | `PHYSICS-NOTES.md` §14 |
+
+**Rarity is the weighted sum of those**, shown as a colour and a word — Common grey,
+Uncommon green, Rare blue, Epic purple, Legendary orange. The player never sees the
+number.
+
+> **Roughness is not a rated stat.** It survives in the solver as a skin-friction
+> multiplier, but it is close to invisible on a real stone and its effect is a
+> fraction of a percent of a run. Rating it would imply a precision the player has no
+> way to read and the physics does not reward.
+
+> ⚠️ **Calibration open.** The flatness ideal (0.075) is much thinner than the 0.20 the
+> old rating centred on, so typical river rocks now score near zero on that axis and a
+> "classic" 8×7×1.6 cm stone lands Common. That is physically correct — most river
+> rocks are bad skipping stones — but it has **not** been checked against the actual
+> scanned population in `river_rocks.glb`. If the sift never yields Rare+, widen
+> `STONE_STAT_TARGETS.flatness.tolerance` rather than moving the ideal.
+
 ## Inspection — decided
 
 **Stat bars, not numbers.** Deliberately slightly ambiguous.
@@ -36,10 +71,13 @@ A rock's mass and size affect its skipping physics **and** how hard it is to aim
 | Property | Control effect |
 | --- | --- |
 | Mass | Drift **magnitude** — how hard you fight |
-| Roughness | Drift **jitter** — feels unstable, twitchy |
 | Shape irregularity | Drift **bias** — pulls one direction; the player learns its lean |
 | Size / diameter | Release window width |
 | **Balance** | *No* control effect — acts after release. See below. |
+
+> Roughness used to drive drift **jitter** here. Dropped along with its rating (above):
+> a stat the player cannot see on the rock should not be secretly making their aim
+> twitch. If jitter is wanted back, hang it on shape irregularity, which is visible.
 
 ### Balance — hidden, and the only stat that acts after release
 
