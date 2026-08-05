@@ -138,6 +138,32 @@ const BALANCE_MAX_BLEND = 0.35
  */
 const BALANCE_AUTHORITY_KNEE = 0.25
 
+/**
+ * Solve `I w = L` for `w`, with `I` a symmetric 3x3 as {xx,yy,zz,xy,xz,yz}.
+ *
+ * Needed once the inertia tensor stopped being diagonal — see `_recomputeBody`. Uses
+ * the cofactor inverse rather than a general solver: 3x3 symmetric is small enough
+ * that the closed form is both faster and allocation-free, which matters because this
+ * runs every substep of every contact.
+ */
+function solveSymmetric3(I, L) {
+  const { xx, yy, zz, xy, xz, yz } = I
+  const c00 = yy * zz - yz * yz
+  const c01 = xz * yz - xy * zz
+  const c02 = xy * yz - xz * yy
+  const det = xx * c00 + xy * c01 + xz * c02
+  if (!(Math.abs(det) > 1e-24)) return { x: 0, y: 0, z: 0 }
+  const c11 = xx * zz - xz * xz
+  const c12 = xz * xy - xx * yz
+  const c22 = xx * yy - xy * xy
+  const inv = 1 / det
+  return {
+    x: (c00 * L.x + c01 * L.y + c02 * L.z) * inv,
+    y: (c01 * L.x + c11 * L.y + c12 * L.z) * inv,
+    z: (c02 * L.x + c12 * L.y + c22 * L.z) * inv,
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Defaults
  * ------------------------------------------------------------------ */
@@ -157,6 +183,83 @@ export const DEFAULT_STONE = {
   /** Fraction of the radius the centre of mass sits off-centre, in body XZ.
    *  Real stones are never balanced; this is a big source of wobble. */
   comOffset: { x: 0, z: 0 },
+}
+
+/**
+ * Reference `mass / radius`, kg/m — the default stone's (0.172 kg / 0.045 m).
+ *
+ * Used as the half-saturation point of the Balance curve, so the default stone scores
+ * exactly 0.5 and the profiles' "average rock" value means what it says.
+ */
+const BALANCE_MR_REFERENCE = 3.82
+/** CoM offset (as a fraction of radius) at which the symmetry penalty is fully paid. */
+const BALANCE_COM_TOLERANCE = 0.30
+/** How much of a stone's Balance a maximally off-centre CoM can take away. */
+const BALANCE_COM_WEIGHT = 0.6
+/** Face-ellipse deviation from round at which the roundness penalty is fully paid. */
+const BALANCE_ASPECT_TOLERANCE = 0.45
+/** How much of a stone's Balance a maximally oblong face can take away. */
+const BALANCE_ASPECT_WEIGHT = 0.35
+
+/**
+ * BALANCE from geometry — how well this stone will hold its trim, 0..1.
+ *
+ * Feeds `env.balanceRetention` (set that to `'auto'` to have the sim call this).
+ * Everything here is visible in the stone itself, which is the point: the player is
+ * meant to read a rock by looking at it (docs/02-gathering.md), so the stat may only
+ * depend on things a stone visibly IS — how big, how heavy, how lopsided, how oblong.
+ *
+ * ### Why `mass / radius`
+ *
+ * Attitude is lost to precession at rate `Omega = Gamma / L`. The disturbing torque
+ * `Gamma ~ rho_w V^2 R^3` comes from the water and does not care how heavy the stone
+ * is; the angular momentum resisting it, `L = (1/2) m R^2 omega`, does. So
+ *
+ *     Omega  ~  R / (m omega)
+ *
+ * and the stone-side figure of merit is `m / R`. Confirmed in this solver by sweeping
+ * geometry at `balanceRetention: 0` and reading the roll angle a run dies at:
+ *
+ *     tiny  17 g  m/R 0.85  ->  12.6 deg      default 172 g  m/R 3.82  ->  6.7 deg
+ *     very large 668 g  m/R 8.91  ->  4.4 deg
+ *
+ * **A tiny stone is therefore badly balanced, not well balanced** — it has too little
+ * angular momentum to resist the same hit. That is also what docs/02-gathering.md
+ * already assumed when it gave tiny rocks a "low ceiling"; this is the mechanism.
+ *
+ * ### Why thickness is NOT penalised here
+ *
+ * Thickness raises `m/R` and measurably improves retention (a chunky test stone ended
+ * at 1.3 deg of roll, the steadiest of any tested). Thick stones are bad skippers for
+ * a different reason — they are poor planing shapes and plunge — and that is already
+ * paid for in the contact physics. Charging thickness again here would penalise one
+ * flaw twice, and the second charge would be measurably false.
+ */
+export function balanceFromStone(stone = {}) {
+  const s = { ...DEFAULT_STONE, ...stone }
+  const com = { ...DEFAULT_STONE.comOffset, ...(stone.comOffset || {}) }
+  const R = s.radius
+  if (!(R > 0)) return 0
+  const m = s.mass != null ? s.mass : s.density * Math.PI * R * R * s.aspect * s.thickness
+  if (!(m > 0)) return 0
+
+  // Gyroscopic authority per unit disturbing torque. Saturating: doubling the mass of
+  // an already-heavy stone helps less than doubling a light one, which is both the
+  // right shape for the physics and the right shape for a stat.
+  const mOverR = m / R
+  const gyro = mOverR / (mOverR + BALANCE_MR_REFERENCE)
+
+  // The literal balance term — an off-centre centre of mass, exactly like an
+  // unbalanced wheel. `comOffset` is already a fraction of the radius.
+  const off = Math.hypot(com.x || 0, com.z || 0)
+  const comTerm = 1 - BALANCE_COM_WEIGHT * clamp(off / BALANCE_COM_TOLERANCE, 0, 1)
+
+  // An oblong face presents a different wetted patch every half turn, so the stone is
+  // forced at spin frequency instead of meeting the water the same way each time.
+  const roundTerm =
+    1 - BALANCE_ASPECT_WEIGHT * clamp((1 - s.aspect) / BALANCE_ASPECT_TOLERANCE, 0, 1)
+
+  return clamp(gyro * comTerm * roundTerm, 0, 1)
 }
 
 export const DEFAULT_ENV = {
@@ -899,17 +1002,39 @@ export class StoneSkipSim {
     // the ellipse semi-axes as (R*aspect, R) in body (x, z).
     const a = R * s.aspect, b = R
     const m = this.mass
+    // Inertia about the CENTRE OF MASS, as a full symmetric tensor
+    // I_ij = integral( |r|^2 delta_ij - r_i r_j ) dm.
+    //
+    // The elliptic-cylinder formulae are about the GEOMETRIC centre, but rotation is
+    // integrated about the centre of mass. When `comOffset` moves those apart the
+    // tensor has to move with it — the parallel-axis theorem:
+    //
+    //     I_cm = I_geo - m ( |d|^2 delta_ij - d_i d_j )
+    //
+    // Without it an off-centre stone kept the spin inertia of a perfectly balanced
+    // one, so `comOffset` was inert: sweeping it 0 -> 0.2R left skips pinned at 12.
+    // (Flagged in PHYSICS-NOTES section 12 as the missing correction.) The dominant
+    // consequence is on `yy`: a stone whose mass sits off-axis has LESS inertia about
+    // its own spin axis, so the same spin buys less angular momentum, so the same
+    // hydrodynamic torque precesses it faster — an unbalanced stone wanders sooner.
+    const dx = s.comOffset.x * R, dy = 0, dz = s.comOffset.z * R
+    const d2 = dx * dx + dy * dy + dz * dz
     this.inertiaBody = {
-      // about body X (in-plane)
-      x: m * (3 * b * b + h * h) / 12,
-      // about body Y (the spin / symmetry axis)
-      y: m * (a * a + b * b) / 4,
-      // about body Z (in-plane)
-      z: m * (3 * a * a + h * h) / 12,
+      xx: m * (3 * b * b + h * h) / 12 - m * (d2 - dx * dx),
+      yy: m * (a * a + b * b) / 4 - m * (d2 - dy * dy),
+      zz: m * (3 * a * a + h * h) / 12 - m * (d2 - dz * dz),
+      // Products of inertia. Non-zero only when the offset has BOTH in-plane
+      // components, which is when the body's principal axes stop lining up with the
+      // body frame at all.
+      xy: m * dx * dy,
+      xz: m * dx * dz,
+      yz: m * dy * dz,
     }
     this.panels = buildPanels(s, this.solver)
     this.faceArea = Math.PI * R * R * s.aspect
     this.comBody = { x: s.comOffset.x * R, y: 0, z: s.comOffset.z * R }
+    /** This stone's Balance, 0..1. Used when `env.balanceRetention === 'auto'`. */
+    this.stoneBalance = balanceFromStone(s)
 
     // scratch for the two-pass panel integration (allocated once, reused per substep)
     const n = this.panels.length
@@ -1135,7 +1260,11 @@ export class StoneSkipSim {
    */
   _applyBalance() {
     const env = this.env
-    if (!(env.balanceRetention > 0) || this.runEnded || !this.throwParams) return
+    // `'auto'` derives the stat from the stone's own geometry (see balanceFromStone),
+    // which is how the game supplies it: the rock IS the stat. A number overrides it,
+    // which is what the profiles and the demo sliders use.
+    const stat = env.balanceRetention === 'auto' ? this.stoneBalance : env.balanceRetention
+    if (!(stat > 0) || this.runEnded || !this.throwParams) return
     const st = this.state
     const hMag = Math.hypot(st.velocity.x, st.velocity.z)
     // Below this there is no meaningful heading to trim against, and the stone is
@@ -1155,7 +1284,7 @@ export class StoneSkipSim {
     if (gate <= 0) return
     // Then, within the viable band: mostly the stone, a little the throw.
     const throwFactor = gate * (1 - env.balanceThrowInfluence * (1 - authority))
-    const blend = clamp(env.balanceRetention, 0, 1) * BALANCE_MAX_BLEND * throwFactor
+    const blend = clamp(stat, 0, 1) * BALANCE_MAX_BLEND * throwFactor
     if (blend <= 0) return
 
     const hHat = { x: st.velocity.x / hMag, y: 0, z: st.velocity.z / hMag }
@@ -1181,21 +1310,26 @@ export class StoneSkipSim {
 
   _inertiaTimesOmega(q, omega) {
     const ob = Q.rotateInverse(q, omega)
-    const Ib = this.inertiaBody
-    return Q.rotate(q, { x: Ib.x * ob.x, y: Ib.y * ob.y, z: Ib.z * ob.z })
+    const I = this.inertiaBody
+    return Q.rotate(q, {
+      x: I.xx * ob.x + I.xy * ob.y + I.xz * ob.z,
+      y: I.xy * ob.x + I.yy * ob.y + I.yz * ob.z,
+      z: I.xz * ob.x + I.yz * ob.y + I.zz * ob.z,
+    })
   }
 
   /** I_world^-1 * L, with an optional added-inertia inflation while immersed. */
   _omegaFromMomentum(q, L, immersedFrac) {
     const Lb = Q.rotateInverse(q, L)
-    const Ib = this.inertiaBody
+    const I = this.inertiaBody
     const add = this.env.addedInertiaCoefficient * this.env.waterDensity *
       Math.pow(this.stone.radius, 5) * immersedFrac
-    const ob = {
-      x: Lb.x / (Ib.x + add),
-      y: Lb.y / Ib.y,                 // spin axis: added inertia is negligible
-      z: Lb.z / (Ib.z + add),
-    }
+    // Added inertia loads the TRANSVERSE axes only — along the spin axis it is
+    // negligible, as before. With a full tensor that is a diagonal inflation.
+    const ob = solveSymmetric3(
+      { ...I, xx: I.xx + add, zz: I.zz + add },
+      Lb,
+    )
     return Q.rotate(q, ob)
   }
 

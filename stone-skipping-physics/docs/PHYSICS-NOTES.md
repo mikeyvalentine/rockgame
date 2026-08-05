@@ -605,8 +605,10 @@ Everything below is now locked by permanent regression tests.
   less energy per bounce (9–11% vs 19%). Not scandalous — Bocquet's own max-bounce
   examples use θ=10°; the 20° magic is a minimum-bounce-SPEED result that dominates
   near the threshold — but players will discover 10–15° as the meta.
-- `comOffset` shifts the centre of mass without the parallel-axis inertia correction;
-  fine at the default 0 and small offsets.
+- ~~`comOffset` shifts the centre of mass without the parallel-axis inertia
+  correction; fine at the default 0 and small offsets.~~ **Fixed** — see §14. The
+  inertia tensor is now built about the centre of mass, with products of inertia.
+  Balanced stones are unchanged (the correction terms are all zero at `comOffset` 0).
 
 ---
 
@@ -738,3 +740,99 @@ Consequences to accept deliberately:
   tiebreak**. This measurement is an argument for at least storing distance alongside
   every score, and possibly for inverting that priority. Flagged as a design decision,
   not changed here.
+
+---
+
+## 14. Where Balance comes from — the rock itself
+
+§13 built the mechanism; this is the stat that drives it. `balanceFromStone(stone)`
+returns 0..1 and feeds `env.balanceRetention` (set that to `'auto'` to have the sim
+call it). Every input is something the stone visibly IS — how big, how heavy, how
+lopsided, how oblong — because `docs/02-gathering.md` requires a rock be readable by
+eye, not by a stat sheet.
+
+### 14.1 The governing quantity is `mass / radius`
+
+Attitude is lost to precession at `Omega = Gamma / L`. The disturbing torque
+`Gamma ~ rho_w V^2 R^3` comes from the water and is indifferent to how heavy the
+stone is. The angular momentum resisting it, `L = (1/2) m R^2 omega`, is not. So
+
+```
+Omega  ~  R / (m omega)
+```
+
+and the stone-side figure of merit is `m / R`. Measured in this solver at
+`balanceRetention: 0` (pure physics), reading the roll angle a run dies at:
+
+| stone | mass | `m/R` | end bank |
+|---|---|---|---|
+| tiny | 17 g | 0.85 | 12.6° |
+| small | 53 g | 1.78 | 10.9° |
+| default | 172 g | 3.82 | 6.7° |
+| large | 366 g | 6.11 | 7.0° |
+| very large | 668 g | 8.91 | 4.4° |
+
+**A tiny stone is badly balanced, not well balanced.** It has too little angular
+momentum to resist the same hit. `docs/02-gathering.md` had already given tiny rocks
+a "low ceiling" on other grounds; this is the mechanism underneath that call.
+
+Note the sim *already* modelled this correctly — the bank column is real physics off
+the inertia tensor — but it barely converted into skips (10–13 across the whole size
+range) because runs died of the attitude walk regardless. Balance is what converts
+retention the solver already had into run length.
+
+### 14.2 Thickness is deliberately not penalised
+
+Thickness raises `m/R` and measurably improves retention: a chunky test stone ended
+at **1.3°** of roll, the steadiest of anything tested. Thick stones are bad skippers
+for an unrelated reason — they are poor planing shapes and plunge — and the contact
+physics already charges them for it. Charging thickness again inside Balance would
+penalise one flaw twice, and the second charge would be measurably false.
+
+### 14.3 The centre-of-mass term, and the solver fix it required
+
+`comOffset` is the literal balance term — an off-centre centre of mass, exactly like
+an unbalanced wheel. It was **inert** before this work: sweeping it 0 → 0.20R left
+skips pinned at 12 and bank wandering non-monotonically, because the inertia tensor
+was computed about the *geometric* centre while rotation integrates about the *centre
+of mass*, and §12 listed the missing parallel-axis correction as a known limitation.
+
+The tensor is now built about the CoM, `I_cm = I_geo - m(|d|^2 delta_ij - d_i d_j)`,
+and carries products of inertia. Measured after the fix (documentary, pure physics):
+
+| `comOffset` | `I_yy` (spin) | end bank |
+|---|---|---|
+| 0 (balanced) | 1.739e-4 | 6.7° |
+| 0.20 x | 1.600e-4 (−8%) | 4.6° |
+| 0.30 x | 1.426e-4 (−18%) | 24.4° |
+| 0.25 x+z | 1.304e-4 (−25%) | 34.1° |
+
+The dominant effect is on `yy`: mass sitting off-axis means less inertia about the
+stone's own spin axis, so the same spin buys less angular momentum, so the same
+torque precesses it faster. Products of inertia appear only when the offset has both
+in-plane components. **Balanced stones are bit-identical** — every correction term is
+zero at `comOffset` 0, so nothing that was calibrated against the old diagonal tensor
+moved. Full suite green either way.
+
+### 14.4 Resulting stat
+
+Game profile, `balanceRetention: 'auto'`, Steiner throw, 15-run ensemble median:
+
+| stone | mass | Balance | skips |
+|---|---|---|---|
+| tiny pebble | 17 g | 0.182 | 27 |
+| small | 53 g | 0.318 | 45 |
+| default (reference) | 172 g | 0.500 | 53 |
+| large | 366 g | 0.615 | 63 |
+| very large | 668 g | 0.700 | 75 |
+| oblong (aspect 0.6) | 103 g | 0.258 | 46 |
+| lopsided (com 0.25) | 172 g | 0.250 | 46 |
+| warped (both) | 112 g | 0.143 | 40 |
+
+The reference stone scores exactly 0.5 by construction (`BALANCE_MR_REFERENCE` is its
+own `m/R`), so the profiles' "average rock" default means what it says.
+
+Balance rewards mass without limit, while throwability punishes it — which is what
+keeps the optimum a band rather than "pick the biggest rock". That tension is enforced
+in the rarity score (`rock-sift/src/rocks.js`), where throwability is a multiplicative
+gate rather than one term among several.
