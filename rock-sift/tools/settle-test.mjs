@@ -14,9 +14,9 @@ import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js"; // Node needs the explicit path; Vite does not
 
 import { buildGroundCollider, shoreHeight } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius, pourAndSettle } from "../src/field.js";
-import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, POOL_RADIUS, ROCK_COUNT, U } from "../src/config.js";
+import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, POOL_RADIUS, ROCK_COUNT, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
 const count = Number(process.argv[2]) || ROCK_COUNT;
 // Runtime steps at the frame delta, not the fine step used while settling. A bed
@@ -35,10 +35,7 @@ buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
 // The scanned GLB is the only source of geometry, loaded exactly as the browser
 // does it but via a base64 data URL, which is what Node's loader can reach.
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const archetypes = await loadRockArchetypes(
-  scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
-);
+const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
 
 for (const a of archetypes) a.radius = boundingRadius(a.vertexData.positions);
 

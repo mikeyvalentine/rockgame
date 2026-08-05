@@ -15,7 +15,8 @@ import {
 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
+import { ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
 const U = Number(process.argv[2]) || 4;
 const GRAVITY = -9.81 * U;
@@ -35,10 +36,7 @@ floorNode.position.copyFrom(floor);
 const floorBody = new PhysicsBody(floorNode, PhysicsMotionType.STATIC, false, scene);
 floorBody.shape = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(U * 20, U, U * 20), scene);
 
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const archetypes = await loadRockArchetypes(
-  scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
-);
+const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
 
 const rocks = [];
 archetypes.forEach((arch, i) => {

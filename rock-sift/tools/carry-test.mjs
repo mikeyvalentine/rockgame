@@ -22,11 +22,12 @@ import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
 
 import { buildGroundCollider } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius, pourAndSettle } from "../src/field.js";
 import { createCarrier } from "../src/carry.js";
 import {
   BED_RADIUS, CARRY, GRAVITY, MAX_FRAME_MS, MAX_SPEED, MAX_SPIN, PHYSICS_SUBSTEP_MS, ROCK_COUNT, U,
+  ARCHETYPE_COUNT, ROCK_SEED,
 } from "../src/config.js";
 
 const FPS = Number(process.argv[2]) || 60;
@@ -53,10 +54,7 @@ Scene.MaxDeltaTime = MAX_FRAME_MS;
 
 buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const archetypes = await loadRockArchetypes(
-  scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
-);
+const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
 for (const a of archetypes) a.radius = boundingRadius(a.vertexData.positions);
 
 const rocks = await pourAndSettle(scene, archetypes, { count: COUNT, seed: 5150 });

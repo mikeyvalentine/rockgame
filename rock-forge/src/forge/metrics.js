@@ -37,29 +37,9 @@ export function boundingRadius(radii, vertexCount) {
   return r;
 }
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
-/**
- * 0..1 rating of how well a stone would skip, plus a one-line verdict.
- * Kept identical to rock-sift's src/rocks.js so the two stay interchangeable.
- */
-export function skipRating({ sortedCm, massGrams }) {
-  const [a, b, c] = sortedCm;
-  const flatness = c / a;
-  const roundness = b / a;
-
-  const sFlat = clamp01(1 - Math.abs(flatness - 0.20) / 0.26);
-  const sRound = clamp01((roundness - 0.55) / 0.33);
-  const sMass = clamp01(1 - Math.abs(massGrams - 165) / 175);
-  const score = 0.45 * sFlat + 0.28 * sRound + 0.27 * sMass;
-
-  let verdict;
-  if (score > 0.82) verdict = "That's the one. Perfectly flat, sits right in the hand.";
-  else if (score > 0.65) verdict = "Good skipper. Worth keeping.";
-  else if (score > 0.45) verdict = flatness > 0.35 ? "Too thick — it'll plunge." : "Decent, but awkward in the hand.";
-  else if (massGrams > 400) verdict = "Way too heavy. Put it back.";
-  else if (massGrams < 40) verdict = "Too light, the wind will take it.";
-  else verdict = "Wrong shape. Keep looking.";
-
-  return { score, stars: Math.max(1, Math.round(score * 5)), verdict, flatness, roundness };
-}
+// The rating is NOT reimplemented here. It used to be — a copy carrying the note
+// "kept identical to rock-sift's src/rocks.js so the two stay interchangeable" — and
+// the two drifted anyway: this copy was still on the old star scoring, with no rarity
+// tiers, no balance term, and a flatness curve centred on 0.20 that the literature
+// does not support. Since rocks come from the forge, the stale copy was the live one.
+export { skipRating, RARITY_TIERS, rarityFor, STONE_STAT_TARGETS } from "../../../shared/rockRating.js";

@@ -20,11 +20,12 @@ import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
 
 import { buildGroundCollider } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius, pourAndSettle } from "../src/field.js";
 import { decodeBed, encodeBed } from "../src/bed.js";
 import {
   BED_RADIUS, GRAVITY, MAX_SPEED, MAX_SPIN, PHYSICS_SUBSTEP_MS, ROCK_COUNT, U,
+  ARCHETYPE_COUNT, ROCK_SEED,
 } from "../src/config.js";
 
 const NAME = process.argv[2] || "shore";
@@ -36,7 +37,6 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 
 /** A fresh world per variant: a bed must not inherit the previous one's state. */
 async function bake(seed) {
@@ -48,9 +48,7 @@ async function bake(seed) {
   scene.getPhysicsEngine().setSubTimeStep(PHYSICS_SUBSTEP_MS);
   buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
-  const archetypes = await loadRockArchetypes(
-    scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
-  );
+  const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
   for (const a of archetypes) a.radius = boundingRadius(a.vertexData.positions);
 
   const started = Date.now();
@@ -119,7 +117,7 @@ fs.writeFileSync(path.join(outDir, `${NAME}.json`), JSON.stringify({
   variants,
   // Recorded so a bed can be told at a glance whether it matches the current
   // world constants. Anything here changing means it needs re-baking.
-  world: { U, gravity: GRAVITY, bedRadius: BED_RADIUS, source: "river_rocks.glb" },
+  world: { U, gravity: GRAVITY, bedRadius: BED_RADIUS, source: `forge:${ROCK_SEED}:${ARCHETYPE_COUNT}` },
   bakedWith: `bake-bed.mjs ${NAME} ${VARIANTS} ${COUNT}`,
 }, null, 2) + "\n");
 

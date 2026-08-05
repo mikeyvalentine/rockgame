@@ -18,6 +18,17 @@ export const BED_RADIUS = 0.42;   // metres
 // the bed comes out as a broad field a few stones deep instead of a cone.
 export const POOL_RADIUS = 0.38;  // metres
 export const ROCK_COUNT = 540;
+/**
+ * How many DISTINCT stones the forge generates. The bed instances these, so this is
+ * the variety of the cast, not the size of the pile.
+ *
+ * The scanned GLB gave five, so every bed was five silhouettes at assorted scales and
+ * the repetition showed once you looked for it. Generated rocks have no such ceiling;
+ * 40 costs a few milliseconds and one mesh each.
+ */
+export const ARCHETYPE_COUNT = 40;
+/** Library seed. Baked beds store stone names, so changing this invalidates them. */
+export const ROCK_SEED = 99;
 
 // Havok is stepped at a fixed rate rather than at the frame delta. A variable
 // step is what makes a dense pile detonate: at 30 fps the solver gets a single
@@ -32,12 +43,35 @@ export const ROCK_COUNT = 540;
 export const PHYSICS_SUBSTEP_MS = 1000 / 60;
 export const MAX_FRAME_MS = 40;
 
+/**
+ * Ceiling on render resolution, as a multiple of CSS pixels.
+ *
+ * The canvas used to render at exactly 1x CSS regardless of the display, on the
+ * grounds that resolution is the biggest performance lever (docs/10) and that
+ * aliasing is deliberate style (docs/11). Both are true, and the result was still
+ * wrong: on a 2x display the browser upscales a half-resolution buffer, and stones
+ * a few pixels across come apart into blocks. That is not the kept-aliasing look —
+ * that look is crisp geometric edges, which needs the pixels to be REAL pixels.
+ *
+ * 2 is the compromise: sharp on ordinary Retina hardware, while a 3x phone renders
+ * at 2x rather than nine times the fill rate. Set to 1 to get the old behaviour.
+ */
+export const RENDER_SCALE_CAP = 2;
+
 // Stones are poured one even sheet over the whole field at a time, each sheet
 // settling before the next lands. Dropping the whole bed at once builds a column
 // about a metre tall, and stones arriving at 4 m/s move further per step than
 // their own thickness — so they tunnel straight through the ground.
 export const LAYER_STEPS = 110;  // substeps of SETTLE_DT between sheets
-export const FINAL_STEPS = 400;  // substeps once the last sheet is down
+// Raised 400 -> 1000 when the bed became generated rather than scanned. Five scanned
+// river stones settled in 400; a cast of 40 does not, because it contains shapes the
+// scans never had — near-cubes and 350 g cobbles, which roll and rock for longer
+// before they find a face to sit on. Measured on the 540-stone bed: 400 steps leaves
+// 4 stones still drifting, 700 leaves 3, 1000 leaves none.
+//
+// Costs ~3.4 s of pour, and costs it only at BAKE time: the browser restores a baked
+// bed and never runs the pour.
+export const FINAL_STEPS = 1000;  // substeps once the last sheet is down
 export const SETTLE_DT = 1 / 240;
 export const SPAWN_GAP = 0.02;   // metres of clearance above the current pile
 

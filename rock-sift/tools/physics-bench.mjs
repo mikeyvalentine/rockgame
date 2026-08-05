@@ -55,10 +55,10 @@ import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
 
 import { buildGroundCollider } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius, pourAndSettle } from "../src/field.js";
 import { createSiftHand } from "../src/hand.js";
-import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, U } from "../src/config.js";
+import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
 const COUNTS = (process.argv[2] || "270,540,1080,2160").split(",").map(Number);
 const DT = PHYSICS_SUBSTEP_MS / 1000;
@@ -68,8 +68,6 @@ const FRAME_BUDGET_MS = 6; // physics' share of a 60 fps frame
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const glbUrl = `data:;base64,${glb.toString("base64")}`;
 
 /** Median is the honest statistic here — the mean is dragged by one-off spikes. */
 function median(xs) {
@@ -84,7 +82,7 @@ async function bench(count) {
   const physics = scene.getPhysicsEngine();
   buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
-  const archetypes = await loadRockArchetypes(scene, glbUrl, { unitScale: U, seed: 99, pluginExtension: ".glb" });
+  const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
   for (const a of archetypes) a.radius = boundingRadius(a.vertexData.positions);
 
   const poured = Date.now();
