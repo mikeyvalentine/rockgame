@@ -14,14 +14,25 @@ export function createHud() {
     panelName: el("panel-name"),
     panelDims: el("panel-dims"),
     panelMass: el("panel-mass"),
-    panelStars: el("panel-stars"),
+    // Was `panel-stars`. The element is reused as the rarity slot — the id stayed
+    // put so the stylesheet did not have to move for a text change.
+    panelRarity: el("panel-stars"),
     panelVerdict: el("panel-verdict"),
+    stat: {
+      mass: el("stat-mass"),
+      size: el("stat-size"),
+      flatness: el("stat-flatness"),
+      balance: el("stat-balance"),
+    },
   };
 
   let bestScore = 0;
   let keptShown = -1;
 
-  const stars = (n) => "★".repeat(n) + "☆".repeat(5 - n);
+  // Pips, not numerals. docs/02-gathering.md wants inspection to stay a judgement
+  // call — "stat bars, not numbers... deliberately slightly ambiguous" — so the
+  // player sees how full a bar is and never the score behind it.
+  const pips = (n) => "●".repeat(n) + "○".repeat(5 - n);
   const grams = (g) => (g < 1000 ? `${Math.round(g)} g` : `${(g / 1000).toFixed(2)} kg`);
 
   return {
@@ -44,14 +55,27 @@ export function createHud() {
       nodes.panelName.textContent = metrics.label;
       nodes.panelDims.textContent = metrics.sortedCm.map((v) => v.toFixed(1)).join(" × ") + " cm";
       nodes.panelMass.textContent = grams(metrics.massGrams);
-      nodes.panelStars.textContent = stars(r.stars);
+      // Per-stat pips. Each one is closeness to the ideal skipping stone, so they
+      // all read the same way round: a boulder scores empty on mass and a pebble
+      // scores empty on mass too, from the opposite side.
+      for (const k of Object.keys(nodes.stat)) {
+        if (nodes.stat[k]) nodes.stat[k].textContent = pips(r.pips[k]);
+      }
+      // Rarity, not a score: the player gets a colour and a word.
+      if (nodes.panelRarity) {
+        nodes.panelRarity.textContent = r.rarity.label;
+        nodes.panelRarity.style.color = r.rarity.color;
+      }
+      // Tint the stone's name too, so the tier reads at a glance.
+      nodes.panelName.style.color = r.rarity.color;
       nodes.panelVerdict.textContent = r.verdict;
       nodes.panel.classList.add("visible");
       nodes.hint.classList.add("hidden");
 
       if (r.score > bestScore) {
         bestScore = r.score;
-        nodes.best.textContent = `${stars(r.stars)} (${metrics.sortedCm[0].toFixed(1)} cm)`;
+        nodes.best.textContent = `${r.rarity.label} (${metrics.sortedCm[0].toFixed(1)} cm)`;
+        nodes.best.style.color = r.rarity.color;
       }
     },
 

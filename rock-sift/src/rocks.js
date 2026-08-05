@@ -1,4 +1,5 @@
-// How well a stone would skip, from its own geometry.
+// How well a stone would skip, from its own geometry — and the rarity tier the
+// player actually sees.
 //
 // This file used to also *generate* rock meshes — noise-displaced icospheres,
 // optionally carved by half-spaces for angular stone. All of that has been
@@ -8,25 +9,247 @@
 
 import { clamp01 } from "./noise.js";
 
-/** 0..1 rating of how well a stone would skip, plus a one-line verdict. */
+/**
+ * Rarity tiers, worst to best. Thresholds are `min` (inclusive).
+ *
+ * The player never sees the underlying number — a stone reads as a colour and a
+ * word, the way loot does.
+ */
+/**
+ * Thresholds sit UNDER the best score a real stone can reach, which is 0.929 — a
+ * 165 g disc 8.5 cm across and 1.10 cm thick, i.e. the ideal stone itself.
+ *
+ * A perfect find cannot score 1.0, and should not: balance keeps rising with mass
+ * while throwability falls, so the ideal-mass stone tops out around 4/5 on balance
+ * by construction. That tension is real and is not to be tuned away — the tiers are
+ * placed to fit it instead. Thresholds above 0.929 make the top tier undroppable,
+ * which is exactly the bug this replaced.
+ */
+export const RARITY_TIERS = [
+  { key: "common", label: "Common", color: "#9ba1a6", min: 0.0 },
+  { key: "uncommon", label: "Uncommon", color: "#4caf50", min: 0.42 },
+  { key: "rare", label: "Rare", color: "#3b82f6", min: 0.62 },
+  { key: "epic", label: "Epic", color: "#a855f7", min: 0.78 },
+  { key: "legendary", label: "Legendary", color: "#f59e0b", min: 0.9 },
+];
+
+/** The tier a 0..1 score falls in. Never undefined — 0 lands on Common. */
+export function rarityFor(score) {
+  let tier = RARITY_TIERS[0];
+  for (const t of RARITY_TIERS) if (score >= t.min) tier = t;
+  return tier;
+}
+
+/**
+ * Every stat is scored as DIVERGENCE FROM THE IDEAL SKIPPING STONE, not as a raw
+ * magnitude. 5/5 mass means "the mathematically right mass", not "heavy" — so a
+ * boulder and a pebble both score badly on mass, from opposite directions, and the
+ * scale reads the same way for every stat: more pips is closer to perfect.
+ *
+ * Targets come from the literature collected in
+ * stone-skipping-physics/docs/PHYSICS-NOTES.md section 8, not from taste:
+ *
+ *   mass       100-200 g is the good band; the solver's validated default is 172 g
+ *              (its energy matched the Splash Lab's measured 164 J to within 5%)
+ *   diameter   5-10 cm across; the skimming championship caps entries at 76 mm
+ *   flatness   DERIVED, not chosen — see below.
+ *
+ * ### The three targets are not independent, and must not be picked separately
+ *
+ * For a stone of density `rho`, `mass = rho * pi * (D/2)^2 * t`, so fixing any two of
+ * {mass, diameter, thickness} fixes the third. Choosing all three by hand produced a
+ * set no real rock could satisfy: at 8.5 cm and a flatness of 0.075 a slate disc
+ * weighs 98 g, not 170 g. Sweeping every physically possible disc, the best
+ * attainable score was 0.816 — **Epic and Legendary were unreachable by any stone
+ * that could exist.**
+ *
+ * So flatness is now derived from the other two: the thickness a 165 g stone 8.5 cm
+ * across must have is 1.1 cm, giving `t/D = 0.129`. That set describes one real
+ * stone, and PHYSICS-NOTES section 8 describes the same one — "5-10 cm across, ~1 cm
+ * thick, 100-200 g".
+ *
+ * (Section 8 also says the thickness ratio `lambda = R/d` wants 5-10, which implies
+ * a flatness near 0.075 and contradicts its own "~1 cm thick at 5-10 cm across" in
+ * the same breath. The directly observed dimensions are the more trustworthy half of
+ * that sentence, so they win here.)
+ *
+ * `tolerance` is the divergence at which a stat scores zero. Balance is not listed:
+ * it has no single ideal value, it is a curve over mass and radius together
+ * (`balanceFromMetrics`).
+ */
+export const STONE_STAT_TARGETS = {
+  mass: { label: "mass", ideal: 165, tolerance: 150, unit: "g" },
+  size: { label: "size", ideal: 8.5, tolerance: 4.5, unit: "cm" },
+  // = thickness of a 165 g, 8.5 cm stone, over its diameter. Derived, never tuned:
+  // change mass or size and recompute this, or the targets stop describing a real
+  // rock and the top rarity tiers become unreachable again.
+  flatness: { label: "flatness", ideal: 0.129, tolerance: 0.15, unit: "" },
+};
+
+/**
+ * How much of the flatness score an entirely oblong face can take away, and the
+ * b/a shortfall at which that penalty is fully paid.
+ */
+const FLATNESS_OBLONG_WEIGHT = 0.45;
+const FLATNESS_OBLONG_TOLERANCE = 0.45;
+
+/**
+ * Relative weights in the overall score. Flatness leads because a stone that is not
+ * flat does not plane at all — every other virtue is moot if it plunges.
+ *
+ * Roughness is deliberately absent. It exists in the solver as a skin-friction
+ * multiplier, but it is not a rated stat: it is close to invisible on a real stone
+ * and its effect is a fraction of a percent of a run.
+ */
+const STAT_WEIGHTS = { flatness: 0.45, balance: 0.3, size: 0.25 };
+
+/**
+ * FLATNESS, 0..1 — one stat for "how much like a skipping disc is this".
+ *
+ * Flatness and face-shape used to be two stats, and that was wrong in a way worth
+ * recording: "roundness" meant the face ellipse ratio b/a, so a **sphere scored
+ * 5/5** on it — a ball rated ideal. The word is ambiguous. A circular *face* is
+ * good; a *round solid* is the worst possible skipping stone. One stat now measures
+ * both, and a ball reads 0/5 as it should.
+ *
+ * Thinness is the dominant term (`c/a` against the ideal 0.075), scaled down for an
+ * oblong face, which meets the water differently every half turn instead of
+ * presenting the same profile each rotation.
+ *
+ * Note `b/a` also appears inside `balanceFromMetrics` for that same physical reason,
+ * so an oblong stone is marked down twice — once for being a poor disc, once for the
+ * forcing that causes. That is deliberate but it is a real overlap, which is why the
+ * penalty here is partial rather than a gate.
+ */
+export function flatnessScore(metrics) {
+  const [a, b, c] = metrics.sortedCm; // a >= b >= c
+  if (!(a > 0)) return 0;
+  const thin = scoreAgainst(c / a, STONE_STAT_TARGETS.flatness);
+  const oblong = clamp01((1 - b / a) / FLATNESS_OBLONG_TOLERANCE);
+  return clamp01(thin * (1 - FLATNESS_OBLONG_WEIGHT * oblong));
+}
+
+/** 0..1 for one stat: 1 at the ideal, falling to 0 at `tolerance` away. */
+function scoreAgainst(value, target) {
+  return clamp01(1 - Math.abs(value - target.ideal) / target.tolerance);
+}
+
+const BALANCE_MR_REFERENCE = 3.82; // kg/m — the reference stone, scores 0.5
+
+/**
+ * BALANCE, 0..1 — how well the stone holds its trim once thrown.
+ *
+ * Mirror of `balanceFromStone()` in stone-skipping-physics/src/stoneSkipping.js,
+ * which is canonical and carries the derivation. Short version: attitude is lost to
+ * precession at `Omega = Gamma / L`; the water's torque does not care how heavy the
+ * stone is but the angular momentum resisting it does, so the figure of merit is
+ * `mass / radius`. A tiny stone is therefore badly balanced, not well balanced.
+ *
+ * Measured off bounding dimensions, so it cannot see an off-centre centre of mass —
+ * the solver's `comOffset` term has no counterpart here. A stone that is lopsided
+ * *inside* reads better here than it throws.
+ */
+export function balanceFromMetrics(metrics, shape = null) {
+  const [a, b] = metrics.sortedCm; // a >= b, centimetres
+  const radiusM = a / 2 / 100;
+  const massKg = metrics.massGrams / 1000;
+  if (!(radiusM > 0) || !(massKg > 0)) return 0;
+  const mOverR = massKg / radiusM;
+  const gyro = mOverR / (mOverR + BALANCE_MR_REFERENCE);
+  if (!shape || shape.degenerate) {
+    const roundTerm = 1 - 0.35 * clamp01((1 - b / a) / 0.45);
+    return clamp01(gyro * roundTerm);
+  }
+  // Real geometry: measured transverse-inertia imbalance instead of the face ellipse,
+  // and the true centre-of-mass offset, which bounding dimensions cannot see at all.
+  const roundTerm = 1 - 0.35 * clamp01(shape.asymmetry);
+  const comTerm = 1 - 0.6 * clamp01(shape.lopsidedness / 0.3);
+  return clamp01(gyro * roundTerm * comTerm);
+}
+
+/**
+ * Flatness from measured geometry — how much like a skipping disc the rock is.
+ *
+ * `shape.flatness` is already the honest quantity: `I1/(I2+I3)` rescaled by the
+ * perpendicular axis theorem, so a ball is 0 and a wafer is 1 with no tuning
+ * constant. It only needs the same oblong penalty the bounding-box path applies,
+ * taken from measured asymmetry rather than a face ellipse ratio.
+ */
+export function flatnessFromShape(shape) {
+  const oblong = clamp01(shape.asymmetry / FLATNESS_OBLONG_TOLERANCE);
+  return clamp01(shape.flatness * (1 - FLATNESS_OBLONG_WEIGHT * oblong));
+}
+
+/**
+ * Rate a stone against the ideal skipper.
+ *
+ * Returns per-stat 0..1 scores (and 0..5 pip counts for display), an overall score,
+ * and the rarity tier it earns. The player is shown pips and a tier — never the
+ * numbers, which would turn a judgement call into a readout.
+ */
 export function skipRating(metrics) {
   const [a, b, c] = metrics.sortedCm; // a >= b >= c, centimetres
-  const flatness = c / a;
-  const roundness = b / a;
-  const g = metrics.massGrams;
+  let flatness = c / a;
+  let roundness = b / a;
 
-  const sFlat = clamp01(1 - Math.abs(flatness - 0.20) / 0.26);
-  const sRound = clamp01((roundness - 0.55) / 0.33);
-  const sMass = clamp01(1 - Math.abs(g - 165) / 175);
-  const score = 0.45 * sFlat + 0.28 * sRound + 0.27 * sMass;
+  // When the caller hands us the rock's real geometry, grade the rock rather than
+  // the box around it. `metrics.shape` is a `shapeDescriptors()` result, whose
+  // flatness and asymmetry come from the inertia tensor and whose lopsidedness is
+  // the true centre-of-mass offset — the thing bounding dimensions cannot see at
+  // all, and the reason a stone that is lopsided INSIDE used to read better here
+  // than it threw.
+  const shape = metrics.shape && !metrics.shape.degenerate ? metrics.shape : null;
 
+  const stats = {
+    mass: scoreAgainst(metrics.massGrams, STONE_STAT_TARGETS.mass),
+    size: scoreAgainst(a, STONE_STAT_TARGETS.size),
+    flatness: shape ? flatnessFromShape(shape) : flatnessScore(metrics),
+    // Balance is already a divergence-style score: it peaks for a stone whose mass
+    // and radius are in the right relationship, and falls off both ways. Renormalised
+    // against what a stone can actually reach (the raw curve saturates around 0.7).
+    balance: clamp01(balanceFromMetrics(metrics, shape) / 0.65),
+  };
+
+  // Mass gates rather than contributes. A rock you cannot throw is not a good
+  // skipper however good its proportions are — as one weighted term among several a
+  // 1.5 kg boulder scored well on shape, failed only this, and still came out
+  // Uncommon.
+  const shapeScore =
+    STAT_WEIGHTS.flatness * stats.flatness +
+    STAT_WEIGHTS.balance * stats.balance +
+    STAT_WEIGHTS.size * stats.size;
+  const score = clamp01(shapeScore * stats.mass);
+
+  const pips = {};
+  for (const k of Object.keys(stats)) pips[k] = Math.round(stats[k] * 5);
+
+  // The verdict names the WORST stat, so the player learns which way a stone missed
+  // rather than just that it did.
+  const worst = Object.keys(stats).reduce((lo, k) => (stats[k] < stats[lo] ? k : lo), "mass");
   let verdict;
-  if (score > 0.82) verdict = "That's the one. Perfectly flat, sits right in the hand.";
+  if (score > 0.82) verdict = "That's the one. Everything about it is right.";
   else if (score > 0.65) verdict = "Good skipper. Worth keeping.";
-  else if (score > 0.45) verdict = flatness > 0.35 ? "Too thick — it'll plunge." : "Decent, but awkward in the hand.";
-  else if (g > 400) verdict = "Way too heavy. Put it back.";
-  else if (g < 40) verdict = "Too light, the wind will take it.";
-  else verdict = "Wrong shape. Keep looking.";
+  else if (worst === "mass") {
+    verdict = metrics.massGrams > STONE_STAT_TARGETS.mass.ideal
+      ? "Too heavy to throw properly." : "Too light — the wind will take it.";
+  } else if (worst === "flatness") {
+    // Name whichever way it failed to be a disc — too oblong, too thick, or too thin.
+    // Measured asymmetry and flatness when we have the real mesh; the bounding-box
+    // ratios otherwise. Thresholds differ because the quantities do: `shape.flatness`
+    // is 1 for a wafer and 0 for a ball, while `c/a` is a raw thickness ratio.
+    const tooOblong = shape ? shape.asymmetry > 0.4 : roundness < 0.6;
+    const tooThick = shape
+      ? shape.flatness < 0.55
+      : flatness > STONE_STAT_TARGETS.flatness.ideal;
+    if (tooOblong) verdict = "Too oblong — it'll wobble every turn.";
+    else if (tooThick) verdict = "Too thick — it'll plunge.";
+    else verdict = "Thin as a wafer, it won't hold a line.";
+  } else if (worst === "balance") {
+    verdict = shape && shape.lopsidedness > 0.15
+      ? "Weight sits off to one side. It'll wander."
+      : "Won't hold its attitude. Dies early.";
+  }
+  else verdict = "Wrong size for the hand.";
 
-  return { score, stars: Math.max(1, Math.round(score * 5)), verdict, flatness, roundness };
+  return { score, stats, pips, rarity: rarityFor(score), verdict, flatness, roundness };
 }

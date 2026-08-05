@@ -32,9 +32,15 @@
 
       <div id="panel">
         <div id="panel-name">Stone</div>
-        <div class="row"><span class="k">size</span><span class="v" id="panel-dims"></span></div>
+        <div class="row"><span class="k">dimensions</span><span class="v" id="panel-dims"></span></div>
         <div class="row"><span class="k">weight</span><span class="v" id="panel-mass"></span></div>
-        <div class="row"><span class="k">skip rating</span><span class="v stars" id="panel-stars"></span></div>
+        <!-- Every stat reads as closeness to the ideal skipping stone, never as a raw
+             magnitude: full pips on mass means "the right mass", not "heavy". -->
+        <div class="row"><span class="k">mass</span><span class="v stars" id="stat-mass"></span></div>
+        <div class="row"><span class="k">size</span><span class="v stars" id="stat-size"></span></div>
+        <div class="row"><span class="k">flatness</span><span class="v stars" id="stat-flatness"></span></div>
+        <div class="row"><span class="k">balance</span><span class="v stars" id="stat-balance"></span></div>
+        <div class="row"><span class="k">rarity</span><span class="v" id="panel-stars"></span></div>
         <div id="panel-verdict"></div>
         <div id="panel-hint">click anywhere, or press Esc, to put it back</div>
       </div>
