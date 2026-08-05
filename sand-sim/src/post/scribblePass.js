@@ -165,7 +165,7 @@ export function createScribblePass(scene, camera, depthRtt) {
     const params = {
         enabled: false,
         bleed: 0.0, warp: 0.0,
-        levels: 30, satAmount: 1.02,
+        levels: 50, satAmount: 1.02,
         strokeAmount: 0.02, strokeFreq: 10, strokeAngle: 0.5,
         paperScale: 37.25, grain: 0.14,
         ignoreSky: true,

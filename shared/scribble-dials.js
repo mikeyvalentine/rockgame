@@ -29,7 +29,7 @@ const LS_KEY = "rockgame_scribble";
 // scribbleEnv.js, babylon-water inline + portable) or labs drift.
 export const SCRIBBLE_PARAMS = {
   on:            ["pastel on",      0, 1, 1,        1,      "pastel"],
-  levels:        ["value steps",    2, 64, 1,       30,     "pastel"],
+  levels:        ["value steps",    2, 64, 1,       50,     "pastel"],
   satAmount:     ["saturation",     0, 1.4, 0.02,   1.02,   "pastel"],
   strokeAmount:  ["stroke amount",  0, 1, 0.02,     0.02,   "pastel"],
   strokeFreq:    ["stroke density", 4, 140, 2,      10,     "pastel"],

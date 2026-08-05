@@ -767,17 +767,18 @@ waterMat.setColor3("tint", waterTint);
 // The day's weather. strength 0 is dead glass, 1 is a choppy afternoon.
 // Live-tunable: WIND.set(0.6, 40) for a moderate breeze out of 40 degrees.
 const WIND = window.WIND = {
-    strength: 0.55,
-    dirDeg: 25,
+    // The user's dialled look (2026-08-05 dump): near-glass water — strength
+    // 0.01 is the hero-calm morning docs/11 names, with the swell stretched
+    // long (waveScale 8 puts the octaves at 7.2 m down to 1.2 m) so what
+    // little motion remains is a slow heavy roll, not chop. Wind out of 93°.
+    strength: 0.01,
+    dirDeg: 93,
     detail: 3.0,       // full detail, now that supersampling handles the aliasing
-    // 4.0: the base octaves are 0.90/0.55/0.28/0.15 m, so this puts the swell at
-    // 3.6 m down to 0.6 m chop. Fewer, longer waves across a 24 m pond, which is
-    // what a pond actually looks like — the shorter set read as busy noise at
-    // this scale. Amplitude scales with it so steepness holds, and speed follows
-    // from dispersion, so the long swell also rolls slower.
-    waveScale: 4.0,    // 1 is the original fine chop; higher is longer swell
-    blurGain: 0.0,     // off: measured under 5% effect against a plain sky, and
-                       // it costs four extra detailWeight terms per pixel
+    waveScale: 8.0,    // 1 is the original fine chop; higher is longer swell
+    // 45 per the same dump — at near-glass the reflection carries the frame,
+    // so the variance-driven blur earns its four detailWeight terms per pixel
+    // (the old 0.0 was measured against a busier surface).
+    blurGain: 45.0,
     set(strength, dirDeg) {
         this.strength = strength;
         if (dirDeg !== undefined) this.dirDeg = dirDeg;
@@ -1541,7 +1542,7 @@ const SCRIBBLE = window.SCRIBBLE = {
     // Pastel. Defaults re-tuned 2026-08-04 to the universal look the user
     // dialled in on the shared cross-lab panel (superseding this file's
     // original tuning) — keep in step with shared/scribble-dials.js.
-    levels: 30.0,
+    levels: 50.0,
     satAmount: 1.02,
     strokeAmount: 0.02,
     strokeFreq: 10.0,

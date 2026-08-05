@@ -68,7 +68,7 @@ const state = {
   // panel and set it as every lab's default (superseding the dump values the
   // comments above describe). Keep in step with shared/scribble-dials.js.
   scribble: true,
-  scribbleLevels: 30,         // value steps
+  scribbleLevels: 50,         // value steps
   scribbleSat: 1.02,          // saturation
   scribbleStrokeAmount: 0.02, // stroke amount
   scribbleStrokeFreq: 10,     // stroke density
@@ -768,7 +768,7 @@ function buildPanel() {
     format: (v) => v.toFixed(3),
     onChange: (v) => { state.scribbleWarp = v; scribbleFx.set("warp", v); },
   });
-  p.note("The universal pastel look, dialled in on the shared panel 2026-08-04 — value steps 30, saturation 1.02, strokes 0.02 at density 10, paper scale 37.25, grain 0.14, warp 0, bleed 0. Depth-edge outlines have been removed from the shader entirely: they traced each rock's undisplaced sphere silhouette as a halo floating outside the stone. The depth pass survives only to hand the sky back as photography.");
+  p.note("The universal pastel look, dialled in on the shared panel 2026-08-04 — value steps 50, saturation 1.02, strokes 0.02 at density 10, paper scale 37.25, grain 0.14, warp 0, bleed 0. Depth-edge outlines have been removed from the shader entirely: they traced each rock's undisplaced sphere silhouette as a halo floating outside the stone. The depth pass survives only to hand the sky back as photography.");
 
   p.section("debug");
   p.toggle("bypass shape texture", {

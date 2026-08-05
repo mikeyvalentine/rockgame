@@ -319,13 +319,13 @@ let sim, trailPts, trail, ripples = []
 // on the same swell the pond page shows.
 let ambient = null
 let waveSource = 'gerstner'
-const AMBIENT_WIND = { windStrength: 0.55, windDirDeg: 25, waveScale: 4 }
+const AMBIENT_WIND = { windStrength: 0.01, windDirDeg: 93, waveScale: 8 }
 import('/babylon-water/ambient.js')
   .then((m) => {
     ambient = m
     const opt = $('ambientOpt')
     opt.disabled = false
-    opt.textContent = 'pond ambient — babylon-water, wind 0.55 @ 25deg'
+    opt.textContent = 'pond ambient — babylon-water, near-glass 0.01 @ 93deg'
   })
   .catch(() => { $('ambientOpt').textContent = 'pond ambient — unavailable here' })
 $('waveSource').addEventListener('change', (e) => {

@@ -262,7 +262,7 @@ export function createScribble(scene, camera, engine, opts = {}) {
     warp:         opts.warp         != null ? opts.warp         : 0.0,
     // Pastel. Defaults re-tuned 2026-08-04 to the user's universal look —
     // keep in step with shared/scribble-dials.js.
-    levels:       opts.levels       != null ? opts.levels       : 30.0,
+    levels:       opts.levels       != null ? opts.levels       : 50.0,
     satAmount:    opts.satAmount    != null ? opts.satAmount    : 1.02,
     strokeAmount: opts.strokeAmount != null ? opts.strokeAmount : 0.02,
     strokeFreq:   opts.strokeFreq   != null ? opts.strokeFreq   : 10.0,
