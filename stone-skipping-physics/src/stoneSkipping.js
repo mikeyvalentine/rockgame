@@ -109,7 +109,7 @@ export const Q = {
  * Bump on any change that alters simulation output. Shown in the demo HUD so it is
  * obvious at a glance whether the browser is running current code or a cached module.
  */
-export const VERSION = '0.8.0-audit'
+export const VERSION = '0.8.1-air-nutation-damping'
 
 const UP = Object.freeze({ x: 0, y: 1, z: 0 })
 const ZERO = Object.freeze({ x: 0, y: 0, z: 0 })
