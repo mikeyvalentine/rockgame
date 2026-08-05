@@ -34,7 +34,7 @@ import {
   boundingRadius, parkArchetypeSources, pourAndSettle, scatterGravel,
 } from "./field.js";
 import {
-  ARCHETYPE_COUNT, BED_RADIUS, GRAVITY, MAX_FRAME_MS, MAX_SPEED, MAX_SPIN,
+  ARCHETYPE_COUNT, BED_RADIUS, GRAVITY, MAX_FRAME_MS, MAX_SPEED, MAX_SPIN, RENDER_SCALE_CAP,
   PHYSICS_SUBSTEP_MS, ROCK_COUNT, ROCK_SEED, U,
 } from "./config.js";
 import { createScribble } from "../../shared/scribble-fx.js";
@@ -48,11 +48,19 @@ const SIFT_HINT = "<strong>Drag</strong> to part the stones · <strong>Drag from
 
 async function boot() {
   const canvas = document.getElementById("view");
-  // AUDIT #1: antialias off (docs/11 — the aliasing is the look) and no
-  // adaptToDeviceRatio — that flag rendered the whole page at devicePixelRatio,
-  // 4x the pixels on Retina, across FOUR geometry passes. docs/10 names
-  // resolution as the biggest lever; 1x is the art direction.
+  // AUDIT #1: antialias off — docs/11, the aliasing is the look, and MSAA is one of
+  // the biggest costs simply removed. That stays.
+  //
+  // What did NOT stay is rendering at 1x CSS on every display. `adaptToDeviceRatio`
+  // was dropped because it rendered at full devicePixelRatio — 4x the pixels on
+  // Retina across four geometry passes — but the cure was worse than the disease: a
+  // half-resolution buffer upscaled by the browser turns stones a few pixels across
+  // into mush. Kept aliasing means crisp geometric edges, and crisp edges need real
+  // pixels. RENDER_SCALE_CAP takes the device ratio up to a limit instead of taking
+  // all of it or none.
   const engine = new Engine(canvas, false, { stencil: false });
+  const renderScale = Math.min(window.devicePixelRatio || 1, RENDER_SCALE_CAP);
+  engine.setHardwareScalingLevel(1 / renderScale);
   const scene = new Scene(engine);
   scene.ambientColor = new Color3(0.2, 0.22, 0.24);
 
@@ -291,7 +299,11 @@ async function loadBeds(scene, archetypes, count) {
   for (let i = 0; i < count; i++) {
     try {
       // Spread the picks so neighbouring spots get different beds.
-      const bed = await fetchBakedBed("/assets/beds/shore.json", (i + 0.5) / count);
+      // Beds are only usable if they were baked from the stones we are actually
+      // generating. Mismatched ones are ignored rather than fatal — see below.
+      const bed = await fetchBakedBed("/assets/beds/shore.json", (i + 0.5) / count, {
+        expectSource: `forge:${ROCK_SEED}:${ARCHETYPE_COUNT}`,
+      });
       if (bed) {
         console.log(`spot ${i}: ${bed.variant}, ${bed.count} stones`);
         beds.push(bed);
@@ -304,7 +316,7 @@ async function loadBeds(scene, archetypes, count) {
   }
   if (beds.length) return beds;
 
-  console.warn("No baked beds found — pouring one, which is slow. Run `npm run bake`.");
+  console.warn("No usable baked bed — pouring one, which is slow. Run `npm run bake`.");
   const { captureBed } = await import("./bed.js");
   const rocks = await pour(scene, archetypes, 5150);
   const bed = captureBed(rocks, archetypes);
@@ -312,10 +324,20 @@ async function loadBeds(scene, archetypes, count) {
   return [bed];
 }
 
-function pour(scene, archetypes, seed) {
+/**
+ * Pour a bed live.
+ *
+ * `spread` is passed straight through to the settler, so a spot can have its own
+ * character — a tight bank, a thin scatter, more or fewer stones — with nothing
+ * baked. Baked beds are a startup OPTIMISATION, never the source of truth: the pour
+ * is always available and always authoritative, which is what keeps rock generation
+ * open to change instead of frozen behind a bake step.
+ */
+function pour(scene, archetypes, seed, spread = {}) {
   return pourAndSettle(scene, archetypes, {
     count: ROCK_COUNT,
     seed,
+    ...spread,
     onProgress: async (frac, label) => {
       hud.setStatus(`${label} — ${Math.round(frac * 100)}%`);
       await new Promise((r) => setTimeout(r, 0));

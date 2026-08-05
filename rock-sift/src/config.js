@@ -43,6 +43,21 @@ export const ROCK_SEED = 99;
 export const PHYSICS_SUBSTEP_MS = 1000 / 60;
 export const MAX_FRAME_MS = 40;
 
+/**
+ * Ceiling on render resolution, as a multiple of CSS pixels.
+ *
+ * The canvas used to render at exactly 1x CSS regardless of the display, on the
+ * grounds that resolution is the biggest performance lever (docs/10) and that
+ * aliasing is deliberate style (docs/11). Both are true, and the result was still
+ * wrong: on a 2x display the browser upscales a half-resolution buffer, and stones
+ * a few pixels across come apart into blocks. That is not the kept-aliasing look —
+ * that look is crisp geometric edges, which needs the pixels to be REAL pixels.
+ *
+ * 2 is the compromise: sharp on ordinary Retina hardware, while a 3x phone renders
+ * at 2x rather than nine times the fill rate. Set to 1 to get the old behaviour.
+ */
+export const RENDER_SCALE_CAP = 2;
+
 // Stones are poured one even sheet over the whole field at a time, each sheet
 // settling before the next lands. Dropping the whole bed at once builds a column
 // about a metre tall, and stones arriving at 4 m/s move further per step than
