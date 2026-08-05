@@ -64,18 +64,20 @@ const state = {
   // user's request, after they inked each rock's undisplaced sphere silhouette
   // as a halo floating outside the visible stone. The depth pre-pass survives
   // only to mask the sky back to photography.
+  // Re-tuned 2026-08-04: the user dialled a universal look on the shared
+  // panel and set it as every lab's default (superseding the dump values the
+  // comments above describe). Keep in step with shared/scribble-dials.js.
   scribble: true,
-  scribbleLevels: 24,         // value steps
-  scribbleSat: 0.88,          // saturation
-  scribbleStrokeAmount: 0.26, // stroke amount
-  scribbleStrokeFreq: 104,    // stroke density
-  scribbleStrokeAngle: 0.6,   // stroke angle
+  scribbleLevels: 30,         // value steps
+  scribbleSat: 1.02,          // saturation
+  scribbleStrokeAmount: 0.02, // stroke amount
+  scribbleStrokeFreq: 10,     // stroke density
+  scribbleStrokeAngle: 0.5,   // stroke angle
   scribbleIgnoreSky: true,    // ignore sky
-  scribblePaperScale: 19.25,  // paper scale — was not tracked or exposed at all
-  scribbleGrain: 0.42,        // paper grain — was 0.20, a stale value from
-                               // before this port existed
-  scribbleBleed: 0.0,         // colour bleed — was swapped with warp below
-  scribbleWarp: 0.001,        // paper warp — was swapped with bleed above
+  scribblePaperScale: 37.25,  // paper scale
+  scribbleGrain: 0.14,        // paper grain
+  scribbleBleed: 0.0,         // colour bleed
+  scribbleWarp: 0.0,          // paper warp
 };
 
 let engine, scene, camera, sun, ground, instrumentation, envSetup, scribbleFx;
@@ -744,7 +746,7 @@ function buildPanel() {
     onChange: (v) => { state.scribbleIgnoreSky = v; scribbleFx.set("ignoreSky", v); },
   });
   p.slider("paper scale", {
-    min: 0.5, max: 20, step: 0.25, value: state.scribblePaperScale,
+    min: 0.5, max: 40, step: 0.25, value: state.scribblePaperScale,
     format: (v) => v.toFixed(2),
     onChange: (v) => { state.scribblePaperScale = v; scribbleFx.set("paperScale", v); },
   });
@@ -763,7 +765,7 @@ function buildPanel() {
     format: (v) => v.toFixed(3),
     onChange: (v) => { state.scribbleWarp = v; scribbleFx.set("warp", v); },
   });
-  p.note("The water sim's [Pastel pass] tuning — value steps 24, saturation 0.88, strokes 0.26 at density 104, paper scale 19.25, grain 0.42, warp 0.001, bleed 0. Depth-edge outlines have been removed from the shader entirely: they traced each rock's undisplaced sphere silhouette as a halo floating outside the stone. The depth pass survives only to hand the sky back as photography. Slider ranges mirror the water sim's own panel.");
+  p.note("The universal pastel look, dialled in on the shared panel 2026-08-04 — value steps 30, saturation 1.02, strokes 0.02 at density 10, paper scale 37.25, grain 0.14, warp 0, bleed 0. Depth-edge outlines have been removed from the shader entirely: they traced each rock's undisplaced sphere silhouette as a halo floating outside the stone. The depth pass survives only to hand the sky back as photography.");
 
   p.section("debug");
   p.toggle("bypass shape texture", {

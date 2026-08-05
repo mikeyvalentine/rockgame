@@ -140,16 +140,18 @@ export function createScribble(scene, camera, engine, opts = {}, B) {
     B.Effect.ShadersStore[FRAG_NAME + "FragmentShader"] = FRAGMENT;
   }
 
+  // Defaults are the user's dialled-in universal look (2026-08-04) — keep in
+  // step with SCRIBBLE_PARAMS in scribble-dials.js.
   const params = {
     bleed:        opts.bleed        != null ? opts.bleed        : 0.0,
-    warp:         opts.warp         != null ? opts.warp         : 0.001,
-    levels:       opts.levels       != null ? opts.levels       : 24.0,
-    satAmount:    opts.satAmount    != null ? opts.satAmount    : 0.88,
-    strokeAmount: opts.strokeAmount != null ? opts.strokeAmount : 0.26,
-    strokeFreq:   opts.strokeFreq   != null ? opts.strokeFreq   : 104.0,
-    strokeAngle:  opts.strokeAngle  != null ? opts.strokeAngle  : 0.6,
-    paperScale:   opts.paperScale   != null ? opts.paperScale   : 19.25,
-    grain:        opts.grain        != null ? opts.grain        : 0.42,
+    warp:         opts.warp         != null ? opts.warp         : 0.0,
+    levels:       opts.levels       != null ? opts.levels       : 30.0,
+    satAmount:    opts.satAmount    != null ? opts.satAmount    : 1.02,
+    strokeAmount: opts.strokeAmount != null ? opts.strokeAmount : 0.02,
+    strokeFreq:   opts.strokeFreq   != null ? opts.strokeFreq   : 10.0,
+    strokeAngle:  opts.strokeAngle  != null ? opts.strokeAngle  : 0.5,
+    paperScale:   opts.paperScale   != null ? opts.paperScale   : 37.25,
+    grain:        opts.grain        != null ? opts.grain        : 0.14,
     ignoreSky:    opts.ignoreSky    != null ? opts.ignoreSky    : true,
     skyDepth:     opts.skyDepth     != null ? opts.skyDepth     : 0.999,
   };

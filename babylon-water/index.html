@@ -1373,25 +1373,23 @@ document.getElementById("plungeBtn").addEventListener("click", () => {
 // =============================================================================
 const SCRIBBLE = window.SCRIBBLE = {
     on: true,
-    // Colour bleed stays 0 — that was the camera-locked swimming. The paper
-    // warp is left at a token 0.001, small enough to break up straight edges
-    // without the frame appearing to drift.
+    // Colour bleed and warp stay 0 — bleed was the camera-locked swimming.
     bleed: 0.0,
-    warp: 0.001,
-    // Pastel. Note the look landed on fine tooth rather than hard banding:
-    // 24 value steps is nearly continuous, so the medium reads through the
-    // paper grain and pigment strokes instead of through posterisation.
-    levels: 24.0,
-    satAmount: 0.88,
-    strokeAmount: 0.26,
-    strokeFreq: 104.0,
-    strokeAngle: 0.6,
+    warp: 0.0,
+    // Pastel. Defaults re-tuned 2026-08-04 to the universal look the user
+    // dialled in on the shared cross-lab panel (superseding this file's
+    // original tuning) — keep in step with shared/scribble-dials.js.
+    levels: 30.0,
+    satAmount: 1.02,
+    strokeAmount: 0.02,
+    strokeFreq: 10.0,
+    strokeAngle: 0.5,
     // 0: depth-edge outlines off entirely. The depth pass is still needed for
     // the sky mask below, so nothing is wasted by keeping it around.
     edgeDark: 0.0,
     outlineWidth: 0.9,
-    paperScale: 19.25,
-    grain: 0.42,
+    paperScale: 37.25,
+    grain: 0.14,
     // Leave the HDRI sky as photography. Quantising and texturing a real sky
     // reads as an error rather than as a medium.
     ignoreSky: true,
@@ -1699,7 +1697,7 @@ const CONTROLS = [
     ["edge depth",      () => SCRIBBLE.edgeDark,    (v) => SCRIBBLE.edgeDark = v,    0, 1,    0.02],
     ["ignore sky",      () => SCRIBBLE.ignoreSky ? 1 : 0, (v) => SCRIBBLE.ignoreSky = v > 0.5, 0, 1, 1],
     ["outline width",   () => SCRIBBLE.outlineWidth,(v) => SCRIBBLE.outlineWidth = v,0, 6,    0.1],
-    ["paper scale",     () => SCRIBBLE.paperScale,  (v) => SCRIBBLE.paperScale = v,  0.5, 20, 0.25],
+    ["paper scale",     () => SCRIBBLE.paperScale,  (v) => SCRIBBLE.paperScale = v,  0.5, 40, 0.25],
     ["paper grain",     () => SCRIBBLE.grain,       (v) => SCRIBBLE.grain = v,       0, 0.8,  0.02],
     ["colour bleed",    () => SCRIBBLE.bleed,       (v) => SCRIBBLE.bleed = v,       0, 0.03, 0.001],
     ["paper warp",      () => SCRIBBLE.warp,        (v) => SCRIBBLE.warp = v,        0, 0.02, 0.001],

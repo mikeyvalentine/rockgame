@@ -254,17 +254,16 @@ export function createScribble(scene, camera, engine, opts = {}) {
     // warp is a token amount, enough to break up straight edges without the
     // frame appearing to drift.
     bleed:        opts.bleed        != null ? opts.bleed        : 0.0,
-    warp:         opts.warp         != null ? opts.warp         : 0.001,
-    // Pastel. These are tuned values, and the look landed on fine tooth rather
-    // than hard banding: 24 steps is nearly continuous, so the medium reads
-    // through paper grain and pigment strokes instead of posterisation.
-    levels:       opts.levels       != null ? opts.levels       : 24.0,
-    satAmount:    opts.satAmount    != null ? opts.satAmount    : 0.88,
-    strokeAmount: opts.strokeAmount != null ? opts.strokeAmount : 0.26,
-    strokeFreq:   opts.strokeFreq   != null ? opts.strokeFreq   : 104.0,
-    strokeAngle:  opts.strokeAngle  != null ? opts.strokeAngle  : 0.6,
-    paperScale:   opts.paperScale   != null ? opts.paperScale   : 19.25,
-    grain:        opts.grain        != null ? opts.grain        : 0.42,
+    warp:         opts.warp         != null ? opts.warp         : 0.0,
+    // Pastel. Defaults re-tuned 2026-08-04 to the user's universal look —
+    // keep in step with shared/scribble-dials.js.
+    levels:       opts.levels       != null ? opts.levels       : 30.0,
+    satAmount:    opts.satAmount    != null ? opts.satAmount    : 1.02,
+    strokeAmount: opts.strokeAmount != null ? opts.strokeAmount : 0.02,
+    strokeFreq:   opts.strokeFreq   != null ? opts.strokeFreq   : 10.0,
+    strokeAngle:  opts.strokeAngle  != null ? opts.strokeAngle  : 0.5,
+    paperScale:   opts.paperScale   != null ? opts.paperScale   : 37.25,
+    grain:        opts.grain        != null ? opts.grain        : 0.14,
     // Leave an HDRI/skybox background as photography. Quantising and texturing
     // a real sky reads as an error rather than as a medium.
     ignoreSky:    opts.ignoreSky    != null ? opts.ignoreSky    : true,

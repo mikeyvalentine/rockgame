@@ -155,12 +155,14 @@ export function createScribblePass(scene, camera, depthRtt) {
         ShaderStore.ShadersStoreWGSL["sandScribblePixelShader"] = SHADER;
     }
 
+    // Defaults are the user's dialled-in universal look (2026-08-04) — keep in
+    // step with SCRIBBLE_PARAMS in rockgame/shared/scribble-dials.js.
     const params = {
         enabled: false,
-        bleed: 0.0, warp: 0.001,
-        levels: 24, satAmount: 0.88,
-        strokeAmount: 0.26, strokeFreq: 104, strokeAngle: 0.6,
-        paperScale: 19.25, grain: 0.42,
+        bleed: 0.0, warp: 0.0,
+        levels: 30, satAmount: 1.02,
+        strokeAmount: 0.02, strokeFreq: 10, strokeAngle: 0.5,
+        paperScale: 37.25, grain: 0.14,
         ignoreSky: true,
     };
 

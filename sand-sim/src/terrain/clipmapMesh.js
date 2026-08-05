@@ -25,8 +25,15 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh";
 export const GRID_N = 160;
 /** Number of rings. */
 export const LEVELS = 8;
-/** Vertex spacing of the innermost ring, metres. */
-export const BASE_SPACING = 0.085;
+/**
+ * Vertex spacing of the innermost ring, metres. Tightened from SNOWFLOW's
+ * 0.085: dig craters bend the surface over ~30 cm, and 8.5 cm triangles showed
+ * as facet plates on crater walls at grazing angles. 5 cm keeps the same
+ * vertex count and draw count — the rings just cover less area each (ring 0
+ * spans ±4 m, comfortably past the 3 m dig reach; the outer ring still ends
+ * ~1 km out, far beyond the 512 m world texture).
+ */
+export const BASE_SPACING = 0.05;
 
 /** How many cells to shrink each hole by, to guarantee overlap. */
 const HOLE_SHRINK = 3;

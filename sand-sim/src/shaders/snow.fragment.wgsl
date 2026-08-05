@@ -240,6 +240,19 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     // it is one. This is the same reasoning anisotropic texture filtering runs on.
     let footprintMin = max(min(length(ddxW.xz), length(ddyW.xz)), 1e-4);
 
+    // A facet-proof twin of `footprintMin`, for anything sampled on CARVED
+    // geometry. Screen derivatives of world position are constant per
+    // triangle, so on a displaced crater wall every triangle reports a
+    // different footprint and anything keyed off it — the deformation-normal
+    // blur width, above all — shades as flat plates that appear and vanish
+    // with view angle. Distance-based instead: view distance interpolates
+    // continuously across triangle edges. (1.12 ≈ 2·tan(fov/2) at the rig's
+    // fixed 1.02 rad FOV.)
+    let fpSmooth = min(
+        footprintMin,
+        input.vViewDist * (1.12 / max(uniforms.screenSize.y, 1.0))
+    );
+
     // ---------------------------------------------------------------- slopes
     let aux = textureSampleLevel(auxTex, auxTexSampler, input.vHeightUV, 0.0);
     var grad = aux.xy;
@@ -290,7 +303,7 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
         //
         // Keyed to the narrow footprint axis, so the width tracks how far away the
         // snow is and not how obliquely it is being looked at.
-        let step = max(uniforms.deformTexel * 2.0, footprintMin * 1.4);
+        let step = max(uniforms.deformTexel * 2.0, fpSmooth * 1.4);
         let eUV = step / uniforms.deformSize;
 
         let dxA = textureSampleLevel(deformTex, deformTexSampler, dUV + vec2f(eUV, 0.0), 0.0);
@@ -303,7 +316,7 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
         // The four neighbours are already fetched, so blending them into the
         // state channels once the pixel is wider than a texel costs nothing and
         // stops a distant trail breaking into a dotted line.
-        let wide = clamp(footprintMin / (uniforms.deformTexel * 4.0), 0.0, 1.0) * 0.8;
+        let wide = clamp(fpSmooth / (uniforms.deformTexel * 4.0), 0.0, 1.0) * 0.8;
         let df = mix(c, (c + dxA + dxB + dzA + dzB) * 0.2, wide);
 
         deformDepth = df.r * dWeight;
@@ -328,7 +341,10 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     // ---------------------------------------------------------- detail normals
     // Three tiling scales, each faded by footprint so the finest only exists
     // when it is actually resolvable, and cross-faded so no scale ever pops in.
-    let steep = smoothstep(0.55, 0.9, 1.0 - N.y);
+    // Engages earlier than the snow original (0.55→0.9): crater walls sit in
+    // the 35-60° band where the planar xz projection stretches the grain into
+    // stripes, and the triplanar blend is exactly the cure.
+    let steep = smoothstep(0.35, 0.75, 1.0 - N.y);
     if (uniforms.detailStrength > 0.001) {
         var acc = vec3f(0.0, 0.0, 1.0);
 

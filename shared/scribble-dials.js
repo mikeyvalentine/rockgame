@@ -22,19 +22,22 @@
 const COOKIE = "rockgame_scribble";
 const LS_KEY = "rockgame_scribble";
 
-// key → [label, min, max, step, default, group]. The defaults are the tuned
-// values from the water sim's dump — the same numbers rock-forge adopted.
+// key → [label, min, max, step, default, group]. The defaults are the user's
+// dialled-in universal look (2026-08-04), which superseded the water sim's
+// original dump values — change them here AND in the per-lab defaults
+// (shared/scribble-fx.js, sand-sim scribblePass.js, rock-forge state +
+// scribbleEnv.js, babylon-water inline + portable) or labs drift.
 export const SCRIBBLE_PARAMS = {
   on:            ["pastel on",      0, 1, 1,        1,      "pastel"],
-  levels:        ["value steps",    2, 64, 1,       24,     "pastel"],
-  satAmount:     ["saturation",     0, 1.4, 0.02,   0.88,   "pastel"],
-  strokeAmount:  ["stroke amount",  0, 1, 0.02,     0.26,   "pastel"],
-  strokeFreq:    ["stroke density", 4, 140, 2,      104,    "pastel"],
-  strokeAngle:   ["stroke angle",   0, 3.14, 0.05,  0.6,    "pastel"],
-  paperScale:    ["paper scale",    0.5, 40, 0.25,  19.25,  "pastel"],
-  grain:         ["paper grain",    0, 0.8, 0.02,   0.42,   "pastel"],
+  levels:        ["value steps",    2, 64, 1,       30,     "pastel"],
+  satAmount:     ["saturation",     0, 1.4, 0.02,   1.02,   "pastel"],
+  strokeAmount:  ["stroke amount",  0, 1, 0.02,     0.02,   "pastel"],
+  strokeFreq:    ["stroke density", 4, 140, 2,      10,     "pastel"],
+  strokeAngle:   ["stroke angle",   0, 3.14, 0.05,  0.5,    "pastel"],
+  paperScale:    ["paper scale",    0.5, 40, 0.25,  37.25,  "pastel"],
+  grain:         ["paper grain",    0, 0.8, 0.02,   0.14,   "pastel"],
   bleed:         ["colour bleed",   0, 0.03, 0.001, 0,      "pastel"],
-  warp:          ["paper warp",     0, 0.02, 0.001, 0.001,  "pastel"],
+  warp:          ["paper warp",     0, 0.02, 0.001, 0,      "pastel"],
   ignoreSky:     ["ignore sky",     0, 1, 1,        1,      "pastel"],
   skyDepth:      ["sky depth",      0.9, 0.9999, 0.0005, 0.999, "pastel"],
   exposure:      ["exposure",       0.2, 3, 0.01,   1.0,    "look"],
