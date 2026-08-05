@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stone Skipping Physics — 3D viewer</title>
+<!-- The game's face. Only loads under the rockgame hub/site (404s harmlessly
+     on the standalone dev-server, where /assets does not exist). -->
+<link rel="stylesheet" href="/assets/fonts/stefan.css" />
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -15,7 +18,10 @@
   canvas { width: 100%; height: 100%; display: block; outline: none; }
   #panel { width: 310px; flex: none; overflow-y: auto; padding: 14px 16px 28px;
     background: #111922; border-left: 1px solid #223040; }
-  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
+  /* Product text — the page title and the skip-count readout — wears the
+     game's two-tone bubble; the parameter panel is a debug menu and keeps the
+     system face. var() falls back cleanly when stefan.css didn't load. */
+  h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .02em; font-family: var(--stefan, inherit); }
   .sub { color: #7d8fa3; font-size: 11px; margin-bottom: 14px; }
   h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
     color: #6f8398; margin: 18px 0 8px; font-weight: 600; }
@@ -34,7 +40,7 @@
   #hud { position: absolute; top: 12px; left: 12px; padding: 10px 13px;
     background: rgba(8,13,19,.82); border: 1px solid #223040; border-radius: 7px;
     font-variant-numeric: tabular-nums; pointer-events: none; min-width: 190px; }
-  #hud .big { font-size: 26px; font-weight: 700; line-height: 1.1; color: #6fc3ff; }
+  #hud .big { font-size: 28px; font-weight: 700; line-height: 1.1; color: #6fc3ff; font-family: var(--stefan, inherit); }
   #hud .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: #6f8398; }
   #hud table { border-collapse: collapse; margin-top: 8px; font-size: 11px; }
   #hud td { padding: 1px 0; }

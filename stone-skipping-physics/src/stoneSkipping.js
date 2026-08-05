@@ -372,6 +372,22 @@ export const DEFAULT_ENV = {
   pitchMomentAirCoefficient: 0.05,
   /** Viscous spin decay in air, s^-1. */
   spinDecayAir: 0.02,
+  /**
+   * Aerodynamic damping of NUTATION specifically (the transverse/wobble component of
+   * angular velocity), while airborne. Same mechanism as env.wobbleDampingCoefficient
+   * in water - form drag on the rim as it wobbles through the fluid - just ~1000x
+   * weaker because it scales with air density instead of water density.
+   *
+   * This did not exist before and its absence was a real defect, not a cosmetic gap:
+   * with nutation UNDAMPED across free flight, a run's sensitivity to floating-point-
+   * level differences compounds every bounce (the disc's exact attack angle at contact
+   * depends on nutation phase, which drifts). Over 30+ bounces this became large enough
+   * that Chrome and Node - running byte-identical code on the byte-identical throw -
+   * diverged from 38 skips to 13. Damping nutation specifically (not spin, which should
+   * persist) shrinks that divergence over a long run while barely touching the first
+   * few bounces, which is also the physically correct place for it to matter least.
+   */
+  wobbleDampingAirCoefficient: 4.0,
   wind: { x: 0, y: 0, z: 0 },
 }
 
@@ -1340,6 +1356,25 @@ export class StoneSkipSim {
           Tx += (axis.x / axLen) * mag
           Ty += (axis.y / axLen) * mag
           Tz += (axis.z / axLen) * mag
+        }
+      }
+
+      // Nutation damping in air: quadratic form drag on the TRANSVERSE component only,
+      // same functional form as the water-phase wobbleDampingCoefficient term, scaled
+      // by air density instead of water density. Spin about the face normal is left to
+      // spinDecayAir below, which is deliberately much gentler - spin should persist.
+      if (env.wobbleDampingAirCoefficient > 0) {
+        const spinRate = V.dot(omega, faceNormalWorld)
+        const wtx = omega.x - spinRate * faceNormalWorld.x
+        const wty = omega.y - spinRate * faceNormalWorld.y
+        const wtz = omega.z - spinRate * faceNormalWorld.z
+        const wtMag = Math.hypot(wtx, wty, wtz)
+        if (wtMag > 1e-6) {
+          const kw = env.wobbleDampingAirCoefficient * Math.pow(this.stone.radius, 5) *
+            env.airDensity * wtMag
+          Tx -= kw * wtx
+          Ty -= kw * wty
+          Tz -= kw * wtz
         }
       }
 

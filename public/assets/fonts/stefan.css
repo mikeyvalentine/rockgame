@@ -1,0 +1,36 @@
+/* ABC Stefan Bubble, two-tone — the game's face, shared by every page.
+ *
+ * Lives in /assets/fonts (not /shared) on purpose: /assets is the one path
+ * every surface can serve — each Vite lab republishes the repo's public/
+ * folder in dev, the hub serves it directly, and the deployed site has it at
+ * the origin root. One <link rel="stylesheet" href="/assets/fonts/stefan.css">
+ * works identically everywhere.
+ *
+ * These are COLR/CPAL colour fonts baked in Desktop/DINAMO-twotone: solid
+ * white fill + black outline live IN the glyphs, so CSS `color` does not tint
+ * them. Tight is the body/UI cut; the wider cut is for display text and CTAs.
+ * TRIAL-derived — re-bake from licensed fonts before shipping (see the bake's
+ * README).
+ *
+ * Convention: product-facing text (loading screens, page titles, hints,
+ * score readouts) wears the bubble via var(--stefan-tight) / var(--stefan).
+ * Debug surfaces (tuning panels, stats overlays, the scribble dials) keep
+ * their own monospace styles and must NOT adopt this.
+ */
+
+@font-face {
+  font-family: "ABC Stefan Bubble Tight Twotone";
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTightTwotone.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Stefan Bubble Twotone";
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTwotone.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  --stefan-tight: "ABC Stefan Bubble Tight Twotone", ui-sans-serif, system-ui, sans-serif;
+  --stefan: "ABC Stefan Bubble Twotone", ui-sans-serif, system-ui, sans-serif;
+}

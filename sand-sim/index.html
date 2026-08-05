@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>sand-sim</title>
+<!-- The game's face — served from the shared assets folder on every port. -->
+<link rel="stylesheet" href="/assets/fonts/stefan.css" />
 <style>
     :root {
         /* Cool-shadow palette pulled from the Horizon reference. */
@@ -22,7 +24,9 @@
         overflow: hidden;
         background: var(--ink);
         color: var(--frost);
-        font-family: ui-sans-serif, "Inter", "Segoe UI", system-ui, sans-serif;
+        /* Product text (boot screen, hint, failure card) wears the game's
+           two-tone bubble; the F1 overlay is debug and keeps its own styles. */
+        font-family: var(--stefan-tight, ui-sans-serif), ui-sans-serif, "Inter", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
     }
 
@@ -76,6 +80,7 @@
     }
 
     .wordmark {
+        font-family: var(--stefan, inherit); /* the wider display cut */
         font-size: clamp(28px, 4.4vw, 54px);
         font-weight: 200;
         letter-spacing: 0.62em;

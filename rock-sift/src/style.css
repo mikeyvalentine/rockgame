@@ -12,7 +12,10 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #0e0f10;
-  font-family: ui-sans-serif, system-ui, "Segoe UI", Inter, sans-serif;
+  /* Every visible string on this page is product UI (loading, hint, stats,
+     the inspection card), so the whole page wears the game's two-tone bubble.
+     The scribble dial panel injects its own monospace styles — debug, exempt. */
+  font-family: var(--stefan-tight, ui-sans-serif), ui-sans-serif, system-ui, "Segoe UI", Inter, sans-serif;
   color: var(--ink);
 }
 
