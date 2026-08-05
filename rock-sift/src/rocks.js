@@ -45,10 +45,11 @@ export function rarityFor(score) {
  *   flatness   thickness ratio lambda = R/d wants 5-10, and flatness (thickness over
  *              longest face dimension) is 1/(2*lambda), so the ideal is ~0.075.
  *              NOTE this is much thinner than the 0.20 the old rating centred on.
- *   roundness  a round face meets the water the same way every rotation; an oblong
- *              one is forced at spin frequency
+ *              Face shape folds into this one too — see `flatnessScore`.
  *
- * `tolerance` is the divergence at which a stat scores zero.
+ * `tolerance` is the divergence at which a stat scores zero. Balance is not listed:
+ * it has no single ideal value, it is a curve over mass and radius together
+ * (`balanceFromMetrics`).
  */
 export const STONE_STAT_TARGETS = {
   mass: { label: "mass", ideal: 170, tolerance: 150, unit: "g" },
