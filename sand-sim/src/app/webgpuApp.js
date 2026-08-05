@@ -249,6 +249,11 @@ export async function run(canvas) {
         terrain.heightfield.clampToPlayArea(character.position);
         contact.update(dt);
         dig.update();
+        // While a dig stroke is held the ground is *changing* every 60 ms;
+        // TAA history reprojected across that shows the previous crater
+        // shapes as layered translucent facet-ghosts. No history while
+        // actively carving — it re-accumulates the instant the button lifts.
+        if (input.dig && input.locked) post.resetHistory();
         const tChar = performance.now();
 
         // The rig follows the controller; must run before anything that reads

@@ -71,7 +71,11 @@ export const S = {
 
     // ------------------------------------------------------------------ post
     taa: true,
-    ssr: true,
+    // Off by default for sand: the SSR pass reconstructs normals from the
+    // depth buffer, which is per-facet on carved geometry — on a wet dig
+    // crater (wetness arms its gate) it renders as shattered-glass panes.
+    // The intended barely-there wet sheen isn't worth that; toggle to compare.
+    ssr: false,
     dof: true,
     bloom: true,
     grain: true,

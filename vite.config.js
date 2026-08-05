@@ -5,6 +5,10 @@ export default defineConfig({
   preview: { port: 5180 },
   build: {
     target: 'esnext',
+    // tools/build-site.mjs assembles the deployed site: it copies only the
+    // git-tracked slice of public/assets (the local folder also holds the
+    // full 167MB texture library, which stays out of the repo and the deploy).
+    copyPublicDir: false,
     rollupOptions: {
       output: {
         // Babylon is the bulk of the bundle and is only needed once the player

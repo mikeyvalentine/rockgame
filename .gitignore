@@ -11,13 +11,13 @@ dist/
 # Rock texture library: only the seven materials rockTextures.js actually loads
 # are tracked (plus the manifest and README). The full 45-material set stays on
 # disk here and in the D:\Textures master library.
-/rock-forge/public/assets/rock/scan/
-/rock-forge/public/assets/rock/displacement/
-/rock-forge/public/assets/rock/tileable/*
-!/rock-forge/public/assets/rock/tileable/rock_027
-!/rock-forge/public/assets/rock/tileable/rough_rock_012
-!/rock-forge/public/assets/rock/tileable/marble_col_001
-!/rock-forge/public/assets/rock/tileable/rough_rock_015
-!/rock-forge/public/assets/rock/tileable/quarry_wall_02
-!/rock-forge/public/assets/rock/tileable/granite_002
-!/rock-forge/public/assets/rock/tileable/pebble_scan
+/public/assets/rock/scan/
+/public/assets/rock/displacement/
+/public/assets/rock/tileable/*
+!/public/assets/rock/tileable/rock_027
+!/public/assets/rock/tileable/rough_rock_012
+!/public/assets/rock/tileable/marble_col_001
+!/public/assets/rock/tileable/rough_rock_015
+!/public/assets/rock/tileable/quarry_wall_02
+!/public/assets/rock/tileable/granite_002
+!/public/assets/rock/tileable/pebble_scan

@@ -501,7 +501,9 @@ camera.wheelPrecision = 8;
 // region runs far above that. Sampling it straight into an 8-bit framebuffer
 // would clip every bright reflection to flat white, so the scene renders in HDR
 // and is tone-mapped once at the end.
-const envTex = new BABYLON.HDRCubeTexture("autumn_field_puresky_4k.hdr", scene, 512);
+// The HDRI moved to the repo's ONE shared assets folder (public/assets/sky),
+// served at /assets by the hub in dev and at the site root when deployed.
+const envTex = new BABYLON.HDRCubeTexture("/assets/sky/autumn_field_puresky_4k.hdr", scene, 512);
 scene.environmentTexture = envTex;
 
 // PBR skybox: it consumes the linear HDR cube correctly and leaves tone mapping

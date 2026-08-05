@@ -8,9 +8,11 @@ import { panel, title, button, chrome } from './ui.js';
 import { store } from '../lib/store.js';
 
 // Two kinds of link. Pages under this origin are served by this dev server
-// straight from the repo (they're static, or plain ES modules). Pages with a
-// port are sibling Vite apps with their own dependency trees — `npm run dev`
-// at the repo root starts all of them.
+// straight from the repo (they're static, or plain ES modules). The Vite labs
+// have their own dependency trees: in dev they live on their own ports
+// (`npm run dev` at the repo root starts all of them), while the deployed
+// site (tools/build-site.mjs) mounts their builds under one origin.
+const DEV = Boolean(import.meta.env?.DEV);
 const LABS = [
   {
     name: 'Water',
@@ -29,20 +31,20 @@ const LABS = [
   },
   {
     name: 'Rock forge',
-    href: 'http://localhost:5184/',
-    port: 5184,
+    href: DEV ? 'http://localhost:5184/' : '/rock-forge/',
+    port: DEV ? 5184 : null,
     note: 'Procedural rock geometry — one topology, per-rock shape textures.',
   },
   {
     name: 'Rock sift',
-    href: 'http://localhost:5183/',
-    port: 5183,
+    href: DEV ? 'http://localhost:5183/' : '/rock-sift/',
+    port: DEV ? 5183 : null,
     note: 'The shore — Havok rock bed, dig through it, pick a skipper.',
   },
   {
     name: 'Sand sim',
-    href: 'http://localhost:5185/',
-    port: 5185,
+    href: DEV ? 'http://localhost:5185/' : '/sand-sim/',
+    port: DEV ? 5185 : null,
     note: 'First-person beach sand, WebGPU (add ?webgl=1 for the fallback).',
   },
 ];
