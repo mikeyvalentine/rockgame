@@ -68,7 +68,7 @@ const FRAME_BUDGET_MS = 6; // physics' share of a 60 fps frame
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const glbUrl = `data:;base64,${glb.toString("base64")}`;
 
 /** Median is the honest statistic here — the mean is dragged by one-off spikes. */

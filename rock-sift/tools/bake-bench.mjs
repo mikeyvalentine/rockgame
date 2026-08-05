@@ -48,7 +48,7 @@ buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
 // --- archetypes: paid once however the bed arrives -------------------------
 let t = Date.now();
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const archetypes = await loadRockArchetypes(
   scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
 );

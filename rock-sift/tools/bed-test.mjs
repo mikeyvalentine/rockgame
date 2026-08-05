@@ -59,7 +59,7 @@ const DT = PHYSICS_SUBSTEP_MS / 1000;
 const HOLD_STEPS = 240;   // two seconds
 const DRIFT_LIMIT_MM = 2; // a stone that moves further than this has resettled
 
-const bedsDir = fileURLToPath(new URL("../public/assets/beds/", import.meta.url));
+const bedsDir = fileURLToPath(new URL("../../public/assets/beds/", import.meta.url));
 const manifestPath = path.join(bedsDir, "shore.json");
 if (!fs.existsSync(manifestPath)) {
   console.log("No baked beds found. Run `npm run bake`.");
@@ -69,7 +69,7 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 
 console.log(`manifest: ${manifest.variants.length} variants, ${manifest.stones} stones each`);
 console.log(`world at bake time: U=${manifest.world.U}, gravity=${manifest.world.gravity.toFixed(2)},` +

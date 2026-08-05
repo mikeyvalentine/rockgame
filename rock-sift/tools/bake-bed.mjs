@@ -31,12 +31,12 @@ const NAME = process.argv[2] || "shore";
 const VARIANTS = Number(process.argv[3]) || 4;
 const COUNT = Number(process.argv[4]) || ROCK_COUNT;
 
-const outDir = fileURLToPath(new URL("../public/assets/beds/", import.meta.url));
+const outDir = fileURLToPath(new URL("../../public/assets/beds/", import.meta.url));
 fs.mkdirSync(outDir, { recursive: true });
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 
 /** A fresh world per variant: a bed must not inherit the previous one's state. */
 async function bake(seed) {

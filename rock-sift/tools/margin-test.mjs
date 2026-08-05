@@ -35,7 +35,7 @@ floorNode.position.copyFrom(floor);
 const floorBody = new PhysicsBody(floorNode, PhysicsMotionType.STATIC, false, scene);
 floorBody.shape = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), new Vector3(U * 20, U, U * 20), scene);
 
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const archetypes = await loadRockArchetypes(
   scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
 );

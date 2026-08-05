@@ -47,7 +47,7 @@ const refSign = Math.sign(signedVolume(ref.getVerticesData(VertexBuffer.Position
 const refOrientation = ref.material._getEffectiveOrientation(ref);
 console.log(`reference (MeshBuilder sphere): winding ${refSign > 0 ? "+" : "-"}, culls ${orientationName(refOrientation)}\n`);
 
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const archetypes = await loadRockArchetypes(
   scene, `data:;base64,${glb.toString("base64")}`, { unitScale: 4, seed: 99, pluginExtension: ".glb" }
 );

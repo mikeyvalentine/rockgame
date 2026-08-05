@@ -35,7 +35,7 @@ buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
 // The scanned GLB is the only source of geometry, loaded exactly as the browser
 // does it but via a base64 data URL, which is what Node's loader can reach.
-const glb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const archetypes = await loadRockArchetypes(
   scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
 );

@@ -23,12 +23,12 @@ scene.enablePhysics(new Vector3(0, GRAVITY, 0), new HavokPlugin(true, await Havo
 scene.getPhysicsEngine().setSubTimeStep(PHYSICS_SUBSTEP_MS);
 buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
-const bglb = fs.readFileSync(new URL("../public/assets/bucket_lowpoly.glb", import.meta.url));
+const bglb = fs.readFileSync(new URL("../../public/assets/bucket_lowpoly.glb", import.meta.url));
 const bucket = await loadBucket(scene, `data:;base64,${bglb.toString("base64")}`, { unitScale: U });
 console.log(`rim ${(bucket.rimY / U * 100).toFixed(1)} cm, inner radius ${(bucket.radius / U * 100).toFixed(1)} cm`);
 bucket.place(new Vector3(0, 0, 0));
 
-const rglb = fs.readFileSync(new URL("../public/assets/river_rocks.glb", import.meta.url));
+const rglb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 const arch = await loadRockArchetypes(scene, `data:;base64,${rglb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" });
 for (const a of arch) a.radius = boundingRadius(a.vertexData.positions);
 
