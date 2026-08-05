@@ -14,6 +14,7 @@
 //   A    exposure: 1 on scoured crests, 0 in sheltered hollows
 
 #include<snowNoise>
+#include<snowPiles>
 
 varying vUV: vec2f;
 
@@ -57,11 +58,17 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     let exposure = clamp(0.5 - lap * 2.2, 0.0, 1.0);
 
     // --- pebble band --------------------------------------------------------
-    // Zeroed by request: the default beach is all sand. The machinery stays —
-    // the overlay's mask brush can still paint pebble patches at runtime, and
-    // restoring a baked band is one expression here. (The band uniforms remain
-    // bound; unused is fine.)
-    let band = 0.0;
+    // The open beach is all sand by request, so the continuous band stays
+    // zeroed and the overlay's mask brush still paints patches at runtime.
+    // What does bake is the sifting piles: a pile is made of the stones
+    // rock-sift draws on it, so it has to *shade* as shingle from standing
+    // distance. Routing it through this channel gets the voronoi cobble path
+    // below for free, which is what keeps the crouch from popping between a
+    // smooth sand lump and a bed of stones.
+    //
+    // (The band uniforms remain bound; unused is fine.)
+    let world = uniforms.worldOrigin + uv * uniforms.worldSize;
+    let band = pileMask(world);
 
     fragmentOutputs.color = vec4f(dHdx, dHdz, band, exposure);
 }

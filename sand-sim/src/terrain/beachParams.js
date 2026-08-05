@@ -12,7 +12,14 @@
  * (the WebGPU path grounds on a readback of its own bake; the WebGL path
  * grounds on this function directly), and nothing compares heights across
  * renderers.
+ *
+ * The sifting piles are the exception to that arrangement, and deliberately so:
+ * their WGSL is *generated* from `shared/pileField.js` rather than hand-twinned,
+ * because a mound in a place the grounding does not know about is a bank the
+ * player walks through.
  */
+
+import { pileCoverage, PILE_HEIGHT } from "../../../shared/pileField.js";
 
 export const WATERLINE_Z = 0;
 export const WATER_LEVEL_Y = 0;
@@ -129,10 +136,21 @@ export function shoreProfileJS(x, z, amp = 1) {
         relief += (DUNE_BASE + fbm2(x / 38, z / 24, 4) * DUNE_AMP) * duneT;
     }
 
-    // Micro relief on the open beach (fades out under the dunes).
-    relief += fbm2(x / 21 + 7.3, z / 21 - 4.1, 3) * MICRO_AMP * (1 - duneT * 0.7);
+    // Shingle piles — the sifting spots, from shared/pileField.js. Applied
+    // before micro relief because the crown has to end up flat: rock-sift's
+    // bed is poured on flat ground, so the mound damps micro in the same
+    // proportion as it rises rather than sitting on top of it.
+    //
+    // Outside `amp` on purpose: the piles are where the player sifts, so their
+    // geometry is level design, not an art-direction relief tunable.
+    const cov = pileCoverage(x, z);
 
-    return h + relief * amp;
+    // Micro relief on the open beach (fades out under the dunes, and under
+    // the piles).
+    relief += fbm2(x / 21 + 7.3, z / 21 - 4.1, 3) * MICRO_AMP *
+        (1 - duneT * 0.7) * (1 - cov);
+
+    return h + relief * amp + cov * PILE_HEIGHT;
 }
 
 /** Rectangular walkable-zone clamp, in place. */

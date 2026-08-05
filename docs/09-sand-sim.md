@@ -32,6 +32,26 @@ At standing distance, rock fields are **simple simulated particles.** Crouch int
 
 **Risk:** the particle representation must resemble the rocks you then dig through. A visible pop at the swap would undercut it.
 
+### The pile field — decided, built
+
+A sifting spot is **terrain, not a prop**: a shingle mound baked into the height field.
+
+`shared/pileField.js` holds the spots and the mound shape; `sand-sim/tools/pile-field-check.mjs` tests them. Four spots along the shingle band, one per baked bed variant in `public/assets/beds/shore.json`.
+
+| | |
+| --- | --- |
+| Mound radius | 2.4 m — the shingle bank |
+| Flat crown | 0.9 m — where the sift bed lands |
+| Height | 0.30 m, an ~11° walkable face |
+
+Three consequences worth knowing before touching it:
+
+- **The height bake is the only insertion point, and it buys both halves.** `heightfield.heightCPU` is a readback of the bake rather than a second computation, so a mound term gives the rendered pile *and* `terrain.heightAt()` — the walker climbs the bank with no character-controller work. The deformation field is the wrong home: it is player-centred, toroidal and relaxing, built for footprints that should fade.
+- **The crown must stay flat**, and it is flat by construction rather than by luck — the mound suppresses micro relief under itself. rock-sift pours its bed on flat ground, so a domed crown floats stones on one side and buries them on the other.
+- **The mask goes in the aux bake's B channel**, the old pebble band, which already drives voronoi cobble shading. That is what keeps the bank reading as stone from standing distance — the direct answer to the pop risk above.
+
+Still open at the swap: spawning the bed's stones as static instances on the crown, and the crouch handoff itself.
+
 ### 2. Movement trails
 
 First person. Walk the shore and turn around to see your trails in the sand.

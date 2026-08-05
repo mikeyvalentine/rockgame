@@ -82,8 +82,7 @@ That is why the sift screenshots read pale and flat next to the forge lab.
 **Goal:** rock piles visible in the sand sim, walkable in first person, click to crouch
 into sifting.
 
-**Status:** investigated end to end. Not begun. The plan below is grounded in the
-actual APIs.
+**Status:** slice 1 built and tested. Slices 2 and 3 still want a live scene.
 
 ### The DeformationField is the wrong tool
 
@@ -123,9 +122,7 @@ Piles follow the same twin pattern.
 
 ### Slices
 
-1. **Pile field.** A shared module turning bed manifests into `{x, z, radius, height}`
-   mounds, plus the mound term in the WGSL bake. **Testable headlessly**: assert
-   `heightAt()` rises over a pile and is flat away from it. This is the foundation.
+1. **Pile field.** ✅ Built. `shared/pileField.js` + the mound term in the height bake.
 2. **Rock instances.** Spawn each bed's stones at its pile, statically — `spawnBed`'s
    `asleep: true`, which `bed-test.mjs` measures at 0.00 mm drift. Visual only; no
    Havok bed until the player crouches.
@@ -133,6 +130,51 @@ Piles follow the same twin pattern.
    sift mode, which is where the physics bed wakes.
 
 Slices 2 and 3 need a live scene to judge.
+
+### Slice 1, as built
+
+`shared/pileField.js` is the single source of truth: four spots along the shingle
+band, a C1 radial falloff, and `pileCoverage/pileHeightJS/pileMaskJS/spotAt`.
+`sand-sim/tools/pile-field-check.mjs` covers it (30 assertions, in `npm test`).
+
+Three things the plan above did not anticipate, all of them found by writing the
+test rather than by reasoning:
+
+**The crown has to be flat, and flat is a correctness requirement.** rock-sift
+pours its bed on flat ground (`config.js`: "the ground is flat and the pile is
+allowed to find its own angle of repose"). A baked bed restored onto a dome has
+stones floating on the high side and buried on the low one. So the falloff
+saturates over an inner `CROWN_RADIUS` (0.9 m, clear of rock-sift's 0.42 m
+`BED_RADIUS`) instead of peaking at a point, **and the mound damps micro relief
+under itself in the same proportion as it rises** — otherwise the crown carries
+the beach's own ±0.09 m of noise. Measured through the real resampling, the
+crown is flat to 3 mm.
+
+**A pile the size of the bed is invisible to the terrain.** The bake is 0.25
+m/texel and the CPU mirror the walker grounds on is 0.5 m/texel, then bicubic
+B-spline reconstructed. A 0.42 m mound would be filtered away and the player
+would walk through a bank they can see. `PILE_RADIUS` is 2.4 m — the mound is
+the *shingle bank*, and the sift bed occupies its crown. The test asserts this
+against a faithful stand-in for `_readback` + `heightAt`, not against the
+analytic profile, because analytic flatness proves nothing about what the
+character actually stands on.
+
+**The pile belongs in the aux bake too.** `auxBake`'s B channel — the pebble
+band, deliberately zeroed since the open beach is all sand — already drives a
+voronoi cobble shading path. Writing the pile mask there makes the bank *shade*
+as shingle from standing distance for free, which is the direct answer to
+docs/09's stated risk that the crouch pops between a smooth sand lump and a bed
+of stones.
+
+**No uniforms.** The WGSL is generated from the JS constants
+(`pileFieldWGSL()`), registered as the `snowPiles` include, and unrolled to one
+`max` per spot. So there is no uniform array to bind, no runtime indexing of a
+const array, and the twin problem the beach profile lives with — WGSL and JS
+kept in structural agreement by hand — does not exist here at all. Both
+renderers read the same four numbers.
+
+Pile height sits **outside** `macroHeightScale`: the piles are where the player
+sifts, so their geometry is level design rather than an art-direction tunable.
 
 ---
 
