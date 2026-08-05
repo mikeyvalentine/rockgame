@@ -119,6 +119,15 @@
     <div data-ctl="aspect"    data-min="0.4"  data-max="1"     data-step="0.05"  data-unit=""     data-grp="stone"></div>
 
     <h2>Water</h2>
+    <!-- Gerstner is the controlled test input (one wave train, two knobs).
+         "Pond ambient" is babylon-water's real four-octave surface via its
+         CPU twin — same waves the game pond shows. Only offered when
+         /babylon-water/ambient.js is reachable (i.e. under the rockgame hub
+         or the deployed site; the standalone dev-server can't see it). -->
+    <select id="waveSource" style="margin-bottom:9px">
+      <option value="gerstner">gerstner — sliders below</option>
+      <option value="ambient" disabled id="ambientOpt">pond ambient — loading…</option>
+    </select>
     <div data-ctl="amplitude"  data-min="0" data-max="0.15" data-step="0.005" data-unit=" m" data-grp="water"></div>
     <div data-ctl="wavelength" data-min="0.5" data-max="8"  data-step="0.1"   data-unit=" m" data-grp="water"></div>
 
@@ -304,10 +313,33 @@ function rebuild() {
 /* ---------------- solver ---------------- */
 
 let sim, trailPts, trail, ripples = []
-const waterFn = () => makeGerstnerWater({
-  level: 0, amplitude: waterParams.amplitude, wavelength: waterParams.wavelength,
-  speed: 1.2, direction: { x: 1, z: 0.25 },
+
+// The pond's real ambient surface, when reachable (see the select's comment).
+// Wind numbers mirror babylon-water's own defaults so the demo's stone planes
+// on the same swell the pond page shows.
+let ambient = null
+let waveSource = 'gerstner'
+const AMBIENT_WIND = { windStrength: 0.55, windDirDeg: 25, waveScale: 4 }
+import('/babylon-water/ambient.js')
+  .then((m) => {
+    ambient = m
+    const opt = $('ambientOpt')
+    opt.disabled = false
+    opt.textContent = 'pond ambient — babylon-water, wind 0.55 @ 25deg'
+  })
+  .catch(() => { $('ambientOpt').textContent = 'pond ambient — unavailable here' })
+$('waveSource').addEventListener('change', (e) => {
+  waveSource = e.target.value
+  rebuild()
 })
+
+const waterFn = () =>
+  waveSource === 'ambient' && ambient
+    ? ambient.makeAmbientWater(AMBIENT_WIND)
+    : makeGerstnerWater({
+        level: 0, amplitude: waterParams.amplitude, wavelength: waterParams.wavelength,
+        speed: 1.2, direction: { x: 1, z: 0.25 },
+      })
 
 let profileName = 'game'
 function makeSim() {
@@ -403,8 +435,18 @@ scene.onBeforeRenderObservable.add(() => {
   const dt = slow ? raw / 6 : raw
   t += dt
 
-  // animate the visual water to match the sampler
-  if (waterParams.amplitude > 0) {
+  // animate the visual water to match the sampler — what the stone feels is
+  // what the plane shows, whichever source is active
+  if (waveSource === 'ambient' && ambient) {
+    const pos = water.getVerticesData(BABYLON.VertexBuffer.PositionKind)
+    const st = sim.state.time
+    for (let i = 0; i < pos.length; i += 3) {
+      const wx = waterBase[i] + water.position.x, wz = waterBase[i + 2]
+      pos[i + 1] = ambient.sampleAmbient(wx, wz, st, AMBIENT_WIND).height
+    }
+    water.updateVerticesData(BABYLON.VertexBuffer.PositionKind, pos)
+    water.createNormals(true)
+  } else if (waterParams.amplitude > 0) {
     const pos = water.getVerticesData(BABYLON.VertexBuffer.PositionKind)
     const k = 2 * Math.PI / waterParams.wavelength
     const dl = Math.hypot(1, 0.25)
