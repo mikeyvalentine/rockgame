@@ -25,6 +25,10 @@ export function createCarrier(scene) {
   const accel = new Vector3();
   const vel = new Vector3();
   let rock = null;
+  // AUDIT #B6: getMassProperties() builds a fresh {mass, Vector3, Quaternion}
+  // bundle on every call, and advance() runs per physics substep — cache the
+  // mass once at pick() instead.
+  let rockMass = 0.1;
 
   return {
     get isActive() { return rock !== null; },
@@ -33,6 +37,7 @@ export function createCarrier(scene) {
     /** Take hold of a stone where it lies. */
     pick(picked) {
       rock = picked;
+      rockMass = picked.body.getMassProperties().mass || 0.1;
       // The stone stays dynamic and inside the bed's radius checks, so it has to
       // announce itself: carried well past the shore it would otherwise be
       // collected as a stray and teleported back into the middle mid-drag.
@@ -87,8 +92,7 @@ export function createCarrier(scene) {
       const a = accel.length();
       if (a > CARRY.maxAccel) accel.scaleInPlace(CARRY.maxAccel / a);
 
-      const mass = body.getMassProperties().mass || 0.1;
-      accel.scaleInPlace(mass);
+      accel.scaleInPlace(rockMass);
       // At the centre of mass: applied off-centre this would spin the stone up
       // as well as move it.
       body.applyForce(accel, p);

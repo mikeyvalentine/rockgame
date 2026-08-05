@@ -24,7 +24,12 @@ export const ROCK_COUNT = 540;
 // 33 ms step, stones move further than their own thickness inside one step, end
 // up deeply overlapped, and the next step fires them apart. Frames slower than
 // MAX_FRAME_MS make the simulation run in slow motion instead of blowing up.
-export const PHYSICS_SUBSTEP_MS = 1000 / 120;
+//
+// AUDIT #B6: 1/60 rather than 1/120 — half the solver work per frame over a
+// bed that is at rest almost always. tools/sift-test.mjs validates the bed
+// still settles and sweeps cleanly at this rate; if a future bed detonates,
+// this is the first number to revisit.
+export const PHYSICS_SUBSTEP_MS = 1000 / 60;
 export const MAX_FRAME_MS = 40;
 
 // Stones are poured one even sheet over the whole field at a time, each sheet

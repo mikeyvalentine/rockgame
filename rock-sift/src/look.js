@@ -34,7 +34,11 @@ export const LOOK = {
   ao: {
     strength: 1.1,
     base: 0.05,
-    samples: 16,
+    // AUDIT #B6: 8 samples, plain blur (was 16 + expensive bilateral). AO is
+    // load-bearing for the bed's depth, but half the taps at a quarter-ish of
+    // the blur cost reads the same at pebble scale. Raise samples first if the
+    // contact shadow starts crawling.
+    samples: 8,
     radiusMetres: 0.02,
     maxDistanceMetres: 4,
   },
@@ -58,7 +62,7 @@ export function applyLook(scene, camera, { U }) {
   ssao.base = LOOK.ao.base;
   ssao.samples = LOOK.ao.samples;
   ssao.maxZ = LOOK.ao.maxDistanceMetres * U;
-  ssao.expensiveBlur = true;
+  ssao.expensiveBlur = false; // AUDIT #B6 — see the samples note above
 
   return {
     ssao,

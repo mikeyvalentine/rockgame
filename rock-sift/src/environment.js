@@ -167,8 +167,12 @@ export function buildEnvironment(scene, { U, bedRadius }) {
   // greyscale roughness map. Note that this set has no ARM/ORM map, unlike the
   // pebble set it replaced, so roughness has to be pulled out of a plain
   // greyscale image and metalness kept off it — see the flags below.
+  // AUDIT #B6: subdivisions 200 -> 48. The displacement is a centimetre-scale
+  // dune field; 80k triangles rendered four times a frame (shadow, prepass,
+  // beauty, scribble depth) bought nothing over ~9k. If the dunes ever visibly
+  // facet, raise it before suspecting anything else.
   const ground = MeshBuilder.CreateGround(
-    "shore", { width: U * 10, height: U * 10, subdivisions: 200, updatable: true }, scene
+    "shore", { width: U * 10, height: U * 10, subdivisions: 48, updatable: true }, scene
   );
   displace(ground, U, bedRadius);
 

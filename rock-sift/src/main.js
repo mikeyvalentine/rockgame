@@ -47,7 +47,11 @@ const SIFT_HINT = "<strong>Drag</strong> to part the stones · <strong>Drag from
 
 async function boot() {
   const canvas = document.getElementById("view");
-  const engine = new Engine(canvas, true, { adaptToDeviceRatio: true, stencil: false });
+  // AUDIT #1: antialias off (docs/11 — the aliasing is the look) and no
+  // adaptToDeviceRatio — that flag rendered the whole page at devicePixelRatio,
+  // 4x the pixels on Retina, across FOUR geometry passes. docs/10 names
+  // resolution as the biggest lever; 1x is the art direction.
+  const engine = new Engine(canvas, false, { stencil: false });
   const scene = new Scene(engine);
   scene.ambientColor = new Color3(0.2, 0.22, 0.24);
 
