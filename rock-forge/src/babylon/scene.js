@@ -4,16 +4,18 @@
 
 import {
   ArcRotateCamera, Color3, Color4, DirectionalLight, Engine,
-  HemisphericLight, MeshBuilder, PBRMaterial, Scene,
+  HemisphericLight, MeshBuilder, PBRMaterial, RenderTargetTexture, Scene,
   ShadowDepthWrapper, ShadowGenerator, Vector3,
 } from "@babylonjs/core";
 import { createEnvironment } from "./scribbleEnv.js";
 
 export function createEngine(canvas) {
-  const engine = new Engine(canvas, true, {
+  // AUDIT #1 (docs/11): antialias off — the kept-aliasing art direction says
+  // MSAA is one of the biggest costs simply removed.
+  const engine = new Engine(canvas, false, {
     preserveDrawingBuffer: false,
     stencil: false,
-    antialias: true,
+    antialias: false,
     powerPreference: "high-performance",
   });
   if (engine.webGLVersion < 2) {
@@ -80,8 +82,14 @@ export function createScene(engine) {
   hemi.intensity = 0.25;
   hemi.groundColor = new Color3(0.32, 0.29, 0.24);
 
-  const sun = new DirectionalLight("sun", new Vector3(-0.45, -0.82, 0.35), scene);
-  sun.position = new Vector3(3, 6, -2.5);
+  // AUDIT #A7: the light direction is the negation of the toward-sun vector
+  // the water sim and rock-sift share (SUN_DIR = (-0.35, 0.55, 0.42), hand-
+  // matched to this same HDRI). The old (-0.45, -0.82, 0.35) was mirrored in
+  // X and Z against the sky — forge rocks carried highlights on the opposite
+  // face from sift rocks under the same sun. Position sits back along the ray
+  // for the shadow frustum.
+  const sun = new DirectionalLight("sun", new Vector3(0.35, -0.55, -0.42), scene);
+  sun.position = new Vector3(-2.8, 4.4, 3.4);
   sun.intensity = 2.6;
 
   return { scene, camera, sun, envSetup };
@@ -142,5 +150,14 @@ export function createShadows(scene, sun, materials, { size = 2048 } = {}) {
       failures.push(`${name}: ${e.message}`);
     }
   }
-  return { generator: gen, failures };
+
+  // AUDIT #B6: the field never moves, but the map was re-rendered every frame
+  // — the full displacing vertex shader (four vertex-texture fetches) over
+  // every instance, twice a frame with the beauty pass. Render once; callers
+  // invalidate via refresh() when the field is actually rebuilt. Camera-move
+  // LOD rebucketing does NOT need a refresh — it shuffles instances between
+  // buckets but every world transform stays put.
+  const map = gen.getShadowMap();
+  if (map) map.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+  return { generator: gen, failures, refresh: () => map?.resetRefreshCounter() };
 }

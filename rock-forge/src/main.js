@@ -82,6 +82,7 @@ const state = {
 
 let engine, scene, camera, sun, ground, instrumentation, envSetup, scribbleFx;
 let lib = null, shapeTex = null, grainTex = null, varTex = null, materials = null, field = null, shadows = null;
+let shadowsRefresh = null; // AUDIT #B6 — shadow map is render-once; call after field rebuilds
 let textures = null;   // { perArchetype, height, bytes, notes } from loadRockTextures
 let referenceMesh = null, referenceMat = null;
 let bench = null;
@@ -137,6 +138,7 @@ function applyShadows() {
   shadows?.dispose();
   const r = createShadows(scene, sun, materials);
   shadows = r.generator;
+  shadowsRefresh = r.refresh;
   for (const group of field.groups.values()) {
     for (const b of group.buckets) shadows.addShadowCaster(b.mesh, false);
   }
@@ -300,6 +302,7 @@ function rebuildInstances() {
     camera.radius = Math.min(6, Math.max(0.7, radius * 0.55));
   }
   field.update(camera.position, true);
+  shadowsRefresh?.(); // the field genuinely changed — re-render the map once
 }
 
 /* ------------------------------------------------- high-poly reference */
@@ -336,7 +339,7 @@ function buildReference(shape) {
   }
   referenceMat.wireframe = state.wireframe;
   referenceMesh.material = referenceMat;
-  if (shadows) shadows.addShadowCaster(referenceMesh, false);
+  if (shadows) { shadows.addShadowCaster(referenceMesh, false); shadowsRefresh?.(); }
 
   // Move the instanced one out of the way so they sit side by side.
   field.setInstances([{

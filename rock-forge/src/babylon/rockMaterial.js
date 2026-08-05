@@ -530,7 +530,11 @@ export function createRockMaterials(scene, lib, {
     m.metallic = 0;
     m.environmentIntensity = 0.9;
     m.backFaceCulling = true;
-    m.forceIrradianceInFragment = true;
+    // AUDIT #B6: per-vertex irradiance (was forced per-fragment). Rocks are
+    // rough dielectrics — the SH evaluation is a wide smooth lobe that is
+    // indistinguishable per-vertex at pebble scale, and the fragment path was
+    // pure cost on a shader already doing 13+ texture fetches.
+    m.forceIrradianceInFragment = false;
 
     // Every archetype gets a polish axis, not just the treasures — a tumbling
     // mechanic drives this later, and until it exists `polish` defaults to

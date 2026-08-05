@@ -194,7 +194,10 @@ export class RockField {
   /** Re-sort instances into LOD buckets. Cheap enough to call every frame, but
    *  it only does work when the camera has actually moved. */
   update(cameraPosition, force = false) {
-    if (!force && Vector3.DistanceSquared(cameraPosition, this._lastCam) < 0.0004) return;
+    // AUDIT #B6: 20 cm of travel (was 2 cm) before a rebucket — the old
+    // threshold fired every frame of an orbit, an O(N) pass plus up to 63
+    // partial buffer uploads. LOD bands are metres wide; 20 cm cannot skip one.
+    if (!force && Vector3.DistanceSquared(cameraPosition, this._lastCam) < 0.04) return;
     this._lastCam.copyFrom(cameraPosition);
     this.rebuilds++;
 
@@ -231,7 +234,9 @@ export class RockField {
         const b = group.buckets[lod];
         const o = b.count * 16;
         const src = i * 16;
-        for (let k = 0; k < 16; k++) b.matrices[o + k] = M.matrices[src + k];
+        // AUDIT #B6: block copy — the scalar 16-iteration loop was 44k float
+        // writes per rebucket at 2k rocks, 1.4M at the bench top step.
+        b.matrices.set(M.matrices.subarray(src, src + 16), o);
         const oi = b.count * 4, si = i * 4;
         b.insts[oi] = M.insts[si];
         if (this.lodDebug) {
