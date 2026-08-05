@@ -92,7 +92,11 @@ export class BabylonStone {
    * @returns {Array<object>} the solver events from this frame
    */
   update(dt) {
-    const events = this.sim.step(Math.min(dt, this.maxSubDelta))
+    // AUDIT #B5: advance(), not step(). step(rawFrameDelta) is the exact
+    // frame-rate-dependent path the solver's own docs call fatal for a
+    // leaderboard (29-31 skips across 30-240Hz on one identical throw);
+    // advance() accumulates real time and runs whole fixed ticks.
+    const events = this.sim.advance(Math.min(dt, this.maxSubDelta))
     this.sync()
 
     for (const e of events) {

@@ -95,7 +95,10 @@
 
     <h2>Assist (not physics)</h2>
     <div data-ctl="hopSpeedFraction" data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
-    <div data-ctl="attitudeAssist"   data-min="0" data-max="16"   data-step="0.5"   data-unit="" data-grp="assist"></div>
+    <!-- max 40: game profile sits at 20, arcade at 32; the old max of 16 was
+         below both, and the slider sync clamps stored values into range, so
+         even choosing those profiles got squashed. -->
+    <div data-ctl="attitudeAssist"   data-min="0" data-max="40"   data-step="0.5"   data-unit="" data-grp="assist"></div>
     <div data-ctl="bounceSpeedTax"   data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
 
     <h2>Preset</h2>
@@ -146,7 +149,12 @@ $('ver').textContent = 'v' + VERSION
 const throwParams = { ...THROW_PRESETS.strong }
 const stoneParams = { radius: 0.045, thickness: 0.010, aspect: 1.0 }
 const waterParams = { amplitude: 0.0, wavelength: 3.0 }
-const assistParams = { hopSpeedFraction: 0.05, attitudeAssist: 6, bounceSpeedTax: 0.02 }
+// AUDIT #C: these startup values mirror PHYSICS_PROFILES.game exactly. The
+// old attitudeAssist:6 predated the assist's recalibration (it now targets
+// angular momentum; 6 was ~a third of the intended hold) and, because this
+// object OVERRIDES the profile via the env spread below, it silently gutted
+// every profile — that was the "can't get good skip counts" bug.
+const assistParams = { hopSpeedFraction: 0.05, attitudeAssist: 20, bounceSpeedTax: 0.02 }
 
 const LABEL = {
   speed: 'Speed', elevationDeg: 'Launch elevation', attackAngleDeg: 'Attack angle',
