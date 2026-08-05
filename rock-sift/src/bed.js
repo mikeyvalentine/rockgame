@@ -257,7 +257,14 @@ export function captureBed(rocks, archetypes, origin = null) {
  *
  * @returns the decoded bed, or null if there is nothing baked to load
  */
-export async function fetchBakedBed(manifestUrl, pick = Math.random()) {
+// AUDIT #A6: `pick` is required. It used to default to Math.random(), and a
+// silent random default is the worst kind of determinism break — two players
+// on the same daily seed sifting different beds. Every real caller already
+// passes a pick.
+export async function fetchBakedBed(manifestUrl, pick) {
+  if (typeof pick !== "number") {
+    throw new Error("fetchBakedBed: pass a deterministic pick in [0,1) — the Math.random default is gone (docs/04)");
+  }
   const res = await fetch(manifestUrl);
   if (!res.ok) return null;
   const manifest = await res.json();

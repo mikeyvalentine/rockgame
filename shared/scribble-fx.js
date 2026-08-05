@@ -99,7 +99,12 @@ export function makeSeamlessNoise(scene, cells, smooth, name, B) {
   const ctx = t.getContext();
   const img = ctx.createImageData(S, S);
   const lat = new Float32Array(cells * cells);
-  for (let i = 0; i < lat.length; i++) lat[i] = Math.random();
+  // AUDIT #A6: seeded (was Math.random) so the paper grain is identical
+  // every session and across every lab page - share cards stay pixel-
+  // reproducible. Seed folds in `cells` so flow and grain differ.
+  let _s = (0x9e3779b9 ^ (cells * 2654435761)) >>> 0;
+  const _rand = () => ((_s = (_s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < lat.length; i++) lat[i] = _rand();
   const wrap = (v) => ((v % cells) + cells) % cells;
   const at = (x, y) => lat[wrap(y) * cells + wrap(x)];
 
@@ -156,6 +161,14 @@ export function createScribble(scene, camera, engine, opts = {}, B) {
     skyDepth:     opts.skyDepth     != null ? opts.skyDepth     : 0.999,
   };
 
+  // AUDIT #B3: a caller that already renders a depth buffer (rock-sift's SSAO
+  // prepass, sand-sim's DepthPass) can hand it in and skip the DepthRenderer —
+  // which is an ENTIRE extra full-resolution scene pass whose only consumer
+  // here is the one-tap sky mask. Mind the encoding: the shader expects
+  // normalized [0,1] depth with sky at ~1 (DepthRenderer's convention); a
+  // linear-metres buffer needs its own skyDepth threshold to match.
+  const externalDepth = opts.depthTexture || null;
+
   let pp = null, depth = null, flowTex = null, grainTex = null, on = false;
 
   function enable(v) {
@@ -167,7 +180,7 @@ export function createScribble(scene, camera, engine, opts = {}, B) {
         flowTex = makeSeamlessNoise(scene, 16, true, "scribbleFlow", B);
         grainTex = makeSeamlessNoise(scene, 256, false, "scribbleGrain", B);
       }
-      if (!depth) depth = scene.enableDepthRenderer(camera, false);
+      if (!externalDepth && !depth) depth = scene.enableDepthRenderer(camera, false);
       if (!pp) {
         pp = new B.PostProcess("rockgameScribble", FRAG_NAME,
           ["bleed", "warpAmount", "paperScale", "grainAmount", "levels",
@@ -176,7 +189,7 @@ export function createScribble(scene, camera, engine, opts = {}, B) {
           ["depthSampler", "flowSampler", "grainSampler"],
           1.0, camera);
         pp.onApply = (eff) => {
-          eff.setTexture("depthSampler", depth.getDepthMap());
+          eff.setTexture("depthSampler", externalDepth || depth.getDepthMap());
           eff.setTexture("flowSampler", flowTex);
           eff.setTexture("grainSampler", grainTex);
           eff.setFloat("bleed", params.bleed);
@@ -190,7 +203,7 @@ export function createScribble(scene, camera, engine, opts = {}, B) {
           eff.setFloat("strokeAngle", params.strokeAngle);
           // Fail to "style everything" rather than "style nothing" if the
           // depth renderer is missing — see scribbleEnv.js for the trap.
-          eff.setFloat("ignoreSky", (params.ignoreSky && depth) ? 1 : 0);
+          eff.setFloat("ignoreSky", (params.ignoreSky && (externalDepth || depth)) ? 1 : 0);
           eff.setFloat("skyDepth", params.skyDepth);
         };
       }

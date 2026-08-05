@@ -18,6 +18,12 @@ import { Color3, MeshBuilder, StandardMaterial, Vector3 } from "@babylonjs/core"
 import { captureBed, spawnBed, spawnBedVisual } from "./bed.js";
 import { clearField } from "./field.js";
 import { U } from "./config.js";
+import { mulberry32 } from "./noise.js";
+
+// AUDIT #A6 (docs/04 "no Math.random anywhere in the sim"): reshuffles draw
+// from a seeded stream so the sequence of beds a player digs through is
+// replayable. The daily seed threads in here when the game wires up.
+const reshuffleRand = mulberry32(7331);
 
 /** Where you can crouch down, in metres along the shore. */
 export const SPOTS = [
@@ -148,7 +154,7 @@ export function createShore(scene, camera, { archetypes, beds, bucket, onModeCha
       if (!active || tween || beds.length < 2) return;
       const spot = active;
       const others = beds.filter((b) => b !== spot.bed);
-      spot.bed = others[Math.floor(Math.random() * others.length)] ?? beds[0];
+      spot.bed = others[Math.floor(reshuffleRand() * others.length)] ?? beds[0];
       clearField(spot.rocks);
       spot.rocks = spawnBed(scene, archetypes, spot.bed, { origin: spot.origin });
     },

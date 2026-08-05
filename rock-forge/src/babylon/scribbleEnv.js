@@ -128,7 +128,12 @@ export function makeSeamlessNoise(scene, cells, smooth, name) {
   const ctx = t.getContext();
   const img = ctx.createImageData(S, S);
   const lat = new Float32Array(cells * cells);
-  for (let i = 0; i < lat.length; i++) lat[i] = Math.random();
+  // AUDIT #A6: seeded (was Math.random) so the paper grain is identical
+  // every session and across every lab page - share cards stay pixel-
+  // reproducible. Seed folds in `cells` so flow and grain differ.
+  let _s = (0x9e3779b9 ^ (cells * 2654435761)) >>> 0;
+  const _rand = () => ((_s = (_s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < lat.length; i++) lat[i] = _rand();
   const wrap = (v) => ((v % cells) + cells) % cells;
   const at = (x, y) => lat[wrap(y) * cells + wrap(x)];
 
