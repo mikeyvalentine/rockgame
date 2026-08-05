@@ -1,0 +1,620 @@
+{
+  "tileable": {
+    "aerial_grass_rock": {
+      "path": "assets/rock/tileable/aerial_grass_rock",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "aerial_grass_rock_color.jpg",
+        "normal": "aerial_grass_rock_normal.jpg",
+        "rough": "aerial_grass_rock_rough.jpg"
+      }
+    },
+    "coast_sand_rocks_02": {
+      "path": "assets/rock/tileable/coast_sand_rocks_02",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "coast_sand_rocks_02_color.jpg",
+        "normal": "coast_sand_rocks_02_normal.jpg",
+        "rough": "coast_sand_rocks_02_rough.jpg"
+      }
+    },
+    "coral_fort_wall_01": {
+      "path": "assets/rock/tileable/coral_fort_wall_01",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "coral_fort_wall_01_arm.jpg",
+        "color": "coral_fort_wall_01_color.jpg",
+        "normal": "coral_fort_wall_01_normal.jpg"
+      }
+    },
+    "granite_red_001": {
+      "path": "assets/rock/tileable/granite_red_001",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "granite_red_001_color.jpg",
+        "rough": "granite_red_001_rough.jpg"
+      }
+    },
+    "lichen_rock": {
+      "path": "assets/rock/tileable/lichen_rock",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "lichen_rock_arm.jpg",
+        "color": "lichen_rock_color.jpg",
+        "normal": "lichen_rock_normal.jpg"
+      }
+    },
+    "marble_cliff_05": {
+      "path": "assets/rock/tileable/marble_cliff_05",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "marble_cliff_05_arm.jpg",
+        "color": "marble_cliff_05_color.jpg",
+        "normal": "marble_cliff_05_normal.jpg"
+      }
+    },
+    "marble_rock_01": {
+      "path": "assets/rock/tileable/marble_rock_01",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "marble_rock_01_arm.jpg",
+        "color": "marble_rock_01_color.jpg",
+        "normal": "marble_rock_01_normal.jpg"
+      }
+    },
+    "marble_rock_02": {
+      "path": "assets/rock/tileable/marble_rock_02",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "marble_rock_02_arm.jpg",
+        "color": "marble_rock_02_color.jpg",
+        "normal": "marble_rock_02_normal.jpg"
+      }
+    },
+    "quarry_wall": {
+      "path": "assets/rock/tileable/quarry_wall",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "quarry_wall_arm.jpg",
+        "color": "quarry_wall_color.jpg",
+        "normal": "quarry_wall_normal.jpg"
+      }
+    },
+    "quarry_wall_02": {
+      "path": "assets/rock/tileable/quarry_wall_02",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "quarry_wall_02_arm.jpg",
+        "color": "quarry_wall_02_color.jpg",
+        "normal": "quarry_wall_02_normal.jpg"
+      }
+    },
+    "rock_01": {
+      "path": "assets/rock/tileable/rock_01",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_01_color.jpg",
+        "normal": "rock_01_normal.jpg",
+        "rough": "rock_01_rough.jpg"
+      }
+    },
+    "rock_027": {
+      "path": "assets/rock/tileable/rock_027",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "ao": "rock_027_ao.png",
+        "color": "rock_027_color.jpg",
+        "height": "rock_027_disp.png",
+        "normal": "rock_027_normal.jpg",
+        "rough": "rock_027_rough.png"
+      }
+    },
+    "rock_04": {
+      "path": "assets/rock/tileable/rock_04",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_04_color.jpg",
+        "normal": "rock_04_normal.jpg",
+        "rough": "rock_04_rough.jpg"
+      }
+    },
+    "rock_05": {
+      "path": "assets/rock/tileable/rock_05",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_05_color.jpg",
+        "normal": "rock_05_normal.jpg",
+        "rough": "rock_05_rough.jpg"
+      }
+    },
+    "rock_08": {
+      "path": "assets/rock/tileable/rock_08",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_08_color.jpg",
+        "normal": "rock_08_normal.jpg",
+        "rough": "rock_08_rough.jpg"
+      }
+    },
+    "rock_2": {
+      "path": "assets/rock/tileable/rock_2",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_2_color.jpg",
+        "normal": "rock_2_normal.jpg",
+        "rough": "rock_2_rough.jpg"
+      }
+    },
+    "rock_3": {
+      "path": "assets/rock/tileable/rock_3",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_3_color.jpg",
+        "normal": "rock_3_normal.jpg",
+        "rough": "rock_3_rough.jpg"
+      }
+    },
+    "rock_boulder_dry": {
+      "path": "assets/rock/tileable/rock_boulder_dry",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "rock_boulder_dry_arm.jpg",
+        "color": "rock_boulder_dry_color.jpg",
+        "normal": "rock_boulder_dry_normal.jpg"
+      }
+    },
+    "rock_face": {
+      "path": "assets/rock/tileable/rock_face",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "rock_face_arm.jpg",
+        "color": "rock_face_color.jpg",
+        "normal": "rock_face_normal.jpg"
+      }
+    },
+    "rock_face_03": {
+      "path": "assets/rock/tileable/rock_face_03",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "rock_face_03_arm.jpg",
+        "color": "rock_face_03_color.jpg",
+        "normal": "rock_face_03_normal.jpg"
+      }
+    },
+    "rock_surface": {
+      "path": "assets/rock/tileable/rock_surface",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "rock_surface_arm.jpg",
+        "color": "rock_surface_color.jpg",
+        "normal": "rock_surface_normal.jpg"
+      }
+    },
+    "rock_wall_02": {
+      "path": "assets/rock/tileable/rock_wall_02",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rock_wall_02_color.jpg",
+        "normal": "rock_wall_02_normal.jpg",
+        "rough": "rock_wall_02_rough.jpg"
+      }
+    },
+    "seaside_rock": {
+      "path": "assets/rock/tileable/seaside_rock",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "seaside_rock_arm.jpg",
+        "color": "seaside_rock_color.jpg",
+        "normal": "seaside_rock_normal.jpg"
+      }
+    },
+    "tiger_rock": {
+      "path": "assets/rock/tileable/tiger_rock",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "tiger_rock_arm.jpg",
+        "color": "tiger_rock_color.jpg",
+        "normal": "tiger_rock_normal.jpg"
+      }
+    },
+    "worn_rock_natural_01": {
+      "path": "assets/rock/tileable/worn_rock_natural_01",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "worn_rock_natural_01_color.jpg",
+        "normal": "worn_rock_natural_01_normal.jpg",
+        "rough": "worn_rock_natural_01_rough.jpg"
+      }
+    },
+    "pebble_scan": {
+      "path": "assets/rock/tileable/pebble_scan",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "pebble_scan_color.jpg"
+      },
+      "note": "UV atlas for a single pebble mesh, not a tiling surface. The colour is a crop from inside the island, mirror-tiled. Its normal map measured 1.6 degrees of relief once the edge-padding bleed was excluded, so it is dropped and the procedural grain is used instead."
+    },
+    "granite_002": {
+      "path": "assets/rock/tileable/granite_002",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "granite_002_color.jpg",
+        "ao": "granite_002_ao.jpg"
+      },
+      "note": "Normal and displacement were blank placeholders (1.2 degrees, 3 levels) and are dropped. Colour only \u2014 the darkest neutral in the set at luminance 62."
+    },
+    "marble_col_001": {
+      "path": "assets/rock/tileable/marble_col_001",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "marble_col_001_color.jpg",
+        "normal": "marble_col_001_normal.jpg",
+        "ao": "marble_col_001_ao.jpg"
+      }
+    },
+    "rough_rock_012": {
+      "path": "assets/rock/tileable/rough_rock_012",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rough_rock_012_color.jpg",
+        "normal": "rough_rock_012_normal.jpg",
+        "ao": "rough_rock_012_ao.jpg"
+      },
+      "note": "Seam 2.03 \u2014 the loosest-tiling of the usable set."
+    },
+    "rough_rock_015": {
+      "path": "assets/rock/tileable/rough_rock_015",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "rough_rock_015_color.jpg",
+        "normal": "rough_rock_015_normal.jpg",
+        "ao": "rough_rock_015_ao.jpg",
+        "height": "rough_rock_015_height.jpg"
+      },
+      "note": "Best relief (23.0 degrees) and best displacement range (221) in the whole set, and square, so it needs no aspect correction."
+    }
+  },
+  "displacement": {
+    "cliff_jagged_004": {
+      "path": "assets/rock/displacement/cliff_jagged_004",
+      "size": [
+        2048,
+        898
+      ],
+      "maps": {
+        "ao": "cliff_jagged_004_ao.jpg",
+        "color": "cliff_jagged_004_color.jpg",
+        "color_var2": "cliff_jagged_004_color_var2.jpg",
+        "gloss": "cliff_jagged_004_gloss.jpg",
+        "height": "cliff_jagged_004_height.jpg",
+        "normal": "cliff_jagged_004_normal.jpg"
+      }
+    },
+    "gravel_rubble": {
+      "path": "assets/rock/displacement/gravel_rubble",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "gravel_rubble_color.jpg",
+        "height": "gravel_rubble_height.png",
+        "normal": "gravel_rubble_normal.jpg",
+        "rough": "gravel_rubble_rough.jpg"
+      }
+    },
+    "muddy_rubble_slope": {
+      "path": "assets/rock/displacement/muddy_rubble_slope",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "ao": "muddy_rubble_slope_ao.jpg",
+        "color": "muddy_rubble_slope_color.jpg",
+        "height": "muddy_rubble_slope_height.png",
+        "normal": "muddy_rubble_slope_normal.jpg",
+        "rough": "muddy_rubble_slope_rough.jpg"
+      }
+    },
+    "rock_046_craggy": {
+      "path": "assets/rock/displacement/rock_046_craggy",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "ao": "rock_046_ao.jpg",
+        "color": "rock_046_color.jpg",
+        "height": "rock_046_height.png",
+        "normal": "rock_046_normal.jpg",
+        "rough": "rock_046_rough.jpg"
+      }
+    },
+    "rock_beach_small_002": {
+      "path": "assets/rock/displacement/rock_beach_small_002",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "ao": "rock_beach_small_002_ao.jpg",
+        "color": "rock_beach_small_002_color.jpg",
+        "height": "rock_beach_small_002_height.jpg",
+        "normal": "rock_beach_small_002_normal.jpg",
+        "rough": "rock_beach_small_002_rough.jpg"
+      }
+    },
+    "rock_ground": {
+      "path": "assets/rock/displacement/rock_ground",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "ao": "rock_ground_ao.jpg",
+        "color": "rock_ground_color.jpg",
+        "height": "rock_ground_height.png",
+        "normal": "rock_ground_normal.jpg",
+        "rough": "rock_ground_rough.jpg"
+      }
+    },
+    "rock_mossy_2": {
+      "path": "assets/rock/displacement/rock_mossy_2",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "ao": "rock_mossy_2_ao.jpg",
+        "color": "rock_mossy_2_color.jpg",
+        "height": "rock_mossy_2_height.png",
+        "normal": "rock_mossy_2_normal.jpg",
+        "rough": "rock_mossy_2_rough.jpg"
+      }
+    }
+  },
+  "scan": {
+    "coast_sand_01": {
+      "path": "assets/rock/scan/coast_sand_01",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "coast_sand_01_color.jpg",
+        "normal": "coast_sand_01_normal.jpg",
+        "rough": "coast_sand_01_rough.jpg"
+      }
+    },
+    "dry_river_pebbles": {
+      "path": "assets/rock/scan/dry_river_pebbles",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "arm": "dry_river_pebbles_arm.jpg",
+        "color": "dry_river_pebbles_color.jpg",
+        "normal": "dry_river_pebbles_normal.jpg"
+      }
+    },
+    "photogrammetry_stone": {
+      "path": "assets/rock/scan/photogrammetry_stone",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "photogrammetry_stone_color.jpg",
+        "normal": "photogrammetry_stone_normal.jpg"
+      }
+    },
+    "river_stones": {
+      "path": "assets/rock/scan/river_stones",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "river_stones_color.jpg"
+      }
+    },
+    "riverrock_01": {
+      "path": "assets/rock/scan/riverrock_01",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "riverrock_01_color.png",
+        "metalrough": "riverrock_01_metalrough.png",
+        "normal": "riverrock_01_normal.png"
+      }
+    },
+    "riverrock_02": {
+      "path": "assets/rock/scan/riverrock_02",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "riverrock_02_color.png",
+        "metalrough": "riverrock_02_metalrough.png",
+        "normal": "riverrock_02_normal.png"
+      }
+    },
+    "riverrock_03": {
+      "path": "assets/rock/scan/riverrock_03",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "riverrock_03_color.png",
+        "metalrough": "riverrock_03_metalrough.png",
+        "normal": "riverrock_03_normal.png"
+      }
+    },
+    "riverrock_04": {
+      "path": "assets/rock/scan/riverrock_04",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "riverrock_04_color.png",
+        "metalrough": "riverrock_04_metalrough.png",
+        "normal": "riverrock_04_normal.png"
+      }
+    },
+    "rock_08": {
+      "path": "assets/rock/scan/rock_08",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "rock_08_color.jpg",
+        "normal": "rock_08_normal.jpg",
+        "rough": "rock_08_rough.jpg"
+      }
+    },
+    "scanned_rocks": {
+      "path": "assets/rock/scan/scanned_rocks",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "ao": "scanned_rocks_ao.jpg",
+        "color": "scanned_rocks_color.jpg"
+      }
+    },
+    "seaside_rock": {
+      "path": "assets/rock/scan/seaside_rock",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "arm": "seaside_rock_arm.jpg",
+        "color": "seaside_rock_color.jpg",
+        "normal": "seaside_rock_normal.jpg"
+      }
+    },
+    "sioux_quartzite_boulder": {
+      "path": "assets/rock/scan/sioux_quartzite_boulder",
+      "size": [
+        2048,
+        2048
+      ],
+      "maps": {
+        "color": "sioux_quartzite_boulder_color.jpg",
+        "normal": "sioux_quartzite_boulder_normal.jpg"
+      }
+    },
+    "smallriverrocks": {
+      "path": "assets/rock/scan/smallriverrocks",
+      "size": [
+        1024,
+        1024
+      ],
+      "maps": {
+        "color": "smallriverrocks_color.png",
+        "metalrough": "smallriverrocks_metalrough.png",
+        "normal": "smallriverrocks_normal.png"
+      }
+    }
+  }
+}

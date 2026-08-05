@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Optimized model preview</title>
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #1b1b1e;
+    color: #eee;
+    font-family: system-ui, sans-serif;
+  }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  p.sub { color: #999; margin-top: 0; margin-bottom: 24px; font-size: 13px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: #242428;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #333;
+  }
+  .card h2 {
+    font-size: 14px;
+    font-weight: 500;
+    margin: 0;
+    padding: 10px 14px;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+  }
+  .card h2 span.size { color: #888; font-weight: 400; }
+  model-viewer {
+    width: 100%;
+    height: 360px;
+    background-color: #2f2f33;
+    --poster-color: transparent;
+  }
+</style>
+</head>
+<body>
+  <h1>Optimized glTF preview — lit with autumn_field_puresky_4k.hdr (babylon-water)</h1>
+  <p class="sub">Drag to orbit, scroll to zoom. Loaded from props/, lit by babylon-waterLoaded straight from the optimized_for_web folder.#39;s HDRI.</p>
+  <div class="grid">
+    <div class="card">
+      <h2>battery_highpoly.glb <span class="size">88 KB</span></h2>
+      <model-viewer src="battery_highpoly.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+    <div class="card">
+      <h2>battery_container.glb (empty) <span class="size">438 KB</span></h2>
+      <model-viewer src="battery_container.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+    <div class="card">
+      <h2>battery_container_loaded.glb <span class="size">447 KB</span></h2>
+      <model-viewer src="battery_container_loaded.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+    <div class="card">
+      <h2>bucket_metal.glb <span class="size">699 KB</span></h2>
+      <model-viewer src="bucket_metal.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+    <div class="card">
+      <h2>bucket_stylized.glb <span class="size">292 KB</span></h2>
+      <model-viewer src="bucket_stylized.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+    <div class="card">
+      <h2>bucket_lowpoly.glb <span class="size">195 KB</span></h2>
+      <model-viewer src="bucket_lowpoly.glb" environment-image="../babylon-water/autumn_field_puresky_4k.hdr" skybox-image="../babylon-water/autumn_field_puresky_4k.hdr" camera-controls auto-rotate exposure="1"></model-viewer>
+    </div>
+  </div>
+</body>
+</html>

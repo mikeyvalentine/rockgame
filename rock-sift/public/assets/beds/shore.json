@@ -1,0 +1,17 @@
+{
+  "name": "shore",
+  "stones": 540,
+  "variants": [
+    "shore-0.bed",
+    "shore-1.bed",
+    "shore-2.bed",
+    "shore-3.bed"
+  ],
+  "world": {
+    "U": 4,
+    "gravity": -39.24,
+    "bedRadius": 0.42,
+    "source": "river_rocks.glb"
+  },
+  "bakedWith": "bake-bed.mjs shore 4 540"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "rock-sift",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Babylon.js demo: sift through a rocky shore and find a good skipping stone.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:sift": "node tools/sift-test.mjs",
+    "test": "node tools/test.mjs",
+    "bake": "node tools/bake-bed.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@babylonjs/core": "^8.56.2",
+    "@babylonjs/havok": "^1.3.14",
+    "@babylonjs/loaders": "^8.56.2"
+  },
+  "devDependencies": {
+    "vite": "^8.2.0"
+  }
+}

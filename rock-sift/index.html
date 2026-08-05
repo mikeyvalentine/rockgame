@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rocky Shore — find a skipping stone</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view" touch-action="none"></canvas>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <div id="loading-text">loading</div>
+    </div>
+
+    <div id="hud">
+      <div id="hint">
+        <strong>Drag</strong> to sweep your hand through the stones ·
+        <strong>Click</strong> a stone to pick it up ·
+        <strong>Scroll</strong> to change dig depth ·
+        <strong>R</strong> to re-pour
+      </div>
+
+      <div id="stats">
+        <div class="row"><span class="k">dig depth</span><span class="v" id="depth">5 cm</span></div>
+        <div class="row"><span class="k">best found</span><span class="v" id="best">—</span></div>
+        <div class="row"><span class="k">in the bucket</span><span class="v" id="kept">0</span></div>
+      </div>
+
+      <div id="panel">
+        <div id="panel-name">Stone</div>
+        <div class="row"><span class="k">size</span><span class="v" id="panel-dims"></span></div>
+        <div class="row"><span class="k">weight</span><span class="v" id="panel-mass"></span></div>
+        <div class="row"><span class="k">skip rating</span><span class="v stars" id="panel-stars"></span></div>
+        <div id="panel-verdict"></div>
+        <div id="panel-hint">click anywhere, or press Esc, to put it back</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

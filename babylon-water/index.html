@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Babylon Water — Evan Wallace sim port, reflection only</title>
+<style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #05080d; }
+    #c { width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+    #hud {
+        position: fixed; left: 14px; bottom: 12px;
+        font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace;
+        color: #cfe4f2; text-shadow: 0 1px 3px #000a; pointer-events: none;
+        opacity: .82;
+    }
+    #hud b { color: #fff; font-weight: 600; }
+    /* #hud is pointer-events:none so it never steals drags from the water —
+       the button has to opt back in explicitly. */
+    #hud button {
+        pointer-events: auto;
+        margin-right: 10px;
+        padding: 5px 12px;
+        font: inherit;
+        color: #eaf4fb;
+        background: #1b3346cc;
+        border: 1px solid #4d7a99;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+    #hud button:hover { background: #27506ecc; }
+    #hud button:active { transform: translateY(1px); }
+
+    #panel {
+        position: fixed; top: 10px; right: 10px; width: 250px;
+        max-height: calc(100vh - 20px); overflow-y: auto;
+        padding: 10px 12px 12px;
+        font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+        color: #dceaf5; background: #0d1c2aee;
+        border: 1px solid #2f5570; border-radius: 7px;
+        z-index: 10;
+    }
+    #panel h4 {
+        margin: 12px 0 6px; font-size: 10px; letter-spacing: .09em;
+        text-transform: uppercase; color: #7fb4d6; font-weight: 600;
+    }
+    #panel h4:first-child { margin-top: 0; }
+    #panel .row { margin-bottom: 7px; }
+    #panel .lab { display: flex; justify-content: space-between; gap: 8px; }
+    #panel .lab span:last-child { color: #fff; }
+    #panel input[type=range] { width: 100%; margin: 2px 0 0; height: 14px; }
+    #panel .btns { display: flex; gap: 6px; margin-top: 12px; }
+    #panel .btns button {
+        flex: 1; padding: 6px 0; font: inherit; cursor: pointer;
+        color: #eaf4fb; background: #1b3346; border: 1px solid #4d7a99;
+        border-radius: 5px;
+    }
+    #panel .btns button:hover { background: #27506e; }
+    #copyOut {
+        width: 100%; height: 78px; margin-top: 8px; display: none;
+        font: 10px/1.35 ui-monospace, Consolas, monospace;
+        color: #dceaf5; background: #071320; border: 1px solid #2f5570;
+        border-radius: 4px; resize: vertical;
+    }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel"></div>
+<div id="hud">
+    <button id="plungeBtn">Plunge</button>
+    <b>click / drag</b> the water &nbsp;·&nbsp;
+    <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
+</div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script>
+// =============================================================================
+// Height-field water — a direct port of Evan Wallace's WebGL Water simulation.
+//
+//   WebGL Water
+//   http://madebyevan.com/webgl-water/
+//   Copyright 2011 Evan Wallace
+//   Released under the MIT license
+//
+// The four simulation shaders below (clear/drop/update/normal) are his, ported
+// verbatim apart from the mechanical changes needed to run them under Babylon
+// rather than lightgl: his "coord" varying is Babylon's vUV, his "texture"
+// sampler is named "prev", and the GLSL is plain strings instead of lightgl's
+// backslash-continued ones. The maths is untouched.
+//
+// His constants are used as-is and are load-bearing, not arbitrary — they are
+// tuned to each other:
+//   256x256 sim texture, 2x2 world plane (x and z in [-1, 1])
+//   0.995 velocity damping per step
+//   2 simulation steps + 1 normal pass per frame
+//   drop radius 0.03, strength 0.01
+// Changing the plane size or resolution without rescaling the rest changes how
+// the water behaves, not just how detailed it is, because his normal shader
+// treats UV space as world space.
+//
+// The texture layout is his: (height, velocity, normal.x, normal.z). All four
+// channels are occupied, which is why the surface shader reads its normal out
+// of the texture rather than recomputing a gradient.
+//
+// What is NOT ported, both deliberately: the refraction/IOR path from his
+// fragment shader (this project is reflection-only from the outset) and his
+// sphere volume-displacement shader (object interaction comes later, driven by
+// the stone's own physics).
+// =============================================================================
+
+// Scaled up from his 2 m pool to pond size. RES, SIZE and STEPS are COUPLED and
+// cannot be changed independently: a wave crosses one cell per step, so
+//     waveSpeed = (SIZE / RES) * 0.694 * STEPS * 60
+// (the 0.694 cells-per-step is measured, not theoretical). Real ripples of the
+// size a stone makes travel 0.7-1.0 m/s by deep-water dispersion, and that pins
+// the cell size to roughly 25 mm. Everything below follows from that:
+//
+//   SIZE 24 m / RES 1024  ->  23.4 mm cells
+//   STEPS 1               ->  0.98 m/s waves, physically right
+//   damping rescaled      ->  0.995 was per-step at 2 steps/frame, so halving
+//                             the step count needs 0.995^2 to decay the same
+//                             amount per second
+//
+// Going much beyond 24 m means either waves that travel visibly too fast or a
+// texture that will not fit in memory (48 m at this cell size needs 2048^2,
+// about 134 MB across the ping-pong pair). That is what the windowed sim solves.
+const RES     = 1024;    // simulation texture size
+const SIZE    = 24;      // pond span in metres, x and z in [-12, 12]
+const HALF    = SIZE / 2;
+const SUBDIV  = 192;     // surface tessellation. 256 gave 65k verts every frame;
+                         // the two shortest ambient octaves are normal-only
+                         // anyway, so the geometry was carrying detail it could
+                         // not resolve.
+const STEPS   = 1;       // stepSimulation() calls per frame
+const DAMPING = 0.990;   // per step, rescaled from his 0.995 for STEPS 1
+const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
+const DROP_S  = 0.01;    // his drop strength, in metres of displacement
+
+// Babylon's shader processor rewrites the source it is handed and mishandles a
+// line comment containing a semicolon, leaving the tail of the sentence in the
+// compiled GLSL as a syntax error. Stripping comments on the way to the
+// compiler sidesteps that; they stay in this file, where they are useful.
+const glsl = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+// --- Evan Wallace's simulation shaders ---------------------------------------
+
+// Not his — a plain clear, since lightgl could blank a texture directly and
+// EffectRenderer has no equivalent.
+const CLEAR_FRAG = `
+precision highp float;
+varying vec2 vUV;
+void main(void) {
+    gl_FragColor = vec4(0.0);
+}
+`;
+
+// His dropShader.
+const DROP_FRAG = `
+precision highp float;
+const float PI = 3.141592653589793;
+varying vec2 vUV;
+uniform sampler2D prev;
+uniform vec2 center;
+uniform float radius;
+uniform float strength;
+void main(void) {
+    vec4 info = texture2D(prev, vUV);
+    float drop = max(0.0, 1.0 - length(center * 0.5 + 0.5 - vUV) / radius);
+    drop = 0.5 - cos(drop * PI) * 0.5;
+    info.r += drop * strength;
+    gl_FragColor = info;
+}
+`;
+
+// His updateShader. Velocity moves toward the neighbour average, attenuates,
+// then integrates into height.
+const UPDATE_FRAG = `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D prev;
+uniform vec2 delta;
+void main(void) {
+    vec4 info = texture2D(prev, vUV);
+
+    vec2 dx = vec2(delta.x, 0.0);
+    vec2 dy = vec2(0.0, delta.y);
+    float average = (
+        texture2D(prev, vUV - dx).r +
+        texture2D(prev, vUV - dy).r +
+        texture2D(prev, vUV + dx).r +
+        texture2D(prev, vUV + dy).r
+    ) * 0.25;
+
+    info.g += (average - info.r) * 2.0;
+    info.g *= DAMP;
+    info.r += info.g;
+
+    gl_FragColor = info;
+}
+`.replace(/DAMP/g, DAMPING.toFixed(4));
+
+// His normalShader. One-sided forward differences, cross product, stored into
+// the b/a channels as normal.x and normal.z. The y component is implied and is
+// reconstructed in the surface shader.
+const NORMAL_FRAG = `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D prev;
+uniform vec2 delta;
+void main(void) {
+    vec4 info = texture2D(prev, vUV);
+
+    vec3 dx = vec3(delta.x, texture2D(prev, vec2(vUV.x + delta.x, vUV.y)).r - info.r, 0.0);
+    vec3 dy = vec3(0.0, texture2D(prev, vec2(vUV.x, vUV.y + delta.y)).r - info.r, delta.y);
+    info.ba = normalize(cross(dy, dx)).xz;
+
+    gl_FragColor = info;
+}
+`;
+
+// --- surface -----------------------------------------------------------------
+// --- ambient chop ------------------------------------------------------------
+// The pond's own motion, independent of anything the player does. It is
+// ANALYTIC — a function of world position and time — so it has no texture, no
+// domain and no memory cost, and it stays valid however far the pond extends.
+// That is what lets the interaction sim later shrink to a window around the
+// stone while the rest of the water still lives.
+//
+// The sim holds the DEVIATION from this, not the water itself. Keeping the two
+// separate is what makes a windowed sim seamless later: fade the deviation to
+// zero at the window edge and what remains is ambient, which is continuous
+// everywhere, so there is no join to hide.
+//
+// Shared verbatim by the vertex and fragment shaders so the height they
+// displace by and the normal they shade with cannot drift apart.
+// The precision statement leads, because this block is prepended to the FRAGMENT
+// shader too and a fragment shader has no default float precision — declaring a
+// float uniform ahead of it is a compile error. Repeating it in the shader body
+// below is harmless.
+const AMBIENT_GLSL = `
+precision highp float;
+uniform float time;
+uniform float windStrength;   // 0 glass, 1 choppy
+uniform vec2 windDir;         // unit vector, the day's wind heading
+uniform float detailScale;    // >1 keeps finer detail alive further out, at the
+                              // cost of more aliasing. 1 is the Nyquist-honest
+                              // setting.
+uniform float waveScale;      // stretches all ambient wavelengths together
+uniform float blurGain;       // how hard unresolved slope variance blurs the
+                              // reflection. 0 disables the filtering entirely.
+
+// One directional wave. Returns height in x, and the world-space slope in yz.
+// Speed follows deep-water dispersion, c = sqrt(g * L / 2pi), so LONGER waves
+// genuinely travel faster. The interaction sim cannot do that — every wave in a
+// height field moves at one speed — so this layer is where the pond gets the
+// mixed-scale motion that reads as real water.
+// How much of a wave of wavelength L survives at a pixel footprint of fp metres.
+// This is Nyquist: once a wavelength drops near the width of a pixel, that wave
+// can no longer be shaded, only aliased. Fading it out is not a loss of detail
+// so much as an admission that the detail was never resolvable — the sparkle it
+// produces is sampling noise, not water.
+float detailWeight(float L, float fp) {
+    if (fp <= 0.0) return 1.0;
+    return smoothstep(fp * 1.2, fp * 3.5, L);
+}
+
+vec3 ambientWave(vec2 wp, vec2 dir, float L, float A, float t) {
+    float k = 6.2831853 / L;
+    float c = sqrt(9.81 * L / 6.2831853);
+    float ph = k * dot(dir, wp) - k * c * t;
+    return vec3(A * sin(ph), A * cos(ph) * k * dir.x, A * cos(ph) * k * dir.y);
+}
+
+// Four octaves, each turned into the day's wind direction. Amplitudes fall
+// faster than wavelengths so the surface stays dominated by the long swell and
+// the fine chop only textures it.
+// The fine parameter scales the two SHORT octaves. The vertex shader passes 0
+// and the
+// fragment shader passes 1, on purpose: at this pond size the mesh gives about
+// 9 cm per quad, so a 15 cm wave spans under two quads and would alias into
+// crawling garbage if it were displaced as geometry. Those octaves still exist
+// in full for the NORMAL, where they cost nothing and read correctly, so the
+// detail is present in the shading without being present in the silhouette.
+// waveScale stretches every wavelength together. Amplitude scales with it, so
+// wave STEEPNESS (height over length) stays constant and bigger waves read as
+// bigger rather than as the same chop inflated. Speed follows for free, because
+// the dispersion term is computed from the scaled wavelength — longer swell
+// genuinely rolls slower and more heavily.
+// The slope variance carried by octaves too fine to resolve at footprint fp.
+//
+// This is the other half of honest filtering, and the half that was missing.
+// Fading an unresolvable wave is correct — but the wave still EXISTS, and what
+// it does to a pixel is scatter the reflection over a cone of directions. Throw
+// that away and the water flattens to a mirror; represent it as roughness and
+// the detail survives as a broader, softer highlight instead of as sparkle.
+// So the lost slopes are accumulated here and spent below on blurring the
+// environment lookup rather than discarded.
+float ambientLostVariance(float fp) {
+    float A = windStrength;
+    float S = waveScale;
+    float v = 0.0;
+    float k, sa;
+    k = 6.2831853 / (0.90 * S); sa = 0.0045 * A * S * k; v += 0.5 * sa * sa * (1.0 - detailWeight(0.90 * S, fp));
+    k = 6.2831853 / (0.55 * S); sa = 0.0028 * A * S * k; v += 0.5 * sa * sa * (1.0 - detailWeight(0.55 * S, fp));
+    k = 6.2831853 / (0.28 * S); sa = 0.0014 * A * S * k; v += 0.5 * sa * sa * (1.0 - detailWeight(0.28 * S, fp));
+    k = 6.2831853 / (0.15 * S); sa = 0.0007 * A * S * k; v += 0.5 * sa * sa * (1.0 - detailWeight(0.15 * S, fp));
+    return v;
+}
+
+vec3 ambientField(vec2 wp, float fine, float fp) {
+    vec2 w = normalize(windDir + vec2(1e-6, 0.0));
+    mat2 rot = mat2(w.x, w.y, -w.y, w.x);
+    float A = windStrength;
+    float S = waveScale;
+    float L0 = 0.90 * S, L1 = 0.55 * S, L2 = 0.28 * S, L3 = 0.15 * S;
+    vec3 f = vec3(0.0);
+    f += ambientWave(wp, rot * normalize(vec2(1.00,  0.15)), L0, 0.0045 * A * S * detailWeight(L0, fp), time);
+    f += ambientWave(wp, rot * normalize(vec2(0.80, -0.60)), L1, 0.0028 * A * S * detailWeight(L1, fp), time);
+    f += ambientWave(wp, rot * normalize(vec2(-0.40, 0.90)), L2, 0.0014 * A * S * fine * detailWeight(L2, fp), time);
+    f += ambientWave(wp, rot * normalize(vec2(0.20,  1.00)), L3, 0.0007 * A * S * fine * detailWeight(L3, fp), time);
+    return f;
+}
+`;
+
+BABYLON.Effect.ShadersStore["waterSurfaceVertexShader"] = glsl(AMBIENT_GLSL + `
+precision highp float;
+attribute vec3 position;
+attribute vec2 uv;
+uniform mat4 world;
+uniform mat4 viewProjection;
+uniform sampler2D sim;
+varying vec2 vUV;
+varying vec3 vWorld;
+
+void main(void) {
+    vUV = uv;
+    vec3 p = position;
+    // Ambient is sampled at the UNDISPLACED world position, so the wave pattern
+    // is anchored to the world rather than sliding around with its own output.
+    vec4 flatW = world * vec4(position, 1.0);
+    // Heights are already in the plane's own units, exactly as in the original,
+    // so there is no height scale to apply.
+    // No footprint in the vertex stage: geometry is not what aliases, and there
+    // are no derivatives here anyway. Passing 0 keeps every octave at full
+    // strength for displacement.
+    p.y += texture2D(sim, uv).r + ambientField(flatW.xz, 0.0, 0.0).x;
+    vec4 wp = world * vec4(p, 1.0);
+    vWorld = wp.xyz;
+    gl_Position = viewProjection * wp;
+}
+`);
+
+BABYLON.Effect.ShadersStore["waterSurfaceFragmentShader"] = glsl(AMBIENT_GLSL + `
+precision highp float;
+varying vec2 vUV;
+varying vec3 vWorld;
+uniform sampler2D sim;
+uniform samplerCube envTex;
+uniform vec3 cameraPos;
+uniform vec3 sunDir;
+uniform vec3 tint;
+
+void main(void) {
+    // The sim normal comes straight out of the simulation texture, which is the
+    // whole reason his normal pass exists. Reconstructing y from x and z works
+    // because the stored pair are components of a unit vector.
+    vec4 info = texture2D(sim, vUV);
+    vec3 Nsim = vec3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
+
+    // Normals do not add — SLOPES do. So both layers are converted to slope,
+    // summed, and turned back into a normal once. Adding the two normal vectors
+    // instead would wash each layer out as the other got steeper.
+    //
+    // The scale factor is Evan's convention showing through: his normal pass
+    // treats a UV step as the run, while the pond is WORLD_SIZE units across, so
+    // his slopes are WORLD_SIZE times the physical ones. Ambient is computed in
+    // world space, so it is scaled to match rather than the reverse — that keeps
+    // his ported code untouched.
+    // How much world lies under one pixel. At a low shore-level view this grows
+    // enormously toward the horizon — a single distant pixel can span metres of
+    // water, i.e. many whole wave cycles — which is exactly why point-sampling
+    // the normal there produced the pixely sparkle rather than a surface.
+    vec2 fw = fwidth(vWorld.xz);
+    // TWO footprints, deliberately. fpTrue is the honest pixel size and drives
+    // the roughness/blur compensation. fp is the artistic one, scaled by the
+    // detail slider, and only controls how much amplitude is faded.
+    //
+    // Keeping them separate matters: they were the same value at first, which
+    // meant raising the detail slider also convinced the shader that nothing
+    // was unresolved, so it recovered zero variance and applied zero blur —
+    // the setting meant to preserve detail was disabling the thing that makes
+    // preserved detail safe to look at.
+    float fpTrue = max(fw.x, fw.y);
+    float fp = fpTrue / max(detailScale, 0.01);
+
+    vec2 simSlope = -Nsim.xz / max(Nsim.y, 1e-4);
+    // The sim's own ripples are high-frequency too and alias the same way, so
+    // they fade on the same rule. 0.25 m is about their characteristic scale.
+    simSlope *= detailWeight(0.25, fp);
+    vec3 amb = ambientField(vWorld.xz, 1.0, fp);
+    vec2 slope = simSlope + amb.yz * WORLD_SIZE;
+    vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
+
+    vec3 incomingRay = normalize(vWorld - cameraPos);
+    vec3 R = reflect(incomingRay, N);
+
+    // Roughness recovered from the detail that could not be resolved, spent on
+    // blurring the reflection. A rough surface reflects a CONE of directions,
+    // and a blurred mip is the average over that cone — so even though R still
+    // swings wildly from pixel to pixel, it is now sampling a smooth image and
+    // the result stops flickering. This is what lets the normals keep their
+    // full detail without the reflection tearing itself apart.
+    // Skipped entirely when the gain is zero. The variance estimate re-evaluates
+    // four more detailWeight terms per pixel, and against a plain sky it was
+    // measured to move the aliasing metric by under 5% — not worth paying for at
+    // every pixel. It earns its cost once the reflection contains real
+    // high-frequency content (a shore, trees, the bank), so the code stays.
+    float lod = 0.0;
+    if (blurGain > 0.0) {
+        float lostVar = ambientLostVariance(fpTrue) * WORLD_SIZE * WORLD_SIZE;
+        lod = clamp(log2(1.0 + lostVar * blurGain), 0.0, 7.0);
+    }
+    vec3 refl = textureCubeLodEXT(envTex, R, lod).rgb;
+
+    // His sun is an extremely tight power lobe, which is what keeps it a small
+    // hard glint up close — and it is also the single worst aliasing offender
+    // at distance, since a near-delta highlight either hits a pixel centre or
+    // misses entirely, producing exactly the crawling white speckle seen at a
+    // low viewing angle.
+    //
+    // Detail that can no longer be resolved is not discarded, it is MOVED: as
+    // the tight lobe fades with footprint, a broad one takes over. Physically
+    // that is what losing sub-pixel normal variation means — the surface reads
+    // as rougher, so its highlight should spread and dim rather than vanish.
+    float sunDot = max(0.0, dot(sunDir, R));
+    // Also the honest footprint: whether the tight lobe aliases is a fact about
+    // pixel size, not about a slider.
+    float keep = detailWeight(0.30, fpTrue);
+    float sharp = pow(sunDot, 5000.0) * keep;
+    float broad = pow(sunDot, 60.0) * (1.0 - keep) * 0.12;
+    refl += vec3(sharp + broad) * vec3(10.0, 8.0, 6.0);
+
+    // His Fresnel curve, not the physically exact Schlick term for water. F0 is
+    // 0.25 with a cubic falloff, so the surface never goes near-black head-on
+    // and ramps to mirror more gently at grazing angles.
+    float fresnel = mix(0.25, 1.0, pow(1.0 - dot(N, -incomingRay), 3.0));
+
+    // His shader mixes the reflection against a REFRACTED ray here. With
+    // refraction out of scope there is nothing beneath the surface to show, so
+    // the transmitted side gets a dimmed, tinted copy of the reflection. That
+    // keeps the surface lit by the same environment instead of by an invented
+    // colour, which is what stops it reading flat where you look straight down.
+    vec3 body = refl * tint;
+
+    gl_FragColor = vec4(mix(body, refl, fresnel), 1.0);
+}
+`.replace(/WORLD_SIZE/g, SIZE.toFixed(1)));
+
+// --- scene -------------------------------------------------------------------
+const canvas = document.getElementById("c");
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false });
+
+// Supersampling. This is the real cure for the sparkle, as opposed to fading
+// detail away: the speckle is a SAMPLING failure, one sample per pixel trying
+// to represent many wave cycles, so the fix is more samples rather than less
+// water. Rendering at 2x and downscaling gives four samples per output pixel.
+//
+// MSAA deliberately not used here — it anti-aliases geometry edges only and
+// does nothing for specular aliasing, which is entirely a fragment-shader
+// phenomenon. It would cost memory and change nothing.
+//
+// Note fwidth in the water shader measures the RENDERED pixel, so supersampling
+// automatically shrinks the footprint and the detail cutoff relaxes on its own.
+// The two mechanisms cooperate rather than fight.
+// Off by default. Supersampling is quadratic — 2x renders FOUR times the pixels,
+// each running the full water shader — and it was the single largest cost in the
+// frame. The sparkle it was fighting is already handled analytically by the
+// footprint-based filtering in the shader, which costs nothing per extra pixel.
+// Raise this only if aliasing reappears at a viewing angle the filtering misses.
+const RENDER = window.RENDER = { supersample: 1.0 };
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
+function applyScaling() {
+    engine.setHardwareScalingLevel(1 / (dpr * RENDER.supersample));
+}
+applyScaling();
+
+const scene = new BABYLON.Scene(engine);
+scene.clearColor = new BABYLON.Color4(0.05, 0.08, 0.13, 1);
+
+// Radius is in the pool's own units now — the plane is 2 across, not 12.
+// Pulled back for the 24 m pond, and biased toward the semi-wide bird's eye the
+// game will use.
+const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI / 2.2, 0.95, 20, BABYLON.Vector3.Zero(), scene);
+camera.attachControl(canvas, true);
+camera.lowerRadiusLimit = 3;
+camera.upperRadiusLimit = 90;
+camera.upperBetaLimit = 1.52;          // stop the camera dropping under the plane
+camera.wheelPrecision = 8;
+
+// An .hdr is LINEAR and high-dynamic-range: the sky sits around 1-3 but the sun
+// region runs far above that. Sampling it straight into an 8-bit framebuffer
+// would clip every bright reflection to flat white, so the scene renders in HDR
+// and is tone-mapped once at the end.
+const envTex = new BABYLON.HDRCubeTexture("autumn_field_puresky_4k.hdr", scene, 512);
+scene.environmentTexture = envTex;
+
+// PBR skybox: it consumes the linear HDR cube correctly and leaves tone mapping
+// to the post-process, which is what keeps the sky and the water's reflection of
+// that same sky on one curve. Two curves would show as a seam at the horizon.
+const sky = scene.createDefaultSkybox(envTex, true, 1000, 0);
+sky.infiniteDistance = true;
+
+const sunDir = new BABYLON.Vector3(-0.35, 0.55, 0.42).normalize();
+
+// Tone mapping and grading on the FINAL composited image, so the sky and the
+// water get byte-identical treatment.
+const pipeline = new BABYLON.DefaultRenderingPipeline("grade", true, scene, [camera]);
+pipeline.imageProcessingEnabled = true;
+pipeline.imageProcessing.toneMappingEnabled = true;
+pipeline.imageProcessing.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+pipeline.imageProcessing.exposure = 1.0;
+
+pipeline.imageProcessing.colorCurvesEnabled = true;
+const curves = new BABYLON.ColorCurves();
+curves.globalHue = 30;        // orange
+curves.globalDensity = 28;    // how far toward it, 0 is neutral
+curves.globalSaturation = 6;
+pipeline.imageProcessing.colorCurves = curves;
+
+window.GRADE = {
+    warmth: (d) => { curves.globalDensity = d; },
+    hue: (h) => { curves.globalHue = h; },
+    exposure: (x) => { pipeline.imageProcessing.exposure = x; },
+};
+
+// --- simulation targets ------------------------------------------------------
+// Two float targets ping-ponged between passes. His textureA/textureB with
+// swapWith(), rebuilt on Babylon's RenderTargetTexture.
+function makeSimTarget(name) {
+    const rt = new BABYLON.RenderTargetTexture(
+        name, { width: RES, height: RES }, scene,
+        {
+            generateDepthBuffer: false,
+            generateMipMaps: false,
+            type: BABYLON.Constants.TEXTURETYPE_FLOAT,
+            format: BABYLON.Constants.TEXTUREFORMAT_RGBA,
+            samplingMode: BABYLON.Texture.BILINEAR_SAMPLINGMODE,
+        }
+    );
+    rt.wrapU = rt.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    // Stop Babylon from rendering these itself. They are bound to the water
+    // material as a sampler, so the scene picks them up as active render
+    // targets and re-renders them every frame — and with an empty render list
+    // that means CLEARING them. The simulation was being wiped once per frame,
+    // which is why stepping the passes by hand worked perfectly while the exact
+    // same sequence inside scene.render() produced nothing at all.
+    rt.refreshRate = 0;
+    return rt;
+}
+let simA = makeSimTarget("simA");
+let simB = makeSimTarget("simB");
+
+const effectRenderer = new BABYLON.EffectRenderer(engine);
+
+function makePass(name, source, uniforms) {
+    return new BABYLON.EffectWrapper({
+        engine, name,
+        fragmentShader: glsl(source),
+        samplerNames: ["prev"],
+        uniformNames: uniforms,
+    });
+}
+const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
+const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["center", "radius", "strength"]);
+const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta"]);
+const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
+
+const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
+let passSrc = null, passDrop = { center: new BABYLON.Vector2(0, 0), radius: DROP_R, strength: 0 };
+
+// Uniforms go through onApply because EffectRenderer binds the effect itself.
+dropPass.onApplyObservable.add(() => {
+    const eff = dropPass.effect;
+    eff.setVector2("center", passDrop.center);
+    eff.setFloat("radius", passDrop.radius);
+    eff.setFloat("strength", passDrop.strength);
+    if (passSrc) eff.setTexture("prev", passSrc);
+});
+for (const p of [updatePass, normalPass]) {
+    p.onApplyObservable.add(() => {
+        p.effect.setVector2("delta", DELTA);
+        if (passSrc) p.effect.setTexture("prev", passSrc);
+    });
+}
+
+/// Run one full-screen pass: read simA, write simB, then swap so simA is always
+/// the current state. This is his drawTo/bind/swapWith, unrolled.
+function runPass(pass) {
+    if (!pass.effect.isReady()) return false;
+    passSrc = simA;
+    // Drop every texture binding first. Without this the target being drawn
+    // into may still be bound as a sampler from the previous pass, which is a
+    // feedback loop the driver is entitled to drop the draw over, and does.
+    engine.unbindAllTextures();
+    effectRenderer.render(pass, simB);
+    const t = simA; simA = simB; simB = t;
+    return true;
+}
+
+// --- his Water API -----------------------------------------------------------
+/// addDrop(x, y, radius, strength) — x and y are in [-1, 1], matching the pool.
+function addDrop(x, y, radius, strength) {
+    passDrop.center.set(x, y);
+    passDrop.radius = radius;
+    passDrop.strength = strength;
+    return runPass(dropPass);
+}
+function stepSimulation() { return runPass(updatePass); }
+function updateNormals()  { return runPass(normalPass); }
+
+// --- water mesh --------------------------------------------------------------
+const water = BABYLON.MeshBuilder.CreateGround(
+    "water", { width: SIZE, height: SIZE, subdivisions: SUBDIV }, scene
+);
+
+const waterMat = new BABYLON.ShaderMaterial("waterMat", scene,
+    { vertex: "waterSurface", fragment: "waterSurface" },
+    {
+        attributes: ["position", "uv"],
+        uniforms: ["world", "viewProjection", "cameraPos", "sunDir", "tint",
+                   "time", "windStrength", "windDir", "detailScale", "waveScale",
+                   "blurGain"],
+        samplers: ["sim", "envTex"],
+    }
+);
+waterMat.setVector3("sunDir", sunDir);
+// Kept as a live object rather than an inline literal so the panel can edit it
+// in place. This is the murky-pond body colour — the non-reflective side of the
+// Fresnel, which dominates at the bird's-eye angles the game will use.
+const waterTint = new BABYLON.Color3(0.22, 0.30, 0.34);
+waterMat.setColor3("tint", waterTint);
+
+// The day's weather. strength 0 is dead glass, 1 is a choppy afternoon.
+// Live-tunable: WIND.set(0.6, 40) for a moderate breeze out of 40 degrees.
+const WIND = window.WIND = {
+    strength: 0.55,
+    dirDeg: 25,
+    detail: 3.0,       // full detail, now that supersampling handles the aliasing
+    // 4.0: the base octaves are 0.90/0.55/0.28/0.15 m, so this puts the swell at
+    // 3.6 m down to 0.6 m chop. Fewer, longer waves across a 24 m pond, which is
+    // what a pond actually looks like — the shorter set read as busy noise at
+    // this scale. Amplitude scales with it so steepness holds, and speed follows
+    // from dispersion, so the long swell also rolls slower.
+    waveScale: 4.0,    // 1 is the original fine chop; higher is longer swell
+    blurGain: 0.0,     // off: measured under 5% effect against a plain sky, and
+                       // it costs four extra detailWeight terms per pixel
+    set(strength, dirDeg) {
+        this.strength = strength;
+        if (dirDeg !== undefined) this.dirDeg = dirDeg;
+    },
+};
+waterMat.setTexture("envTex", envTex);
+water.material = waterMat;
+
+// --- drops -------------------------------------------------------------------
+// Queued rather than applied immediately, because each drop is its own render
+// pass and those have to happen inside the frame, not from an input callback.
+// Callers work in WORLD METRES; the conversion to the normalised [-1, 1] space
+// Evan's drop shader expects happens here, in one place. That keeps game code
+// free of the sim's internal coordinates, and it is the same seam the windowed
+// sim will later hook into to remap world position into a moving window.
+const dropQueue = [];
+// Note the asymmetry: positions are world metres and get converted, but the
+// radius parameter stays in Evan's UV space — it feeds his drop shader
+// unchanged, and both existing callers (stoneImpact, landing ripples) already
+// speak that unit. Documented rather than refactored.
+//
+// Bounded, because the queue only drains while the sim is running: a pause, or
+// the shader-compile frames at startup, would otherwise stockpile drops and
+// then replay every one of them as its own full-screen render pass on the
+// first live frame.
+const DROP_QUEUE_MAX = 64;
+function queueDrop(worldX, worldZ, strength, radius) {
+    if (dropQueue.length >= DROP_QUEUE_MAX) dropQueue.shift();
+    dropQueue.push({
+        x: worldX / HALF,
+        z: worldZ / HALF,
+        strength,
+        radius: radius === undefined ? DROP_R : radius,
+    });
+}
+
+let pointerDown = false;
+scene.onPointerObservable.add((pi) => {
+    const t = pi.type;
+    if (t === BABYLON.PointerEventTypes.POINTERDOWN) pointerDown = true;
+    if (t === BABYLON.PointerEventTypes.POINTERUP)   pointerDown = false;
+    if (t !== BABYLON.PointerEventTypes.POINTERDOWN &&
+        !(t === BABYLON.PointerEventTypes.POINTERMOVE && pointerDown)) return;
+
+    // Pick against the FLAT plane, not the displaced mesh: Babylon's picking
+    // uses the CPU-side geometry, which never moved, since the displacement
+    // lives entirely in the vertex shader. Intersecting y = 0 analytically is
+    // both cheaper and honest about that.
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), camera);
+    if (Math.abs(ray.direction.y) < 1e-4) return;
+    const dist = -ray.origin.y / ray.direction.y;
+    if (dist <= 0) return;
+    const p = ray.origin.add(ray.direction.scale(dist));
+
+    if (Math.abs(p.x) < HALF && Math.abs(p.z) < HALF) queueDrop(p.x, p.z, DROP_S);
+});
+
+// --- controls ----------------------------------------------------------------
+let paused = false, raining = false;
+addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (k === "p") paused = !paused;
+    if (k === "d") raining = !raining;
+    if (k === "r") reset();
+});
+
+let needsSeed = false;
+function reset() {
+    passSrc = simA;
+    engine.unbindAllTextures();
+    if (!clearPass.effect.isReady()) return false;
+    // Both targets, since either may be read first after a swap.
+    effectRenderer.render(clearPass, simB);
+    effectRenderer.render(clearPass, simA);
+    needsSeed = true;
+    return true;
+}
+
+/// His opening state: 20 drops of alternating sign.
+function seed() {
+    for (let i = 0; i < 20; i++) {
+        queueDrop((Math.random() * 2 - 1) * HALF * 0.9,
+                  (Math.random() * 2 - 1) * HALF * 0.9,
+                  (i & 1) ? DROP_S : -DROP_S);
+    }
+}
+
+// =============================================================================
+// Splash — diffuse particles on top of the height field.
+//
+// Structured on the standard whitewater pipeline (Ihmsen et al. 2012, "Unified
+// Spray, Foam and Bubbles for Particle-Based Fluids", the method behind
+// Houdini/Blender whitewater and SPlisHSPlasH's foam generator): compute scalar
+// POTENTIALS, clamp each to a min/max window, multiply them into a spawn count,
+// emit ballistic particles, and classify them into spray/foam/bubbles.
+//
+// Two deliberate departures, both because our situation differs from the paper:
+//
+//   1. The paper INFERS potentials from an SPH particle fluid via neighbour
+//      sums, because the fluid is all it has. We have the stone itself, so the
+//      potentials are computed from its real impact state instead. That is
+//      strictly better information, not a shortcut — impact angle in particular
+//      is a property of the object that a height field cannot recover.
+//   2. No bubble class. Bubbles are the submerged category, and this water is
+//      reflection-only with no transparency, so nothing below the surface is
+//      visible. Emitting them would cost particles that can never be seen.
+// =============================================================================
+
+// Tuning, live-editable from the console. The two-element arrays are the
+// paper's min/max clamp windows.
+// Windows calibrated against real stone energies, not guessed: a 0.15 kg stone
+// at 9 m/s is already 6.1 J and at 14 m/s is 14.7 J, so a window topping out at
+// 6 J pinned the potential at 1.0 for nearly every realistic throw and made
+// speed differences invisible above walking pace. Measured and widened.
+const SPLASH = window.SPLASH = {
+    // Master switch for the whole particle layer. The airborne spray works, so
+    // this is on. The ripple an impact makes is NOT gated by it either way:
+    // that belongs to the water sim, not the particle layer.
+    particles:  true,
+
+    // Surface foam, off. It was billboard sprites spawned lying at the
+    // waterline with no gravity, so a few hundred of them piled up at the
+    // impact and read as one flat white disc pasted on the water — a sprite
+    // artefact, not aeration. Surface foam is the wrong thing to build out of
+    // camera-facing quads: it belongs ON the surface, written into the water
+    // shader the way the old aeration channel did it, so it follows the
+    // waves instead of floating as a disc. Left off until it is done that way.
+    surfaceFoam: false,
+    keWindow:   [0.05, 30.0],  // kinetic-energy potential clamp, joules
+    taWindow:   [0.5,  9.0],   // trapped-air potential clamp, m/s
+    plungeTA:   0.35,          // how much a vertical impact entrains vs a shear
+    // 3000 rather than 8000. A hard impact was spawning 6,682 droplets, each an
+    // alpha-blended quad — and alpha blending cannot early-out on depth, so the
+    // overdraw is paid in full, multiplied again by supersampling.
+    sprayScale: 3000,          // particles at full potential product
+    foamScale:  1500,
+    globFraction: 0.14,        // share of droplets drawn as fat globules rather
+                               // than fine mist
+    // Measured, not guessed: CPU particle cost is linear at roughly 0.5us per
+    // live particle per frame (6.7k = 3.7ms, 33k = 14.2ms). The whole 60fps
+    // budget is 16.7ms and the water sim and scene need most of it, so live
+    // particles are capped here. This matters specifically because a skipping
+    // stone lands repeatedly and the bursts OVERLAP — six skips in flight hit
+    // 41k particles and 19.6ms, i.e. under 60fps, before this cap existed.
+    maxLive:    6000,
+    rippleGain: 0.0030,        // impact energy to Evan's drop strength
+    rippleMax:  0.050,         // hard cap, keeps drops near his tuned scale
+
+    // Converts the stone's real-world m/s into this pool's units. Without it,
+    // emit power inherits metres-per-second directly while the whole pool is
+    // only 2 units wide, so droplets launched at 16 units/s reach an apex of
+    // 14 units — seven times the pool's width — and expire in mid-air long
+    // before falling back. That is measured, and it is why nothing ever landed.
+    // Sized so a hard impact peaks a few percent of the pool across and
+    // completes its arc well inside a particle lifetime.
+    // Now that a world unit IS a metre, the stone's m/s no longer needs a big
+    // correction — gravity at -9.81 is simply correct. This only tempers how
+    // far droplets are thrown, since a literal reading sends them metres up.
+    emitScale:  0.35,
+
+    // Ripples from spray landing back in the water. Detection is free — the
+    // waterline crossing is already found every frame in order to retire
+    // submerged particles — so this only decides which landings earn a ripple.
+    // The cap is the load-bearing part: every drop is its own full render pass
+    // in Evan's design, so N landings means N extra passes that frame.
+    landing: {
+        enabled: true,
+        // Low enough that ordinary droplets ring too, not just the giants. A
+        // droplet you can watch land and which then does nothing to the water
+        // is its own kind of mismatch.
+        minSize: 0.016,
+        maxPerFrame: 12,   // hard ceiling on added drop passes per frame
+        gain: 1.0,
+        // Ripple size is read straight off the particle rather than from a
+        // normalised band, so a droplet's crater is always a fixed multiple of
+        // the droplet you actually watched fall. That is what keeps the two
+        // from disagreeing.
+        craterPerSize: 3.0,
+        // Strength rises steeply with size because impact energy does: mass
+        // goes as diameter cubed. A squarish power keeps the fat globules
+        // clearly dominant without making the mist ring at literally zero.
+        sizePower: 2.2,
+    },
+};
+
+function makeSprite(size, name) {
+    const dt = new BABYLON.DynamicTexture(name, size, scene, false);
+    const ctx = dt.getContext();
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    // A tight, mostly-solid core rather than a broad haze. Once droplets are
+    // only a couple of pixels across, a soft gradient spends all of them on
+    // falloff and the particle reads as a faint smudge instead of a droplet.
+    g.addColorStop(0.0, "rgba(255,255,255,1)");
+    g.addColorStop(0.45, "rgba(255,255,255,0.95)");
+    g.addColorStop(0.78, "rgba(255,255,255,0.35)");
+    g.addColorStop(1.0, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    dt.hasAlpha = true;
+    dt.update();
+    return dt;
+}
+const splashSprite = makeSprite(64, "splashSprite");
+
+// Spray: torn from the surface and thrown clear, so it is ballistic and gets
+// real gravity. Short-lived and small — this is the part that reads as impact.
+// Capacity has to cover several overlapping impacts, not just one, since a
+// skipping stone lands repeatedly before the first burst has died. 20k rather
+// than 60k: the buffer is allocated up front whether or not it is used, and
+// maxLive caps concurrent particles well below this anyway.
+const sprayPS = new BABYLON.ParticleSystem("spray", 20000, scene);
+sprayPS.particleTexture = splashSprite;
+sprayPS.emitter = new BABYLON.Vector3(0, 0, 0);
+sprayPS.gravity = new BABYLON.Vector3(0, -9.81, 0);
+// Scaled up with the pond. At 20 m the view resolves about 53 px per metre, so
+// a physically honest 3 mm droplet would be a twentieth of a pixel and simply
+// vanish. These are 2-6 cm: deliberately larger than real droplets, because
+// below roughly a pixel a particle stops reading and starts flickering.
+sprayPS.minSize = 0.02; sprayPS.maxSize = 0.06;
+// Deliberately longer than any flight. Now that alpha no longer fades, a
+// particle reaching the end of its lifetime would POP rather than dissolve, so
+// the lifetime has to outlast the arc instead of merely overlapping it: the
+// hardest impact launches at about 9.5 m/s vertically, a 1.9 s round trip.
+// Nothing is wasted by the generous figure, because droplets are retired the
+// instant they touch the water — lifetime is only the backstop.
+sprayPS.minLifeTime = 2.4; sprayPS.maxLifeTime = 3.2;
+sprayPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+// Alpha stays at 1 all the way to colorDead, so a droplet does NOT thin out in
+// mid-air. Water in flight does not evaporate on the way down — it lands. The
+// particle is instead retired the moment it crosses the waterline (see
+// retireSubmerged), which reads as the droplet being absorbed on impact.
+sprayPS.color1 = new BABYLON.Color4(1.25, 1.35, 1.45, 1.0);
+sprayPS.color2 = new BABYLON.Color4(0.95, 1.05, 1.20, 1.0);
+sprayPS.colorDead = new BABYLON.Color4(0.95, 1.05, 1.20, 1.0);
+// Bursts only. Babylon's default emitRate is 10/sec, which quietly trickled
+// droplets out of the last impact point forever — visible as a thin permanent
+// dribble, and it kept the particle array from ever emptying.
+sprayPS.emitRate = 0;
+sprayPS.manualEmitCount = 0;
+sprayPS.start();
+
+// Foam: stays at the surface, spreads outward and dissipates in place. No
+// gravity — it is riding the water, not flying through air.
+const foamPS = new BABYLON.ParticleSystem("splashFoam", 6000, scene);
+foamPS.particleTexture = splashSprite;
+foamPS.emitter = new BABYLON.Vector3(0, 0, 0);
+foamPS.gravity = new BABYLON.Vector3(0, 0, 0);
+foamPS.minSize = 0.05; foamPS.maxSize = 0.25;
+foamPS.minLifeTime = 0.6; foamPS.maxLifeTime = 1.8;
+foamPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+foamPS.color1 = new BABYLON.Color4(1.0, 1.1, 1.2, 0.85);
+foamPS.color2 = new BABYLON.Color4(0.85, 0.95, 1.05, 0.6);
+foamPS.colorDead = new BABYLON.Color4(0.8, 0.9, 1.0, 0.0);
+foamPS.emitRate = 0;
+foamPS.manualEmitCount = 0;
+foamPS.start();
+
+// --- stopping the particles from clipping into the water ---------------------
+// Particles are camera-facing quads. Where a quad passes through the y=0 plane
+// the water wins the depth test and slices it, which is the straight-edged cut
+// visible along the surface — a sprite artefact, not anything about the water.
+//
+// The fix is to draw them with the depth test disabled, in a later rendering
+// group so they come after all opaque geometry. Babylon has no
+// onAfterDrawParticlesObservable, so the depth function is restored once at the
+// end of the frame and again defensively at the start of the next one.
+const DEPTH_ALWAYS = BABYLON.Constants.ALWAYS;
+const DEPTH_LEQUAL = BABYLON.Constants.LEQUAL;
+for (const ps of [sprayPS, foamPS]) {
+    ps.renderingGroupId = 1;
+    ps.onBeforeDrawParticlesObservable.add(() => engine.setDepthFunction(DEPTH_ALWAYS));
+}
+scene.onAfterRenderObservable.add(() => engine.setDepthFunction(DEPTH_LEQUAL));
+
+/// Ignoring depth means a particle that has fallen BELOW the surface would
+/// still draw on top of it, which reads as a droplet stuck inside the water.
+/// Retiring them at the waterline is what keeps that honest, and it doubles as
+/// the visual of spray being reabsorbed when it lands.
+function retireSubmerged() {
+    const L = SPLASH.landing;
+    let budget = L.enabled ? L.maxPerFrame : 0;
+
+    // Spray falls back and lands. Foam has no gravity and drifts along the
+    // surface, so it never crosses the waterline and never rings.
+    const arr = sprayPS.particles;
+    for (let i = 0; i < arr.length; i++) {
+        const p = arr[i];
+        if (p.position.y >= 0) continue;
+        p.age = p.lifeTime;
+
+        // Only the fattest droplets, and only while there is pass budget left.
+        if (budget <= 0 || p.size < L.minSize) continue;
+        const px = p.position.x, pz = p.position.z;
+        if (Math.abs(px) >= HALF || Math.abs(pz) >= HALF) continue;  // off the pond
+
+        // A droplet's ring scales with how big it is and how hard it arrives.
+        // Both are known exactly here: size is the particle's own, and
+        // direction is its live velocity, so the impact speed is real rather
+        // than assumed.
+        // Both the crater and its strength come from THIS droplet — its actual
+        // size and its live impact speed — rather than from a normalised band.
+        // A fat globule therefore lands a broad, deep ring and a speck of mist
+        // lands a faint pinprick, and neither can disagree with the droplet the
+        // eye just followed down.
+        const sizeN = clamp01(p.size / Math.max(1e-6, sprayPS.maxSize));
+        const vy = Math.abs(p.direction.y);
+        const strength = L.gain * DROP_S * Math.pow(sizeN, L.sizePower) * clamp01(vy / 6.0);
+        if (strength <= 0) continue;
+
+        // Crater width in world metres, converted to the UV the drop shader
+        // wants. Tied directly to the droplet's diameter.
+        const craterUV = (p.size * L.craterPerSize) / SIZE;
+        queueDrop(px, pz, strength, craterUV);
+        budget--;
+    }
+
+    const foam = foamPS.particles;
+    for (let i = 0; i < foam.length; i++) {
+        if (foam[i].position.y < 0) foam[i].age = foam[i].lifeTime;
+    }
+}
+
+// --- emission shape ----------------------------------------------------------
+// The default BoxParticleEmitter spawns in a cuboid and spreads through a
+// cuboid of directions, which is exactly why a burst read as a square block of
+// droplets. An impact is radially symmetric, so both the footprint and the
+// spread have to be discs/cones. These override the emitter entirely.
+const sprayBurst = { radius: DROP_R, dirX: 1, dirZ: 0, fwd: 0, vert: 1, spread: 0.4 };
+const foamBurst  = { radius: DROP_R };
+
+sprayPS.startPositionFunction = (worldMatrix, positionToUpdate, particle, isLocal) => {
+    const a = Math.random() * Math.PI * 2;
+    // sqrt() keeps the disc UNIFORM. Without it points bunch at the centre,
+    // which is the other half of why the cluster looked like a solid lump.
+    const r = sprayBurst.radius * Math.sqrt(Math.random());
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (isLocal) positionToUpdate.copyFromFloats(x, 0, z);
+    else BABYLON.Vector3.TransformCoordinatesFromFloatsToRef(x, 0, z, worldMatrix, positionToUpdate);
+};
+sprayPS.startDirectionFunction = (worldMatrix, directionToUpdate, particle, isLocal) => {
+    const a = Math.random() * Math.PI * 2;
+    const s = sprayBurst.spread * Math.sqrt(Math.random());
+    const cx = sprayBurst.dirX * sprayBurst.fwd + Math.cos(a) * s;
+    const cz = sprayBurst.dirZ * sprayBurst.fwd + Math.sin(a) * s;
+    const cy = sprayBurst.vert * (0.55 + Math.random() * 0.9);
+    if (isLocal) directionToUpdate.copyFromFloats(cx, cy, cz);
+    else BABYLON.Vector3.TransformNormalFromFloatsToRef(cx, cy, cz, worldMatrix, directionToUpdate);
+
+    // Size and scale are NOT set here. Babylon assigns both after this hook
+    // returns, so anything written to them is overwritten — measured, the
+    // distribution came back perfectly uniform. They are applied in
+    // shapeNewSpray() below instead.
+};
+
+// --- droplet size and shape --------------------------------------------------
+// Babylon's own sizing is UNIFORM between min and max, which is why the spray
+// read as one grade of grit. Real spray is mostly fine mist with a scattering
+// of fat globules torn off the surface, so the distribution is deliberately
+// lopsided: a steep power curve puts the bulk at the small end, and a minority
+// draw separately into the top of the range. The GAP between the two
+// populations is the point — a smooth spread just looks uniform again.
+//
+// This runs from onBeforeDrawParticlesObservable, which fires after the
+// particle update but before the first draw, so a new droplet is never shown
+// at Babylon's uniform size even for one frame.
+//
+// New droplets are recognised by their AGE RUNNING BACKWARDS. Particles are
+// pooled, so a recycled object still carries the previous droplet's fields and
+// "have I seen this object before" is the wrong question. An earlier version
+// asked exactly that via a generation counter bumped once per burst, and it
+// had a visible bug: firing a new burst re-randomised every droplet still in
+// flight from the PREVIOUS burst (their marker no longer matched), so the
+// whole spray popped to new sizes mid-air. Age regression identifies only the
+// genuinely recycled slots — a live droplet's age climbs monotonically, while
+// a reused slot restarts near zero, and retirement parks age at lifeTime
+// (seconds), so the drop back to zero is unmistakable.
+
+// In-flight deformation. A droplet in air is not a rigid bead: surface tension
+// pulls it back toward a sphere while it overshoots, so it RINGS between
+// stretched and flattened, and airflow drags it out along its path.
+//
+// Both effects depend on size, and in opposite directions — which is the part
+// that makes it read as water rather than as wobbling sprites:
+//   - Surface tension per unit mass scales as 1/radius, so SMALL droplets are
+//     stiffer. They deform less but oscillate faster.
+//   - Rayleigh's result for an oscillating drop gives frequency proportional to
+//     r^-3/2, so a droplet twice the size wobbles nearly three times slower.
+// A big globule therefore lolls and stretches while fine mist stays taut and
+// shivers, from one rule rather than from two hand-tuned cases.
+const SHAPE = window.SHAPE = {
+    wobble: 0.92,   // oscillation depth for the largest droplets
+    oscFreq: 14.0,  // base ringing rate, scaled per droplet by size^-1.5
+    aero: 0.12,     // elongation along the direction of travel, per m/s
+    // Motion blur. Measured, a fast droplet crosses 4.4 of its own widths per
+    // frame, so it never lands adjacent to where it was and the eye reads a
+    // row of stills rather than movement. Particles are drawn once per render
+    // frame, so no update rate can fix that — the gap has to be COVERED, which
+    // is what a real camera does with a finite shutter. This stretches a sprite
+    // along its path far enough to bridge its own per-frame travel.
+    motionBlur: 0.85,
+    // Fraction of the velocity direction's rotation the sprite actually follows.
+    // 0.25 is a quarter of the rate, i.e. four times slower. This scales the
+    // rate of change rather than damping toward the target: a damped follow
+    // still ends up rotating at full speed, merely lagging behind it.
+    spin: 0.10,
+};
+
+const _vdir = new BABYLON.Vector3();
+
+function shapeSpray() {
+    const ps = sprayPS.particles;
+    const mn = sprayPS.minSize, mx = sprayPS.maxSize;
+    const span = Math.max(1e-6, mx - mn);
+    // View matrix, so the stretch axis can be aligned with the droplet's motion
+    // as it appears ON SCREEN. Stretching along a world axis would look wrong
+    // the moment the camera turned.
+    const m = scene.getViewMatrix().m;
+
+    // How much particle-time one frame advances. Babylon steps particles by
+    // updateSpeed scaled by the animation ratio, NOT by real seconds, so the
+    // per-frame travel has to be derived from the same figure the engine uses
+    // or the blur would not match the gap it is covering.
+    const ratio = Math.min(3, Math.max(0.3, scene.getAnimationRatio()));
+    const stepSec = sprayPS.updateSpeed * ratio;
+
+    for (let i = 0; i < ps.length; i++) {
+        const p = ps[i];
+
+        // A retired droplet — parked under the waterline by retireSubmerged —
+        // still gets one draw before Babylon recycles it on the next update,
+        // and with the depth test disabled for particles that corpse renders
+        // ON TOP of the water from underneath for a frame. Collapse it to a
+        // zero-area quad instead of drawing it.
+        if (p.position.y < 0) { p.scale.x = 0; p.scale.y = 0; continue; }
+
+        const lastAge = p.__lastAge;
+        p.__lastAge = p.age;
+        if (lastAge === undefined || p.age < lastAge) {
+            const t = Math.random() < SPLASH.globFraction
+                ? 0.62 + 0.38 * Math.random()         // globules
+                : Math.pow(Math.random(), 2.6) * 0.5; // fine mist
+            p.size = mn + span * t;
+            p.__phase = Math.random() * 6.2831853;
+            p.__base = 0.85 + Math.random() * 0.35;
+            // Cleared so a recycled particle does not inherit the heading of
+            // whatever droplet last used this slot and snap round on its first
+            // frame.
+            p.__prevTarget = undefined;
+        }
+
+        const d = p.direction;
+        const speed = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        const sizeN = (p.size - mn) / span;          // 0 mist, 1 globule
+
+        // Ringing. Frequency falls with size, amplitude rises with it.
+        const w = SHAPE.oscFreq * Math.pow(Math.max(p.size, 1e-4) / mx, -1.5);
+        const wob = Math.sin(p.age * w + p.__phase) * SHAPE.wobble * (0.25 + 0.75 * sizeN);
+
+        // Drag stretch, strongest when moving fastest and on the softer drops.
+        const aero = SHAPE.aero * speed * (0.2 + 0.8 * sizeN);
+
+        // Elongation along travel, with the perpendicular axis shrinking to
+        // match so the droplet keeps its area — it is deforming, not growing.
+        // Clamped at both ends. Note the visible ASPECT RATIO is e squared,
+        // since one axis grows by e while the other shrinks by e — so this cap
+        // of 1.55 permits about 2.4:1, not 1.55:1. That is roughly where real
+        // drops stop stretching and break up into smaller drops instead, and
+        // unbounded the fastest ones were reaching 7:1, which reads as a needle
+        // rather than as water.
+        const eShape = Math.min(1.55, Math.max(0.68, 1.0 + wob + aero));
+
+        // Motion blur, in units of the droplet's own width. The threshold is
+        // below 1 because the gap opens before the travel exceeds a full width.
+        // Only the along-path axis grows: a smear LENGTHENS a shape, it does
+        // not squeeze it, so the perpendicular axis keeps the deformation value
+        // and nothing gets thinner just because it is moving.
+        const widths = (speed * stepSec) / Math.max(p.size, 1e-4);
+        const motion = Math.min(8.0, 1.0 + SHAPE.motionBlur * Math.max(0.0, widths - 0.6));
+
+        const b = p.__base;
+        p.scale.x = b * eShape * motion;
+        p.scale.y = b / eShape;
+
+        // Point that stretch along the screen-space direction of travel.
+        _vdir.x = d.x * m[0] + d.y * m[4] + d.z * m[8];
+        _vdir.y = d.x * m[1] + d.y * m[5] + d.z * m[9];
+        if (speed > 1e-4) {
+            const target = Math.atan2(_vdir.y, _vdir.x);
+            if (p.__prevTarget === undefined) {
+                p.__prevTarget = target;
+                p.__ang = target;
+            }
+            // Take the shortest way round, or the sprite spins the long way
+            // whenever the heading crosses the +/-PI wrap.
+            let da = target - p.__prevTarget;
+            if (da > Math.PI) da -= 6.2831853;
+            else if (da < -Math.PI) da += 6.2831853;
+            p.__ang += da * SHAPE.spin;
+            p.__prevTarget = target;
+            p.angle = p.__ang;
+        }
+    }
+}
+sprayPS.onBeforeDrawParticlesObservable.add(shapeSpray);
+
+foamPS.startPositionFunction = (worldMatrix, positionToUpdate, particle, isLocal) => {
+    const a = Math.random() * Math.PI * 2;
+    const r = foamBurst.radius * Math.sqrt(Math.random());
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (isLocal) positionToUpdate.copyFromFloats(x, 0, z);
+    else BABYLON.Vector3.TransformCoordinatesFromFloatsToRef(x, 0, z, worldMatrix, positionToUpdate);
+};
+foamPS.startDirectionFunction = (worldMatrix, directionToUpdate, particle, isLocal) => {
+    // Foam spreads outward across the surface, so direction follows the angle
+    // it was spawned at rather than being independent of it.
+    const a = Math.random() * Math.PI * 2;
+    const cx = Math.cos(a), cz = Math.sin(a);
+    if (isLocal) directionToUpdate.copyFromFloats(cx, 0.03 + Math.random() * 0.05, cz);
+    else BABYLON.Vector3.TransformNormalFromFloatsToRef(cx, 0.03 + Math.random() * 0.05, cz, worldMatrix, directionToUpdate);
+};
+
+// --- droplets shaded as water ------------------------------------------------
+// A flat white sprite reads as a dust mote. This shades each billboard as a
+// tiny SPHERE reflecting the same HDRI cube the water surface reflects, with
+// the same Fresnel curve — so a droplet is literally a small mirror of the same
+// sky, and the spray belongs to the water instead of sitting on top of it.
+//
+// Only the spray gets this. Foam stays opaque white on purpose: it is aerated
+// bubbles, which scatter rather than mirror, so making it reflective would be
+// wrong for what it represents.
+BABYLON.Effect.ShadersStore["dropletParticlePixelShader"] = glsl(`
+precision highp float;
+varying vec2 vUV;
+varying vec4 vColor;
+uniform samplerCube envTex;
+uniform mat4 invView;
+
+void main(void) {
+    vec2 p = vUV * 2.0 - 1.0;
+    float r2 = dot(p, p);
+    // Round, not square — this also discards the corners of the quad, which is
+    // what stops a droplet from ever showing its billboard edges.
+    if (r2 > 1.0) discard;
+    vec3 nView = vec3(p.x, p.y, sqrt(1.0 - r2));
+
+    // In view space the camera looks down -z, so the vector toward the eye is +z.
+    vec3 vView = vec3(0.0, 0.0, 1.0);
+    vec3 rWorld = (invView * vec4(reflect(-vView, nView), 0.0)).xyz;
+    vec3 refl = textureCube(envTex, normalize(rWorld)).rgb;
+
+    // The same Fresnel curve as the surface, so a droplet and the water agree
+    // about how reflective water is at a given angle.
+    float f = mix(0.25, 1.0, pow(1.0 - max(nView.z, 0.0), 3.0));
+    vec3 col = refl * mix(vec3(0.30, 0.42, 0.52), vec3(1.0), f);
+
+    float edge = smoothstep(1.0, 0.5, r2);
+    gl_FragColor = vec4(col, vColor.a * edge);
+}
+`);
+
+const dropletEffect = engine.createEffectForParticles("dropletParticle", ["invView"], ["envTex"]);
+sprayPS.setCustomEffect(dropletEffect);
+sprayPS.onBeforeDrawParticlesObservable.add(() => {
+    // camera.getWorldMatrix() IS the inverse view matrix — it maps camera space
+    // to world, which is exactly what turns the view-space reflection into a
+    // direction the cube can be sampled with.
+    dropletEffect.setMatrix("invView", camera.getWorldMatrix());
+    dropletEffect.setTexture("envTex", envTex);
+});
+
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
+
+/// The stone hook. Everything an impact does to the water goes through here, so
+/// the ripple and the splash cannot disagree about how hard the hit was.
+///
+///   x, z    world position on the pond, in METRES. The pond spans +/-HALF;
+///           queueDrop does the conversion into the sim's own space. (This doc
+///           previously said [-1, 1] — stale from before the 24 m resize.)
+///   opts.speed    impact speed, m/s
+///   opts.mass     kg
+///   opts.angle    radians below horizontal. 0 is a grazing skip, PI/2 straight
+///                 down. This is what separates a skip from a plunge and it is
+///                 why the stone has to supply it rather than the water guess.
+///   opts.dirX/dirZ  horizontal travel direction, normalised
+///   opts.radius   contact patch as a FRACTION of the pond span — Evan's UV
+///                 unit, the same thing addDrop takes; defaults to DROP_R.
+///                 The spray disc needs metres, so that one is converted at
+///                 the burst assignment below.
+function stoneImpact(x, z, opts) {
+    const speed  = opts.speed  !== undefined ? opts.speed  : 6;
+    const mass   = opts.mass   !== undefined ? opts.mass   : 0.15;
+    const angle  = opts.angle  !== undefined ? opts.angle  : Math.PI / 4;
+    const dirX   = opts.dirX   !== undefined ? opts.dirX   : 1;
+    const dirZ   = opts.dirZ   !== undefined ? opts.dirZ   : 0;
+    const radius = opts.radius !== undefined ? opts.radius : DROP_R;
+
+    const sinA = Math.sin(angle), cosA = Math.cos(angle);
+    const energy = 0.5 * mass * speed * speed;
+
+    // The two potentials, each clamped to its window as the paper does.
+    // Trapped air is driven by the TANGENTIAL component, because shearing
+    // across the surface is what drags air under — which is exactly why a
+    // shallow skip aerates far more than its modest energy would suggest.
+    const iKE = windowed(energy, SPLASH.keWindow);
+    // Shear dominates — a stone skimming flat drags far more air under than its
+    // energy suggests — but a vertical plunge entrains too, when its crown
+    // collapses. Driving this from shear ALONE gave a straight-down impact
+    // exactly zero foam, which is plainly wrong, so the vertical component
+    // contributes at a reduced weight rather than not at all.
+    const iTA = windowed(
+        speed * cosA + SPLASH.plungeTA * speed * sinA,
+        SPLASH.taWindow
+    );
+
+    // Spawn counts are the product of the clamped potentials, scaled.
+    let sprayCount = Math.round(SPLASH.sprayScale * iKE * (0.30 + 0.70 * iTA));
+    let foamCount  = Math.round(SPLASH.foamScale  * iTA * (0.35 + 0.65 * iKE));
+
+    // Throttle against what is already in flight. Scaling both classes by the
+    // same factor keeps the spray/foam ratio intact, so a throttled impact
+    // still looks like the same KIND of impact, just thinner — which is far
+    // less noticeable than dropping one class entirely or stuttering.
+    if (!SPLASH.particles) { sprayCount = 0; foamCount = 0; }
+    if (!SPLASH.surfaceFoam) foamCount = 0;
+
+    const liveNow = sprayPS.particles.length + foamPS.particles.length;
+    const headroom = Math.max(0, SPLASH.maxLive - liveNow);
+    const wanted = sprayCount + foamCount;
+    if (wanted > headroom) {
+        const k = headroom / wanted;
+        sprayCount = Math.floor(sprayCount * k);
+        foamCount  = Math.floor(foamCount * k);
+    }
+
+    // --- ripple, through Evan's untouched addDrop ---------------------------
+    // Vertical momentum drives the wave: a stone skimming flat barely disturbs
+    // the height field however fast it is going.
+    const rippleStrength = Math.min(
+        SPLASH.rippleGain * energy * (0.25 + 0.75 * sinA),
+        SPLASH.rippleMax
+    );
+    queueDrop(x, z, rippleStrength, Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)));
+
+    // --- spray --------------------------------------------------------------
+    if (sprayCount > 0) {
+        // Steep impacts throw a vertical crown, shallow ones throw a forward
+        // sheet. The vertical term never reaches zero because even a pure skip
+        // lifts some water.
+        // radius arrives in Evan's UV space (a fraction of the pond span), but
+        // the burst disc feeds particle POSITIONS, which are world metres — so
+        // it is converted here. Unconverted, the disc was 8 mm across on the
+        // 24 m pond: every droplet spawned from what was effectively a single
+        // point, and scaling the contact patch with impact energy did nothing
+        // visible.
+        sprayBurst.radius = radius * SIZE * (1.0 + 2.0 * iKE);
+        sprayBurst.dirX = dirX;
+        sprayBurst.dirZ = dirZ;
+        sprayBurst.fwd = cosA * (0.6 + 0.9 * iKE);
+        sprayBurst.vert = 0.30 + 0.95 * sinA;
+        sprayBurst.spread = 0.30 + 0.45 * iKE;
+        sprayPS.emitter.copyFromFloats(x, 0, z);
+        sprayPS.minEmitPower = SPLASH.emitScale * 0.25 * speed * (0.4 + 0.6 * iKE);
+        sprayPS.maxEmitPower = SPLASH.emitScale * 0.75 * speed * (0.4 + 0.6 * iKE);
+        sprayPS.manualEmitCount = sprayCount;
+    }
+
+    // --- surface foam -------------------------------------------------------
+    if (foamCount > 0) {
+        foamBurst.radius = radius * SIZE * (1.2 + 2.5 * iTA);
+        foamPS.emitter.copyFromFloats(x, 0, z);
+        // Same unit conversion — foam spreading at metres-per-second would
+        // cross the whole pool in a fraction of a second.
+        foamPS.minEmitPower = SPLASH.emitScale * (0.05 * speed * cosA + 0.02);
+        foamPS.maxEmitPower = SPLASH.emitScale * (0.22 * speed * cosA + 0.05);
+        foamPS.manualEmitCount = foamCount;
+    }
+
+    return { energy, iKE, iTA, sprayCount, foamCount, rippleStrength };
+}
+window.stoneImpact = stoneImpact;
+
+// Straight down into the middle of the pond: angle PI/2 is the pure vertical
+// case, so this is the plunge end of the skip/plunge axis — maximum wave,
+// minimum forward throw.
+document.getElementById("plungeBtn").addEventListener("click", () => {
+    // Heavier and faster than a skip: at 9 m/s a plunge only reaches a fifth of
+    // the energy potential and the splash is sparse, which reads as the effect
+    // being weak rather than as a gentle impact.
+    stoneImpact(0, 0, {
+        speed: 14,
+        mass: 0.25,
+        angle: Math.PI / 2,
+        dirX: 1,
+        dirZ: 0,
+        radius: DROP_R,
+    });
+});
+
+// =============================================================================
+// Tuning panel. Declarative so a new knob is one line — each control reads and
+// writes the live value directly, meaning nothing here can drift out of sync
+// with what the sim is actually using.
+// =============================================================================
+// =============================================================================
+// Scribble / crayon post-process — an experiment, off by default.
+//
+// This runs on the FINAL composited image, after the tone-mapping pipeline. The
+// ordering is load-bearing: the ink colour and paper wash below are ordinary
+// low-dynamic-range constants, and applying them to the linear HDR values the
+// water shader outputs would be meaningless. Attaching after the pipeline is
+// what puts it in the space those numbers assume.
+//
+// Everything is created lazily on first enable, because the depth renderer it
+// needs is a whole extra pass over the scene and should not be paid for while
+// the effect is off.
+// =============================================================================
+const SCRIBBLE = window.SCRIBBLE = {
+    on: true,
+    // Colour bleed stays 0 — that was the camera-locked swimming. The paper
+    // warp is left at a token 0.001, small enough to break up straight edges
+    // without the frame appearing to drift.
+    bleed: 0.0,
+    warp: 0.001,
+    // Pastel. Note the look landed on fine tooth rather than hard banding:
+    // 24 value steps is nearly continuous, so the medium reads through the
+    // paper grain and pigment strokes instead of through posterisation.
+    levels: 24.0,
+    satAmount: 0.88,
+    strokeAmount: 0.26,
+    strokeFreq: 104.0,
+    strokeAngle: 0.6,
+    // 0: depth-edge outlines off entirely. The depth pass is still needed for
+    // the sky mask below, so nothing is wasted by keeping it around.
+    edgeDark: 0.0,
+    outlineWidth: 0.9,
+    paperScale: 19.25,
+    grain: 0.42,
+    // Leave the HDRI sky as photography. Quantising and texturing a real sky
+    // reads as an error rather than as a medium.
+    ignoreSky: true,
+    skyDepth: 0.999,
+};
+
+// SEAMLESS value noise. The obvious version — draw a small random canvas and
+// let the browser scale it up — produces a texture whose left edge does not
+// match its right. Sampled with WRAP at 3x and 5x repeats, as the warp and
+// bleed below do, every repeat boundary becomes a hard jump in the DISPLACEMENT,
+// which slices the frame into offset rectangles. Two different repeat rates
+// overlaid give a grid of them, and that was the tiling on screen.
+//
+// Building it from a lattice indexed with modulo makes it genuinely tileable,
+// so any repeat rate stays continuous.
+function makeNoiseTex(cells, smooth, name) {
+    const S = 256;
+    const t = new BABYLON.DynamicTexture(name, { width: S, height: S }, scene, false);
+    const ctx = t.getContext();
+    const img = ctx.createImageData(S, S);
+    const lat = new Float32Array(cells * cells);
+    for (let i = 0; i < lat.length; i++) lat[i] = Math.random();
+    const wrap = (v) => ((v % cells) + cells) % cells;
+    const at = (x, y) => lat[wrap(y) * cells + wrap(x)];
+
+    for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+            const fx = x / S * cells, fy = y / S * cells;
+            const x0 = Math.floor(fx), y0 = Math.floor(fy);
+            let v;
+            if (smooth) {
+                let tx = fx - x0, ty = fy - y0;
+                tx = tx * tx * (3 - 2 * tx);
+                ty = ty * ty * (3 - 2 * ty);
+                const a = at(x0, y0), b = at(x0 + 1, y0);
+                const c = at(x0, y0 + 1), d = at(x0 + 1, y0 + 1);
+                v = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+            } else {
+                v = at(x0, y0);
+            }
+            const o = ((y * S) + x) * 4;
+            const b8 = Math.max(0, Math.min(255, v * 255)) | 0;
+            img.data[o] = img.data[o + 1] = img.data[o + 2] = b8;
+            img.data[o + 3] = 255;
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    t.update(false);
+    t.wrapU = t.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+    return t;
+}
+
+BABYLON.Effect.ShadersStore["scribbleFragmentShader"] = glsl(`
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D textureSampler;
+uniform sampler2D depthSampler;
+uniform sampler2D flowSampler;
+uniform sampler2D grainSampler;
+uniform vec2 texelSize;
+uniform float outlineWidth;
+uniform float bleed;
+uniform float warpAmount;
+uniform float paperScale;
+uniform float grainAmount;
+uniform float levels;        // value steps, the core pastel control
+uniform float satAmount;     // 1 keeps scene saturation, lower is chalkier
+uniform float strokeAmount;  // pigment stroke visibility
+uniform float strokeFreq;    // stroke density across their direction
+uniform float strokeAngle;   // stroke direction, radians
+uniform float edgeDark;      // how much edges deepen, 0 removes them
+uniform float ignoreSky;     // 1 leaves the HDRI background untouched
+uniform float skyDepth;      // depth at or beyond which a pixel is background
+
+float depthAt(vec2 uv) { return texture2D(depthSampler, uv).r; }
+
+void main(void) {
+    // Displacement is OFF by default now. Warping the image by a screen-space
+    // noise is the shower-door artefact: the distortion is pinned to the screen
+    // while the scene slides underneath it, so surfaces appear to swim through
+    // a fixed pane of rippled glass whenever the camera moves. Pastel does not
+    // need it — the medium reads through value steps, pigment and tooth, not
+    // through warping — so both terms are kept only as optional extras.
+    // Kept untouched so the sky can be handed back unstyled at the end.
+    vec3 raw = texture2D(textureSampler, vUV).rgb;
+
+    vec2 uv = vUV;
+    if (warpAmount > 0.0) {
+        vec2 wv = (texture2D(flowSampler, vUV * 3.0).rg - 0.5) * 2.0;
+        uv += wv * warpAmount;
+    }
+    vec3 color = texture2D(textureSampler, uv).rgb;
+    if (bleed > 0.0) {
+        vec2 bv = (texture2D(flowSampler, vUV * 5.0 + 0.37).rg - 0.5) * 2.0;
+        color = texture2D(textureSampler, uv + bv * bleed).rgb;
+    }
+
+    // --- the pastel move: quantise VALUE, keep hue -------------------------
+    // Pigment laid by hand does not hold a smooth gradient. It goes down in
+    // discrete layers, so tone steps while colour stays continuous. Quantising
+    // luminance and rescaling the colour to match does exactly that, whereas
+    // quantising the channels separately would swing the hue at every step.
+    float lum = dot(color, vec3(0.299, 0.587, 0.114));
+    float q = floor(lum * levels + 0.5) / levels;
+    color *= q / max(lum, 1e-4);
+
+    // Chalky rather than saturated. Pastel sits lighter and duller than the
+    // scene it depicts, because pigment is opaque and scatters.
+    float lum2 = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(lum2), color, satAmount);
+
+    // --- pigment strokes ----------------------------------------------------
+    // Sampled ANISOTROPICALLY: low frequency along the stroke direction, high
+    // across it, which turns isotropic noise into streaks that read as a
+    // loaded stick dragged over the surface.
+    vec2 sd = vec2(cos(strokeAngle), sin(strokeAngle));
+    vec2 sp = vec2(dot(vUV, sd), dot(vUV, vec2(-sd.y, sd.x)));
+    float stroke = texture2D(flowSampler, vec2(sp.x * strokeFreq * 0.12,
+                                               sp.y * strokeFreq)).r;
+    color *= mix(1.0, 0.55 + 0.9 * stroke, strokeAmount);
+
+    // --- edges --------------------------------------------------------------
+    // Darkened with the surface's OWN colour rather than stamped with ink.
+    // Pastel has no pen: an edge is where pigment piles up, so it reads as a
+    // deeper version of the local hue instead of a black line over it.
+    vec2 ox = vec2(texelSize.x, 0.0) * outlineWidth;
+    vec2 oy = vec2(0.0, texelSize.y) * outlineWidth;
+    float edge = abs(depthAt(vUV - ox) - depthAt(vUV + ox))
+               + abs(depthAt(vUV - oy) - depthAt(vUV + oy));
+    float line = smoothstep(0.003, 0.02, edge);
+    color = mix(color, color * 0.35, line * edgeDark);
+
+    // Paper tooth stays SCREEN-locked, and that is correct: the paper is a
+    // fixed sheet the scene is drawn onto, so it should not travel with the
+    // geometry. Only displacement had to stop doing that.
+    float paper = texture2D(grainSampler, vUV * paperScale).r;
+    color *= mix(1.0, paper, grainAmount);
+    color = mix(color, color * vec3(1.06, 1.0, 0.90), 0.5);
+
+    // Hand the HDRI background back untouched. The sky sits at exactly the far
+    // depth value while all real geometry is well below it (measured: sky 1.0,
+    // scene 0.001-0.30), so the depth buffer separates them cleanly with no
+    // extra pass or stencil. Worth doing because a photographic sky put through
+    // value quantisation and paper tooth stops reading as sky and starts
+    // reading as a mistake.
+    float styled = 1.0;
+    if (ignoreSky > 0.5) styled = 1.0 - step(skyDepth, depthAt(vUV));
+    gl_FragColor = vec4(mix(raw, color, styled), 1.0);
+}
+`);
+
+let scribblePP = null, scribbleDepth = null, flowTex = null, grainTex = null;
+
+function setScribble(on) {
+    SCRIBBLE.on = on;
+    if (on) {
+        if (!flowTex) {
+            flowTex = makeNoiseTex(16, true, "scribbleFlow");
+            grainTex = makeNoiseTex(256, false, "scribbleGrain");
+        }
+        if (!scribbleDepth) scribbleDepth = scene.enableDepthRenderer(camera, false);
+        if (!scribblePP) {
+            scribblePP = new BABYLON.PostProcess("scribble", "scribble",
+                ["texelSize", "outlineWidth", "bleed", "warpAmount", "paperScale", "grainAmount",
+                 "levels", "satAmount", "strokeAmount", "strokeFreq", "strokeAngle", "edgeDark",
+                 "ignoreSky", "skyDepth"],
+                ["depthSampler", "flowSampler", "grainSampler"],
+                1.0, camera);
+            scribblePP.onApply = (eff) => {
+                eff.setTexture("depthSampler", scribbleDepth.getDepthMap());
+                eff.setTexture("flowSampler", flowTex);
+                eff.setTexture("grainSampler", grainTex);
+                eff.setFloat2("texelSize", 1 / engine.getRenderWidth(), 1 / engine.getRenderHeight());
+                eff.setFloat("outlineWidth", SCRIBBLE.outlineWidth);
+                eff.setFloat("bleed", SCRIBBLE.bleed);
+                eff.setFloat("warpAmount", SCRIBBLE.warp);
+                eff.setFloat("paperScale", SCRIBBLE.paperScale);
+                eff.setFloat("grainAmount", SCRIBBLE.grain);
+                eff.setFloat("levels", SCRIBBLE.levels);
+                eff.setFloat("satAmount", SCRIBBLE.satAmount);
+                eff.setFloat("strokeAmount", SCRIBBLE.strokeAmount);
+                eff.setFloat("strokeFreq", SCRIBBLE.strokeFreq);
+                eff.setFloat("strokeAngle", SCRIBBLE.strokeAngle);
+                eff.setFloat("edgeDark", SCRIBBLE.edgeDark);
+                eff.setFloat("ignoreSky", SCRIBBLE.ignoreSky ? 1 : 0);
+                eff.setFloat("skyDepth", SCRIBBLE.skyDepth);
+            };
+        }
+    } else {
+        if (scribblePP) { scribblePP.dispose(camera); scribblePP = null; }
+        if (scribbleDepth && scene.disableDepthRenderer) {
+            scene.disableDepthRenderer(camera);
+            scribbleDepth = null;
+        }
+    }
+}
+
+// Shared scribble store — the labs hub keeps dialled-in values in a localhost
+// cookie (browsers scope cookies by host, not port, so every lab page shares
+// the jar). Only keys the user has touched exist in the store, and only those
+// are applied, so this file's own tuning stays authoritative until a dial
+// moves. Runs BEFORE the panel below is built, so its sliders seat on the
+// carried-over values; the write-back listener at the bottom of this block
+// stores only values that changed from this boot's baseline.
+const SCRIB_STORE = (() => {
+    const read = () => {
+        try {
+            const m = document.cookie.match(/(?:^|;\s*)rockgame_scribble=([^;]*)/);
+            if (m) return JSON.parse(decodeURIComponent(m[1]));
+        } catch (e) { /* unreadable store — treat as empty */ }
+        return {};
+    };
+    const write = (patch) => {
+        try {
+            document.cookie = "rockgame_scribble=" +
+                encodeURIComponent(JSON.stringify(Object.assign(read(), patch))) +
+                "; path=/; max-age=31536000; SameSite=Lax";
+        } catch (e) { /* cookie jar closed — dial-in just won't carry */ }
+    };
+    return { read, write };
+})();
+
+(function applySharedScribble() {
+    const stored = SCRIB_STORE.read();
+    const apply = {
+        on:            (v) => SCRIBBLE.on = v > 0.5,
+        levels:        (v) => SCRIBBLE.levels = v,
+        satAmount:     (v) => SCRIBBLE.satAmount = v,
+        strokeAmount:  (v) => SCRIBBLE.strokeAmount = v,
+        strokeFreq:    (v) => SCRIBBLE.strokeFreq = v,
+        strokeAngle:   (v) => SCRIBBLE.strokeAngle = v,
+        paperScale:    (v) => SCRIBBLE.paperScale = v,
+        grain:         (v) => SCRIBBLE.grain = v,
+        bleed:         (v) => SCRIBBLE.bleed = v,
+        warp:          (v) => SCRIBBLE.warp = v,
+        ignoreSky:     (v) => SCRIBBLE.ignoreSky = v > 0.5,
+        skyDepth:      (v) => SCRIBBLE.skyDepth = v,
+        exposure:      (v) => pipeline.imageProcessing.exposure = v,
+        warmth:        (v) => curves.globalDensity = v,
+        warmthHue:     (v) => curves.globalHue = v,
+        envSaturation: (v) => curves.globalSaturation = v,
+    };
+    for (const k in apply) {
+        if (k in stored) { try { apply[k](Number(stored[k])); } catch (e) { console.warn("scribble store:", k, e); } }
+    }
+
+    const snapshot = () => ({
+        on: SCRIBBLE.on ? 1 : 0, levels: SCRIBBLE.levels,
+        satAmount: SCRIBBLE.satAmount, strokeAmount: SCRIBBLE.strokeAmount,
+        strokeFreq: SCRIBBLE.strokeFreq, strokeAngle: SCRIBBLE.strokeAngle,
+        paperScale: SCRIBBLE.paperScale, grain: SCRIBBLE.grain,
+        bleed: SCRIBBLE.bleed, warp: SCRIBBLE.warp,
+        ignoreSky: SCRIBBLE.ignoreSky ? 1 : 0, skyDepth: SCRIBBLE.skyDepth,
+        exposure: pipeline.imageProcessing.exposure,
+        warmth: curves.globalDensity, warmthHue: curves.globalHue,
+        envSaturation: curves.globalSaturation,
+    });
+    const base = snapshot();
+    let t = null;
+    document.getElementById("panel").addEventListener("input", () => {
+        clearTimeout(t);
+        t = setTimeout(() => {
+            const now = snapshot(), diff = {};
+            for (const k in now) if (now[k] !== base[k]) diff[k] = now[k];
+            Object.assign(base, diff);
+            if (Object.keys(diff).length) SCRIB_STORE.write(diff);
+        }, 200);
+    });
+})();
+
+// On by default now, and the pass is built lazily, so it has to be kicked once
+// at startup rather than only from the panel.
+if (SCRIBBLE.on) setScribble(true);
+
+const CONTROLS = [
+    ["Weather", null],
+    ["wind strength",   () => WIND.strength,        (v) => WIND.strength = v,        0, 1,    0.01],
+    ["wind direction",  () => WIND.dirDeg,          (v) => WIND.dirDeg = v,          0, 360,  1],
+    ["wave size",       () => WIND.waveScale,       (v) => WIND.waveScale = v,       0.4, 8,  0.1],
+    ["detail range",    () => WIND.detail,          (v) => WIND.detail = v,          0.3, 4,  0.05],
+    ["supersample",     () => RENDER.supersample,   (v) => { RENDER.supersample = v; applyScaling(); }, 1, 2.5, 0.25],
+    ["reflection blur", () => WIND.blurGain,        (v) => WIND.blurGain = v,        0, 300, 5],
+    ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
+    ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
+
+    ["Look", null],
+    ["exposure",        () => pipeline.imageProcessing.exposure,
+                        (v) => pipeline.imageProcessing.exposure = v,                0.2, 3,  0.01],
+    ["warmth",          () => curves.globalDensity, (v) => curves.globalDensity = v, -100, 100, 1],
+    ["warmth hue",      () => curves.globalHue,     (v) => curves.globalHue = v,     0, 360,  1],
+    ["tint r",          () => waterTint.r, (v) => { waterTint.r = v; waterMat.setColor3("tint", waterTint); }, 0, 1, 0.01],
+    ["tint g",          () => waterTint.g, (v) => { waterTint.g = v; waterMat.setColor3("tint", waterTint); }, 0, 1, 0.01],
+    ["tint b",          () => waterTint.b, (v) => { waterTint.b = v; waterMat.setColor3("tint", waterTint); }, 0, 1, 0.01],
+
+    ["Pastel pass", null],
+    ["pastel on",       () => SCRIBBLE.on ? 1 : 0,  (v) => setScribble(v > 0.5),     0, 1,    1],
+    // Range raised past 24 because that was the old ceiling and the tuning ran
+    // straight into it — a slider pinned at its maximum is usually a sign the
+    // range was wrong, not that the value was right.
+    ["value steps",     () => SCRIBBLE.levels,      (v) => SCRIBBLE.levels = v,      2, 64,   1],
+    ["saturation",      () => SCRIBBLE.satAmount,   (v) => SCRIBBLE.satAmount = v,   0, 1.4,  0.02],
+    ["stroke amount",   () => SCRIBBLE.strokeAmount,(v) => SCRIBBLE.strokeAmount = v,0, 1,    0.02],
+    ["stroke density",  () => SCRIBBLE.strokeFreq,  (v) => SCRIBBLE.strokeFreq = v,  4, 140,  2],
+    ["stroke angle",    () => SCRIBBLE.strokeAngle, (v) => SCRIBBLE.strokeAngle = v, 0, 3.14, 0.05],
+    ["edge depth",      () => SCRIBBLE.edgeDark,    (v) => SCRIBBLE.edgeDark = v,    0, 1,    0.02],
+    ["ignore sky",      () => SCRIBBLE.ignoreSky ? 1 : 0, (v) => SCRIBBLE.ignoreSky = v > 0.5, 0, 1, 1],
+    ["outline width",   () => SCRIBBLE.outlineWidth,(v) => SCRIBBLE.outlineWidth = v,0, 6,    0.1],
+    ["paper scale",     () => SCRIBBLE.paperScale,  (v) => SCRIBBLE.paperScale = v,  0.5, 20, 0.25],
+    ["paper grain",     () => SCRIBBLE.grain,       (v) => SCRIBBLE.grain = v,       0, 0.8,  0.02],
+    ["colour bleed",    () => SCRIBBLE.bleed,       (v) => SCRIBBLE.bleed = v,       0, 0.03, 0.001],
+    ["paper warp",      () => SCRIBBLE.warp,        (v) => SCRIBBLE.warp = v,        0, 0.02, 0.001],
+
+    ["Impact -> ripple", null],
+    ["ripple gain",     () => SPLASH.rippleGain,    (v) => SPLASH.rippleGain = v,    0, 0.02, 0.0001],
+    ["ripple max",      () => SPLASH.rippleMax,     (v) => SPLASH.rippleMax = v,     0, 0.15, 0.001],
+
+    ["Impact -> spray", null],
+    ["spray count",     () => SPLASH.sprayScale,    (v) => SPLASH.sprayScale = v,    0, 20000, 100],
+    ["foam count",      () => SPLASH.foamScale,     (v) => SPLASH.foamScale = v,     0, 6000,  50],
+    ["throw distance",  () => SPLASH.emitScale,     (v) => SPLASH.emitScale = v,     0.02, 1.5, 0.01],
+    ["max live",        () => SPLASH.maxLive,       (v) => SPLASH.maxLive = v,       500, 40000, 500],
+    ["spray size min",  () => sprayPS.minSize,      (v) => sprayPS.minSize = v,      0.002, 0.2, 0.002],
+    ["spray size max",  () => sprayPS.maxSize,      (v) => sprayPS.maxSize = v,      0.002, 0.4, 0.002],
+    ["globule share",   () => SPLASH.globFraction,  (v) => SPLASH.globFraction = v,  0, 0.6, 0.01],
+    ["wobble depth",    () => SHAPE.wobble,         (v) => SHAPE.wobble = v,         0, 1.2, 0.02],
+    ["wobble speed",    () => SHAPE.oscFreq,        (v) => SHAPE.oscFreq = v,        0, 80,  1],
+    ["stretch by speed",() => SHAPE.aero,           (v) => SHAPE.aero = v,           0, 0.6, 0.01],
+    ["spin rate",       () => SHAPE.spin,           (v) => SHAPE.spin = v,           0, 1,   0.05],
+    ["motion blur",     () => SHAPE.motionBlur,     (v) => SHAPE.motionBlur = v,     0, 2,   0.05],
+    ["foam size min",   () => foamPS.minSize,       (v) => foamPS.minSize = v,       0.005, 0.5, 0.005],
+    ["foam size max",   () => foamPS.maxSize,       (v) => foamPS.maxSize = v,       0.005, 1.0, 0.005],
+
+    ["Aeration potentials", null],
+    ["energy lo",       () => SPLASH.keWindow[0],   (v) => SPLASH.keWindow[0] = v,   0, 5,    0.01],
+    ["energy hi",       () => SPLASH.keWindow[1],   (v) => SPLASH.keWindow[1] = v,   1, 80,   0.5],
+    ["shear lo",        () => SPLASH.taWindow[0],   (v) => SPLASH.taWindow[0] = v,   0, 5,    0.05],
+    ["shear hi",        () => SPLASH.taWindow[1],   (v) => SPLASH.taWindow[1] = v,   1, 30,   0.1],
+    ["plunge aeration", () => SPLASH.plungeTA,      (v) => SPLASH.plungeTA = v,      0, 1,    0.01],
+
+    ["Landing ripples", null],
+    ["min droplet",     () => SPLASH.landing.minSize,     (v) => SPLASH.landing.minSize = v,     0.002, 0.3, 0.002],
+    ["max per frame",   () => SPLASH.landing.maxPerFrame, (v) => SPLASH.landing.maxPerFrame = v, 0, 60,  1],
+    ["landing gain",    () => SPLASH.landing.gain,        (v) => SPLASH.landing.gain = v,        0, 4,   0.05],
+    ["crater / size",   () => SPLASH.landing.craterPerSize, (v) => SPLASH.landing.craterPerSize = v, 0.5, 10, 0.1],
+    ["size -> strength",() => SPLASH.landing.sizePower,   (v) => SPLASH.landing.sizePower = v,   0.5, 4,  0.1],
+];
+
+(function buildPanel() {
+    const panel = document.getElementById("panel");
+    const live = [];
+    for (const c of CONTROLS) {
+        if (c[1] === null) {
+            const h = document.createElement("h4");
+            h.textContent = c[0];
+            panel.appendChild(h);
+            continue;
+        }
+        const [label, get, set, min, max, step] = c;
+        const row = document.createElement("div");
+        row.className = "row";
+        const lab = document.createElement("div");
+        lab.className = "lab";
+        const name = document.createElement("span");
+        name.textContent = label;
+        const val = document.createElement("span");
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = min; slider.max = max; slider.step = step;
+        const show = () => {
+            const v = get();
+            slider.value = v;
+            // Enough decimals to actually see the small ones move.
+            val.textContent = step < 0.001 ? v.toFixed(4) : step < 0.1 ? v.toFixed(3) : String(Math.round(v));
+        };
+        slider.addEventListener("input", () => { set(parseFloat(slider.value)); show(); });
+        lab.appendChild(name); lab.appendChild(val);
+        row.appendChild(lab); row.appendChild(slider);
+        panel.appendChild(row);
+        show();
+        live.push({ label, get });
+    }
+
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy values";
+    const plungeBtn2 = document.createElement("button");
+    plungeBtn2.textContent = "Plunge";
+    plungeBtn2.addEventListener("click", () => document.getElementById("plungeBtn").click());
+    btns.appendChild(copyBtn); btns.appendChild(plungeBtn2);
+    panel.appendChild(btns);
+
+    const out = document.createElement("textarea");
+    out.id = "copyOut";
+    out.readOnly = true;
+    panel.appendChild(out);
+
+    copyBtn.addEventListener("click", async () => {
+        const lines = ["water tuning", "pond " + SIZE + "m  RES " + RES + "  STEPS " + STEPS];
+        for (const c of CONTROLS) {
+            if (c[1] === null) { lines.push("", "[" + c[0] + "]"); continue; }
+            const v = c[1]();
+            lines.push("  " + c[0] + " = " + (Math.abs(v) < 1 ? v.toFixed(4) : v.toFixed(2)));
+        }
+        const text = lines.join("\n");
+        // Clipboard can be blocked depending on focus and permissions, so the
+        // textarea is a guaranteed fallback rather than an error message.
+        let ok = false;
+        try {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+        } catch (e) { ok = false; }
+        out.value = text;
+        out.style.display = ok ? "none" : "block";
+        if (!ok) { out.focus(); out.select(); }
+        copyBtn.textContent = ok ? "Copied" : "Select + copy";
+        setTimeout(() => { copyBtn.textContent = "Copy values"; }, 1600);
+    });
+})();
+
+let primed = false;
+let frame = 0;
+
+// Scratch for the per-frame uniform update. One Vector2 per frame is a small
+// allocation, but it is garbage created sixty times a second for no reason.
+const _windDir = new BABYLON.Vector2(1, 0);
+
+scene.registerBeforeRender(() => {
+    // Defensive: the particle pass leaves the depth function disabled, and the
+    // opaque geometry drawn below depends on it being back to normal.
+    engine.setDepthFunction(DEPTH_LEQUAL);
+    retireSubmerged();
+
+    waterMat.setVector3("cameraPos", camera.position);
+    waterMat.setFloat("time", performance.now() * 0.001);
+    waterMat.setFloat("windStrength", WIND.strength);
+    const wr = WIND.dirDeg * Math.PI / 180;
+    _windDir.copyFromFloats(Math.cos(wr), Math.sin(wr));
+    waterMat.setVector2("windDir", _windDir);
+    waterMat.setFloat("detailScale", WIND.detail);
+    waterMat.setFloat("waveScale", WIND.waveScale);
+    waterMat.setFloat("blurGain", WIND.blurGain);
+
+    // The effects compile asynchronously, so priming retries until it takes.
+    if (!primed) {
+        primed = reset();
+        if (!primed) return;
+    }
+    if (needsSeed && updatePass.effect.isReady()) { seed(); needsSeed = false; }
+    if (paused) { waterMat.setTexture("sim", simA); return; }
+
+    if (raining && (frame % 14 === 0)) {
+        queueDrop((Math.random() * 2 - 1) * HALF * 0.9,
+                  (Math.random() * 2 - 1) * HALF * 0.9, DROP_S);
+    }
+    frame++;
+
+    // Drops first, each its own pass, exactly as his addDrop works. The
+    // readiness peek matters on the opening frames: runPass silently no-ops
+    // while the drop effect is still compiling, and a drop shifted off the
+    // queue at that moment would be lost rather than retried — the 20-drop
+    // opening seed could vanish that way.
+    while (dropQueue.length && dropPass.effect.isReady()) {
+        const d = dropQueue.shift();
+        // d.z, not d.y — the queue stores the pond's x/z plane. Reading d.y
+        // here fed addDrop undefined and silently killed every drop in the
+        // project: clicks, rain, the seed, impact ripples, landing ripples.
+        addDrop(d.x, d.z, d.radius, d.strength);
+    }
+
+    // Then his per-frame loop: two simulation steps, one normal pass.
+    for (let i = 0; i < STEPS; i++) stepSimulation();
+    updateNormals();
+
+    waterMat.setTexture("sim", simA);
+});
+
+engine.runRenderLoop(() => scene.render());
+addEventListener("resize", () => engine.resize());
+</script>
+</body>
+</html>

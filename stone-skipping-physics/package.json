@@ -1,0 +1,20 @@
+{
+  "name": "stone-skipping-physics",
+  "version": "0.1.0",
+  "description": "6-DOF rigid-body stone skipping physics, built from the primary literature. Engine-agnostic; Babylon.js adapter included.",
+  "type": "module",
+  "main": "src/stoneSkipping.js",
+  "exports": {
+    ".": "./src/stoneSkipping.js",
+    "./babylon": "./src/babylonAdapter.js"
+  },
+  "scripts": {
+    "test": "node test/headless-sweep.mjs && node test/api-audit.mjs",
+    "debug": "node test/debug-contact.mjs",
+    "serve": "node tools/dev-server.mjs 5291",
+    "test:physics": "node test/headless-sweep.mjs",
+    "test:api": "node test/api-audit.mjs"
+  },
+  "license": "MIT",
+  "private": true
+}

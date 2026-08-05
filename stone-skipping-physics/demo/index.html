@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stone Skipping Physics — 3D viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    background: #0b1016; color: #dce6f0; }
+  #app { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #panel { width: 310px; flex: none; overflow-y: auto; padding: 14px 16px 28px;
+    background: #111922; border-left: 1px solid #223040; }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
+  .sub { color: #7d8fa3; font-size: 11px; margin-bottom: 14px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+    color: #6f8398; margin: 18px 0 8px; font-weight: 600; }
+  label { display: block; margin-bottom: 9px; }
+  .row { display: flex; justify-content: space-between; font-size: 11px;
+    color: #a8bacd; margin-bottom: 2px; }
+  .row b { color: #eaf2fa; font-weight: 600; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: #4ea3ff; }
+  select { width: 100%; background: #0b1016; color: #dce6f0;
+    border: 1px solid #2b3b4d; border-radius: 5px; padding: 5px 6px; }
+  button { width: 100%; padding: 9px; margin-top: 12px; border: 0; border-radius: 6px;
+    background: #2f7fd6; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; }
+  button:hover { background: #3d90ea; }
+  button.ghost { background: #1d2836; color: #9fb3c8; margin-top: 6px; font-weight: 500; }
+  button.ghost:hover { background: #26364a; }
+  #hud { position: absolute; top: 12px; left: 12px; padding: 10px 13px;
+    background: rgba(8,13,19,.82); border: 1px solid #223040; border-radius: 7px;
+    font-variant-numeric: tabular-nums; pointer-events: none; min-width: 190px; }
+  #hud .big { font-size: 26px; font-weight: 700; line-height: 1.1; color: #6fc3ff; }
+  #hud .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: #6f8398; }
+  #hud table { border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+  #hud td { padding: 1px 0; }
+  #hud td:first-child { color: #7d8fa3; padding-right: 12px; }
+  #hud td:last-child { text-align: right; color: #dce6f0; }
+  #outcome { margin-top: 7px; font-size: 12px; font-weight: 600; color: #ffca6f; }
+  #err { position: absolute; inset: 0; display: none; place-content: center;
+    padding: 40px; text-align: center; color: #ff9c9c; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <div class="lbl">Skips (competition count)</div>
+      <div class="big" id="skips">0</div>
+      <table>
+        <tr><td>rings raised</td><td id="rings">0</td></tr>
+        <tr><td>checksum</td><td id="csum">-</td></tr>
+        <tr><td>of which airborne</td><td id="hops">0</td></tr>
+        <tr><td>run distance</td><td id="rdist">0.0 m</td></tr>
+        <tr><td>total travel</td><td id="dist">0.0 m</td></tr>
+        <tr><td>speed</td><td id="spd">0.0 m/s</td></tr>
+        <tr><td>attack</td><td id="atk">0&deg;</td></tr>
+        <tr><td>bank</td><td id="bnk">0&deg;</td></tr>
+        <tr><td>spin</td><td id="spn">0 rev/s</td></tr>
+        <tr><td>Rossby</td><td id="ros">0</td></tr>
+        <tr><td>drift</td><td id="drf">0.00 m</td></tr>
+      </table>
+      <div id="outcome"></div>
+      <div id="phase" class="lbl" style="margin-top:6px"></div>
+      <div class="lbl" style="margin-top:5px;text-transform:none;letter-spacing:0">
+        Guinness rule: skips = rings raised minus one, every contact that makes a
+        visible ripple, pitty-pats included. Not numerically converged &mdash; see
+        README.</div>
+    </div>
+    <div id="err"></div>
+  </div>
+
+  <div id="panel">
+    <h1>Stone Skipping Physics</h1>
+    <div class="sub">6-DOF solver &middot; <span id="rt">real time</span>
+      &middot; <span id="ver" style="color:#4ea3ff"></span></div>
+
+    <h2>Physics profile</h2>
+    <select id="profile">
+      <option value="game">game &mdash; tuned</option>
+      <option value="arcade">arcade &mdash; long showpiece runs</option>
+      <option value="documentary">documentary &mdash; literature-faithful (short runs)</option>
+    </select>
+
+    <h2>Assist (not physics)</h2>
+    <div data-ctl="hopSpeedFraction" data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
+    <div data-ctl="attitudeAssist"   data-min="0" data-max="16"   data-step="0.5"   data-unit="" data-grp="assist"></div>
+    <div data-ctl="bounceSpeedTax"   data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
+
+    <h2>Preset</h2>
+    <select id="preset"></select>
+
+    <h2>Throw</h2>
+    <div data-ctl="speed"           data-min="1"    data-max="45"  data-step="0.5" data-unit=" m/s"></div>
+    <div data-ctl="elevationDeg"    data-min="-30"  data-max="10"  data-step="0.5" data-unit="&deg;"></div>
+    <div data-ctl="attackAngleDeg"  data-min="-15"  data-max="70"  data-step="1"   data-unit="&deg;"></div>
+    <div data-ctl="spinRPS"         data-min="-80"  data-max="80"  data-step="1"   data-unit=" rev/s"></div>
+    <div data-ctl="bankAngleDeg"    data-min="-45"  data-max="45"  data-step="1"   data-unit="&deg;"></div>
+    <div data-ctl="spinAxisTiltDeg" data-min="0"    data-max="30"  data-step="1"   data-unit="&deg;"></div>
+    <div data-ctl="releaseHeight"   data-min="0.02" data-max="1.5" data-step="0.01" data-unit=" m"></div>
+
+    <h2>Stone</h2>
+    <div data-ctl="radius"    data-min="0.02" data-max="0.09"  data-step="0.005" data-unit=" m"   data-grp="stone"></div>
+    <div data-ctl="thickness" data-min="0.003" data-max="0.03" data-step="0.001" data-unit=" m"   data-grp="stone"></div>
+    <div data-ctl="aspect"    data-min="0.4"  data-max="1"     data-step="0.05"  data-unit=""     data-grp="stone"></div>
+
+    <h2>Water</h2>
+    <div data-ctl="amplitude"  data-min="0" data-max="0.15" data-step="0.005" data-unit=" m" data-grp="water"></div>
+    <div data-ctl="wavelength" data-min="0.5" data-max="8"  data-step="0.1"   data-unit=" m" data-grp="water"></div>
+
+    <button id="throw">Throw &nbsp;(space)</button>
+    <button id="slowmo" class="ghost">Slow motion: off</button>
+    <button id="follow" class="ghost">Camera: follow</button>
+  </div>
+</div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script type="module">
+import { StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, VERSION, Outcome } from '../src/stoneSkipping.js'
+import { makeGerstnerWater } from '../src/babylonAdapter.js'
+
+const $ = id => document.getElementById(id)
+
+if (typeof BABYLON === 'undefined') {
+  $('err').style.display = 'grid'
+  $('err').innerHTML = 'Babylon.js could not load from the CDN.<br>' +
+    'Check your network, or drop babylon.js next to this file and change the script tag.'
+  throw new Error('no babylon')
+}
+
+$('ver').textContent = 'v' + VERSION
+
+/* ---------------- parameter model ---------------- */
+
+const throwParams = { ...THROW_PRESETS.strong }
+const stoneParams = { radius: 0.045, thickness: 0.010, aspect: 1.0 }
+const waterParams = { amplitude: 0.0, wavelength: 3.0 }
+const assistParams = { hopSpeedFraction: 0.05, attitudeAssist: 6, bounceSpeedTax: 0.02 }
+
+const LABEL = {
+  speed: 'Speed', elevationDeg: 'Launch elevation', attackAngleDeg: 'Attack angle',
+  spinRPS: 'Spin', bankAngleDeg: 'Bank (roll)', spinAxisTiltDeg: 'Spin-axis tilt',
+  releaseHeight: 'Release height', radius: 'Radius', thickness: 'Thickness',
+  aspect: 'Aspect (1 = round)', amplitude: 'Wave amplitude', wavelength: 'Wavelength',
+  hopSpeedFraction: 'Rebound', attitudeAssist: 'Attitude hold',
+  bounceSpeedTax: 'Run-length damping',
+}
+const GROUP = { throw: throwParams, stone: stoneParams, water: waterParams, assist: assistParams }
+
+const controls = []
+for (const host of document.querySelectorAll('[data-ctl]')) {
+  const key = host.dataset.ctl
+  const grp = host.dataset.grp || 'throw'
+  const unit = host.dataset.unit
+  const store = GROUP[grp]
+  const dec = Number(host.dataset.step) < 0.1 ? 3 : (Number(host.dataset.step) < 1 ? 1 : 0)
+  host.innerHTML =
+    `<label><span class="row"><span>${LABEL[key]}</span><b></b></span>
+     <input type="range" min="${host.dataset.min}" max="${host.dataset.max}"
+            step="${host.dataset.step}"></label>`
+  const slider = host.querySelector('input')
+  const out = host.querySelector('b')
+  const sync = () => {
+    // Clamp the stored value INTO the slider range, rather than letting the slider
+    // silently show a clamped number while the sim runs the real one. truscottLimit
+    // is 41.6 m/s against an old max of 25 — the panel read 25 and threw 41.6.
+    const lo = Number(host.dataset.min), hi = Number(host.dataset.max)
+    const v = Math.min(hi, Math.max(lo, Number(store[key] ?? 0)))
+    store[key] = v
+    slider.value = v
+    out.innerHTML = v.toFixed(dec) + unit
+  }
+  slider.addEventListener('input', () => {
+    store[key] = Number(slider.value)
+    out.innerHTML = Number(slider.value).toFixed(dec) + unit
+    if (grp !== 'throw') rebuild()
+  })
+  controls.push(sync); sync()
+}
+
+const presetSel = $('preset')
+for (const name of Object.keys(THROW_PRESETS)) {
+  presetSel.add(new Option(PRESET_LABELS[name] || name, name))
+}
+presetSel.value = 'strong'
+presetSel.addEventListener('change', () => {
+  Object.assign(throwParams, { bankAngleDeg: 0, sideslipDeg: 0, spinAxisTiltDeg: 0 },
+    THROW_PRESETS[presetSel.value])
+  controls.forEach(f => f()); doThrow()
+})
+
+/* ---------------- babylon scene ---------------- */
+
+const canvas = $('c')
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false }, true)
+const scene = new BABYLON.Scene(engine)
+scene.clearColor = new BABYLON.Color4(0.043, 0.063, 0.086, 1)
+scene.fogMode = BABYLON.Scene.FOGMODE_EXP2
+scene.fogColor = new BABYLON.Color3(0.043, 0.063, 0.086)
+scene.fogDensity = 0.008
+
+const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 2.35, 1.32, 9,
+  new BABYLON.Vector3(4, 0, 0), scene)
+camera.attachControl(canvas, true)
+camera.lowerRadiusLimit = 1.5
+camera.upperRadiusLimit = 90
+camera.wheelDeltaPercentage = 0.02
+
+new BABYLON.HemisphericLight('h', new BABYLON.Vector3(0.3, 1, 0.2), scene).intensity = 0.85
+const sun = new BABYLON.DirectionalLight('d', new BABYLON.Vector3(-0.5, -1, 0.3), scene)
+sun.intensity = 1.1
+
+// water plane (visual only — the solver samples the callback below, not this mesh)
+const WATER_SPAN = 220
+const water = BABYLON.MeshBuilder.CreateGround('water',
+  { width: WATER_SPAN, height: 60, subdivisions: 160 }, scene)
+water.position.x = WATER_SPAN / 2 - 8
+const waterMat = new BABYLON.StandardMaterial('wm', scene)
+waterMat.diffuseColor = new BABYLON.Color3(0.05, 0.13, 0.21)
+waterMat.specularColor = new BABYLON.Color3(0.25, 0.4, 0.5)
+waterMat.specularPower = 96
+water.material = waterMat
+const waterBase = water.getVerticesData(BABYLON.VertexBuffer.PositionKind).slice()
+
+// gridlines every 5 m so distance is readable
+const marks = []
+for (let x = 0; x <= 60; x += 5) {
+  const l = BABYLON.MeshBuilder.CreateLines('m' + x, {
+    points: [new BABYLON.Vector3(x, 0.002, -12), new BABYLON.Vector3(x, 0.002, 12)],
+  }, scene)
+  l.color = new BABYLON.Color3(0.13, 0.22, 0.30)
+  marks.push(l)
+}
+
+let stoneMesh = null
+function rebuild() {
+  if (stoneMesh) stoneMesh.dispose()
+  // A featureless disc rotating about its own symmetry axis is visually IDENTICAL at
+  // every angle — spin is invisible and nutation reads as nothing. Top and bottom get
+  // different colours (so flips show) and a rim marker rides around with the spin.
+  const C4 = BABYLON.Color4
+  stoneMesh = BABYLON.MeshBuilder.CreateCylinder('stone', {
+    diameterTop: stoneParams.radius * 2, diameterBottom: stoneParams.radius * 2,
+    height: stoneParams.thickness, tessellation: 40,
+    faceColors: [
+      new C4(0.30, 0.34, 0.40, 1),   // underside — dark
+      new C4(0.55, 0.53, 0.50, 1),   // rim
+      new C4(0.86, 0.84, 0.78, 1),   // top — light
+    ],
+  }, scene)
+  stoneMesh.scaling.x = stoneParams.aspect
+  const m = new BABYLON.StandardMaterial('sm', scene)
+  m.diffuseColor = new BABYLON.Color3(1, 1, 1)
+  m.specularColor = new BABYLON.Color3(0.35, 0.35, 0.35)
+  stoneMesh.material = m
+  stoneMesh.rotationQuaternion = BABYLON.Quaternion.Identity()
+
+  // rim marker: the only thing that makes spin rate and direction readable
+  const mark = BABYLON.MeshBuilder.CreateBox('mark', {
+    width: stoneParams.radius * 0.5,
+    height: stoneParams.thickness * 1.25,
+    depth: stoneParams.radius * 0.22,
+  }, scene)
+  mark.position.set(stoneParams.radius * 0.72 * stoneParams.aspect, 0, 0)
+  const mm = new BABYLON.StandardMaterial('mm', scene)
+  mm.diffuseColor = new BABYLON.Color3(0.95, 0.35, 0.20)
+  mm.emissiveColor = new BABYLON.Color3(0.25, 0.06, 0.02)
+  mark.material = mm
+  mark.parent = stoneMesh
+  makeSim()
+}
+
+/* ---------------- solver ---------------- */
+
+let sim, trailPts, trail, ripples = []
+const waterFn = () => makeGerstnerWater({
+  level: 0, amplitude: waterParams.amplitude, wavelength: waterParams.wavelength,
+  speed: 1.2, direction: { x: 1, z: 0.25 },
+})
+
+let profileName = 'game'
+function makeSim() {
+  sim = new StoneSkipSim({
+    profile: profileName, stone: { ...stoneParams }, water: waterFn(),
+    // sliders override whatever the profile set
+    env: profileName === 'documentary' ? {} : { ...assistParams },
+  })
+}
+$('profile').addEventListener('change', e => {
+  profileName = e.target.value
+  const preset = PHYSICS_PROFILES[profileName] || {}
+  assistParams.hopSpeedFraction = preset.hopSpeedFraction ?? 0
+  assistParams.attitudeAssist = preset.attitudeAssist ?? 0
+  assistParams.bounceSpeedTax = preset.bounceSpeedTax ?? 0
+  controls.forEach(f => f())
+  doThrow()
+})
+
+function clearRipples() { ripples.forEach(r => r.mesh.dispose()); ripples = [] }
+
+function splash(pos, impulse = 0.15) {
+  const disc = BABYLON.MeshBuilder.CreateDisc('r', { radius: 1, tessellation: 40 }, scene)
+  disc.rotation.x = Math.PI / 2
+  disc.position.set(pos.x, 0.006, pos.z)
+  const m = new BABYLON.StandardMaterial('rm', scene)
+  m.emissiveColor = new BABYLON.Color3(0.45, 0.75, 1)
+  m.alpha = 0.55; m.disableLighting = true; m.wireframe = true
+  disc.material = m
+  // ripple grows with the momentum actually delivered — a death-rattle tap makes a
+  // far smaller ring than the first strike. Your water sim can use the same number.
+  const strength = Math.max(0.25, Math.min(2.5, Math.sqrt(impulse / 0.15)))
+  ripples.push({ mesh: disc, mat: m, age: 0, strength })
+  if (ripples.length > 90) { ripples.shift().mesh.dispose() }
+}
+
+function doThrow() {
+  makeSim()
+  sim.throwStone({ ...throwParams, origin: { x: 0, z: 0 } })
+  trailPts = []
+  if (trail) { trail.dispose(); trail = null }
+  clearRipples()
+  $('outcome').textContent = ''
+  sync()
+}
+
+$('throw').addEventListener('click', doThrow)
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); doThrow() }
+})
+
+let slow = false
+$('slowmo').addEventListener('click', () => {
+  slow = !slow
+  $('slowmo').textContent = 'Slow motion: ' + (slow ? 'on (1/6x)' : 'off')
+  $('rt').textContent = slow ? '1/6 speed' : 'real time'
+})
+let follow = true
+$('follow').addEventListener('click', () => {
+  follow = !follow
+  $('follow').textContent = 'Camera: ' + (follow ? 'follow' : 'free')
+})
+
+/* ---------------- HUD ---------------- */
+
+function sync() {
+  const d = sim.getDiagnostics()
+  $('skips').textContent = sim.skips
+  $('hops').textContent = sim.cleanHops
+  $('rings').textContent = sim.ripples
+  $('csum').textContent = sim.checksum()
+  $('dist').textContent = d.distance.toFixed(1) + ' m'
+  $('rdist').textContent = (sim.runEnded ? sim.runDistance : d.distance).toFixed(1) + ' m'
+  $('phase').textContent = sim.finished ? profileName + ' — settled: ' + (sim.settleReason || '')
+    : sim.runEnded ? profileName + ' — coasting / sinking…' : profileName + ' — skipping'
+  $('skips').style.color = sim.runEnded ? '#7d8fa3' : '#6fc3ff'
+  $('spd').textContent = d.speed.toFixed(1) + ' m/s'
+  $('atk').textContent = d.attackAngleDeg.toFixed(1) + '°'
+  $('bnk').textContent = d.bankAngleDeg.toFixed(1) + '°'
+  $('spn').textContent = d.spinRPS.toFixed(1) + ' rev/s'
+  $('ros').textContent = d.rossby.toFixed(1)
+  $('drf').textContent = (sim._lateralDrift ? sim._lateralDrift() : 0).toFixed(2) + ' m'
+}
+
+/* ---------------- loop ---------------- */
+
+rebuild()
+doThrow()
+
+let t = 0
+scene.onBeforeRenderObservable.add(() => {
+  const raw = Math.min(engine.getDeltaTime() / 1000, 0.05)
+  const dt = slow ? raw / 6 : raw
+  t += dt
+
+  // animate the visual water to match the sampler
+  if (waterParams.amplitude > 0) {
+    const pos = water.getVerticesData(BABYLON.VertexBuffer.PositionKind)
+    const k = 2 * Math.PI / waterParams.wavelength
+    const dl = Math.hypot(1, 0.25)
+    for (let i = 0; i < pos.length; i += 3) {
+      const wx = waterBase[i] + water.position.x, wz = waterBase[i + 2]
+      pos[i + 1] = waterParams.amplitude *
+        Math.sin(k * ((wx * 1 + wz * 0.25) / dl) - k * 1.2 * sim.state.time)
+    }
+    water.updateVerticesData(BABYLON.VertexBuffer.PositionKind, pos)
+    water.createNormals(true)
+  }
+
+  if (!sim.finished) {
+    for (const e of sim.advance(dt)) {
+      if (e.type === 'bounce') splash(e.position, e.impulse)
+      if (e.type === 'outcome') {
+        $('outcome').textContent = e.outcome.replace(/-/g, ' ') +
+          ' — ' + e.skips + ' skips, ' + e.distance.toFixed(1) + ' m'
+      }
+      if (e.type === 'settled') {
+        $('outcome').textContent += '  (' + e.reason + ' after ' +
+          e.coastTime.toFixed(1) + 's coast)'
+      }
+    }
+    const p = sim.state.position, q = sim.state.orientation
+    stoneMesh.position.set(p.x, p.y, p.z)
+    stoneMesh.rotationQuaternion.set(q.x, q.y, q.z, q.w)
+
+    if (!sim.runEnded) trailPts.push(new BABYLON.Vector3(p.x, p.y, p.z))
+    if (trailPts.length > 1) {
+      trail = BABYLON.MeshBuilder.CreateLines('tr',
+        { points: trailPts, instance: trail, updatable: true }, scene)
+      trail.color = new BABYLON.Color3(0.42, 0.76, 1)
+    }
+    sync()
+  }
+
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i]
+    r.age += dt
+    const s = (0.06 + r.age * 1.5) * r.strength
+    r.mesh.scaling.set(s, s, s)
+    r.mat.alpha = Math.max(0, 0.55 * Math.min(1, r.strength) - r.age * 0.7)
+    if (r.age > 0.9) { r.mesh.dispose(); ripples.splice(i, 1) }
+  }
+
+  if (follow) {
+    const p = sim.state.position
+    camera.target.x += (p.x - camera.target.x) * 0.06
+    camera.target.z += (p.z - camera.target.z) * 0.06
+    camera.target.y += (Math.max(0, p.y) - camera.target.y) * 0.06
+  }
+})
+
+engine.runRenderLoop(() => scene.render())
+addEventListener('resize', () => engine.resize())
+
+/* ---------------- scribble dials (shared across the labs) ----------------
+   Loaded dynamically so this page keeps working when served standalone by
+   tools/dev-server.mjs, where /shared/ does not exist — the import fails,
+   the catch swallows it, and the demo is exactly what it was. Under the
+   rockgame hub the pass and the cross-lab dial panel attach.
+   Pastel keys only: this viewer has no HDR grade to expose. */
+import('/shared/scribble-dials.js')
+  .then(async ({ attachScribblePanel, loadScribbleSettings, PASTEL_KEYS }) => {
+    const { createScribble } = await import('/shared/scribble-fx.js')
+    const scribble = createScribble(scene, camera, engine, {}, BABYLON)
+    attachScribblePanel({
+      supports: PASTEL_KEYS,
+      get: (k) => (k === 'on' ? 1 : scribble.params[k]),
+      apply: (k, v) => {
+        if (k === 'on') scribble.enable(v > 0.5)
+        else if (k === 'ignoreSky') scribble.set('ignoreSky', v > 0.5)
+        else scribble.set(k, v)
+      },
+      note: 'Pastel only here — this viewer has no HDR grade.',
+    })
+    if (!('on' in loadScribbleSettings())) scribble.enable(true)
+    window.scribble = scribble
+  })
+  .catch(() => { /* standalone server — no shared dials */ })
+</script>
+</body>
+</html>

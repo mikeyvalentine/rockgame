@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>rockgame</title>
+    <meta name="description" content="Daily stone-skipping challenge." />
+  </head>
+  <body>
+    <!-- Painted by index.html rather than by JS so there is something on screen
+         during the module fetch, before main.js has run at all. src/screens/splash.js
+         takes this element over and animates it out. -->
+    <div id="boot">
+      <div class="boot-mark">rockgame</div>
+    </div>
+    <div id="app" aria-live="polite"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

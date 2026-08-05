@@ -1,0 +1,36 @@
+{
+  "name": "sand-sim",
+  "private": true,
+  "version": "0.1.0",
+  "description": "First-person beach sand simulation lab for Rock Game — derived from SNOWFLOW (Babylon.js / WebGPU + WebGL2 fallback)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node tools/registry-check.mjs && node tools/beach-profile-check.mjs && node tools/raymarch-test.mjs && node tools/glsl-check.mjs && node tools/settings-check.mjs && node tools/package-check.mjs",
+    "test:registry": "node tools/registry-check.mjs",
+    "test:profile": "node tools/beach-profile-check.mjs",
+    "test:raymarch": "node tools/raymarch-test.mjs",
+    "test:glsl": "node tools/glsl-check.mjs",
+    "test:settings": "node tools/settings-check.mjs",
+    "test:package": "node tools/package-check.mjs"
+  },
+  "keywords": [
+    "webgpu",
+    "babylonjs",
+    "wgsl",
+    "sand",
+    "terrain",
+    "procedural",
+    "graphics"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@babylonjs/core": "^9.18.0",
+    "@babylonjs/materials": "^9.18.0"
+  },
+  "devDependencies": {
+    "vite": "^8.1.5"
+  }
+}
