@@ -18,6 +18,17 @@ export const BED_RADIUS = 0.42;   // metres
 // the bed comes out as a broad field a few stones deep instead of a cone.
 export const POOL_RADIUS = 0.38;  // metres
 export const ROCK_COUNT = 540;
+/**
+ * How many DISTINCT stones the forge generates. The bed instances these, so this is
+ * the variety of the cast, not the size of the pile.
+ *
+ * The scanned GLB gave five, so every bed was five silhouettes at assorted scales and
+ * the repetition showed once you looked for it. Generated rocks have no such ceiling;
+ * 40 costs a few milliseconds and one mesh each.
+ */
+export const ARCHETYPE_COUNT = 40;
+/** Library seed. Baked beds store stone names, so changing this invalidates them. */
+export const ROCK_SEED = 99;
 
 // Havok is stepped at a fixed rate rather than at the frame delta. A variable
 // step is what makes a dense pile detonate: at 30 fps the solver gets a single
@@ -37,7 +48,15 @@ export const MAX_FRAME_MS = 40;
 // about a metre tall, and stones arriving at 4 m/s move further per step than
 // their own thickness — so they tunnel straight through the ground.
 export const LAYER_STEPS = 110;  // substeps of SETTLE_DT between sheets
-export const FINAL_STEPS = 400;  // substeps once the last sheet is down
+// Raised 400 -> 1000 when the bed became generated rather than scanned. Five scanned
+// river stones settled in 400; a cast of 40 does not, because it contains shapes the
+// scans never had — near-cubes and 350 g cobbles, which roll and rock for longer
+// before they find a face to sit on. Measured on the 540-stone bed: 400 steps leaves
+// 4 stones still drifting, 700 leaves 3, 1000 leaves none.
+//
+// Costs ~3.4 s of pour, and costs it only at BAKE time: the browser restores a baked
+// bed and never runs the pour.
+export const FINAL_STEPS = 1000;  // substeps once the last sheet is down
 export const SETTLE_DT = 1 / 240;
 export const SPAWN_GAP = 0.02;   // metres of clearance above the current pile
 

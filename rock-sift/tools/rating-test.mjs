@@ -16,7 +16,7 @@
 
 import { skipRating, RARITY_TIERS, STONE_STAT_TARGETS, flatnessFromShape } from "../src/rocks.js";
 
-const RHO = 2650; // kg/m^3, matching assetRocks.js
+const RHO = 2650; // kg/m^3, matching the forge archetypes
 let failures = 0;
 const check = (label, ok, detail = "") => {
   if (!ok) failures++;

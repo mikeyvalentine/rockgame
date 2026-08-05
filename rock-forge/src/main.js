@@ -274,7 +274,7 @@ function rebuildInstances() {
     H.set("stone", `${shape.label} #${shape.index}`);
     H.set("size", `${m.sortedCm.map((v) => v.toFixed(1)).join(" x ")} cm`);
     H.set("mass", `${m.massGrams.toFixed(0)} g`);
-    H.set("skip", `${"*".repeat(m.rating.stars)} ${m.rating.verdict}`);
+    H.set("skip", `${m.rating.rarity.label} — ${m.rating.verdict}`);
     camera.setTarget(Vector3.Zero());
     camera.radius = size * 3.4;
   } else {
