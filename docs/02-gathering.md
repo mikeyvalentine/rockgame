@@ -11,6 +11,64 @@
 - Click any rock to inspect it.
 - **Sea glass** is found scattered through the field, independent of which rocks you inspect.
 
+## Every stat is divergence from the ideal stone — decided
+
+Stats are **not** magnitudes. A stat is *how close this rock is to the mathematically
+ideal skipping stone on that axis*, so every bar reads the same direction: full is
+perfect, empty is wrong. **Full pips on mass means "the right mass", not "heavy"** — a
+boulder and a pebble both score empty on mass, from opposite sides.
+
+This is what makes the bars comparable to each other, and it is why a rock can be
+5/5 on one axis and 0/5 on another without contradiction: a 1.5 kg boulder genuinely
+would hold its attitude (balance 5/5) and is genuinely unthrowable (mass 0/5).
+
+| Stat | Ideal | Source |
+| --- | --- | --- |
+| Mass | **165 g** | 100–200 g good band; the solver's validated default is 172 g |
+| Size | **8.5 cm** across | 5–10 cm; skimming championship caps entries at 76 mm |
+| Flatness | **0.129** — *derived, see below* | the thickness a 165 g, 8.5 cm stone must have |
+| Balance | peaks at the right mass-to-radius | `PHYSICS-NOTES.md` §14 |
+
+> ⚠️ **The targets are not independent — never set them separately.** For a stone of
+> density ρ, `mass = ρ·π·(D/2)²·t`, so fixing any two of {mass, diameter, thickness}
+> fixes the third. Choosing all three by hand produced a set no real rock could
+> satisfy — at 8.5 cm and a flatness of 0.075 a slate disc weighs 98 g, not 170 g —
+> and the top two rarity tiers silently became **undroppable**: the best score any
+> physically possible stone could reach was 0.816 against an Epic threshold of 0.82.
+> Nothing errored; the tiers just never appeared. Flatness is therefore *derived* from
+> mass and size. `rock-sift/tools/rating-test.mjs` sweeps every real disc and asserts
+> each tier is reachable, so this cannot come back quietly.
+
+### Flatness is one stat, and "round" is a trap
+
+Flatness and face-shape were briefly two stats. That was wrong: the second measured
+the face ellipse ratio, so **a sphere scored full marks on it** — a ball rated ideal.
+
+The word *round* means two opposite things here. A round **face** is good; a round
+**solid** is the worst skipping stone there is. One stat now covers both, measuring
+how much like a skipping disc the rock is:
+
+- **A ball is 0/5.** Thickness equal to width is as far from a disc as a rock gets.
+- **A flat circular stone is 5/5.**
+- **A flat oblong stone is middling** — genuinely flat, but it meets the water
+  differently every half turn instead of presenting the same profile each rotation.
+
+**Rarity is the weighted sum of those**, shown as a colour and a word — Common grey,
+Uncommon green, Rare blue, Epic purple, Legendary orange. The player never sees the
+number.
+
+> **Roughness is not a rated stat.** It survives in the solver as a skin-friction
+> multiplier, but it is close to invisible on a real stone and its effect is a
+> fraction of a percent of a run. Rating it would imply a precision the player has no
+> way to read and the physics does not reward.
+
+> ⚠️ **Calibration open.** The flatness ideal (0.075) is much thinner than the 0.20 the
+> old rating centred on, so typical river rocks now score near zero on that axis and a
+> "classic" 8×7×1.6 cm stone lands Common. That is physically correct — most river
+> rocks are bad skipping stones — but it has **not** been checked against the actual
+> scanned population in `river_rocks.glb`. If the sift never yields Rare+, widen
+> `STONE_STAT_TARGETS.flatness.tolerance` rather than moving the ideal.
+
 ## Inspection — decided
 
 **Stat bars, not numbers.** Deliberately slightly ambiguous.
@@ -36,9 +94,52 @@ A rock's mass and size affect its skipping physics **and** how hard it is to aim
 | Property | Control effect |
 | --- | --- |
 | Mass | Drift **magnitude** — how hard you fight |
-| Roughness | Drift **jitter** — feels unstable, twitchy |
 | Shape irregularity | Drift **bias** — pulls one direction; the player learns its lean |
 | Size / diameter | Release window width |
+| **Balance** | *No* control effect — acts after release. See below. |
+
+> Roughness used to drive drift **jitter** here. Dropped along with its rating (above):
+> a stat the player cannot see on the rock should not be secretly making their aim
+> twitch. If jitter is wanted back, hang it on shape irregularity, which is visible.
+
+### Balance — hidden, and the only stat that acts after release
+
+Every property above is a **handling** property: it shapes the pre-release aiming
+drift. **Balance is the exception** — it does nothing to your aim and everything to
+what happens once the stone is gone.
+
+A stone's attitude (which way its face is pointed) walks a little with every bounce,
+by gyroscopic precession. Left alone it eventually walks out of the window where
+skipping is possible, and the run dies **with most of its speed still on the stone** —
+measured: 11 m/s against a 2.6 m/s floor. That, not running out of energy, is what
+ends most runs. Balance is how well a stone resists that walk.
+
+- **Hidden.** Never shown as a bar, unlike the properties above. The player infers it
+  from the rock's look — a stone that reads *true* holds its line; one that reads
+  *warped* gives up early — and from throwing it.
+- **Mostly the stone, a little the throw.** The rock supplies the value; a clean,
+  coherent release collects all of it and a sloppy one keeps most (not all) of it. An
+  **unspun stone gets none of it** — no rock is well-balanced enough to rescue a throw
+  with no gyroscopic authority, and the skill curve depends on that staying true.
+- **This is the tuned exception, spent deliberately.** `04-physics.md` permits going
+  "slightly above and beyond what's possible in real life"; Balance is where that
+  budget goes. The `documentary` profile does not have it.
+
+> **Naming:** "Balance" is the stat; **true** / **warped** is how it's described in
+> the fiction and in inspection copy. Do not call it *drift* — that word already means
+> the pre-release aiming wobble in the table above, which is a different system.
+
+**What it's worth** (game profile, Steiner-preset throw, 25-run ensemble median):
+
+| Rock | Skips |
+| --- | --- |
+| Warped (0.0) | 29 |
+| Average (0.5) | ~53 |
+| True (1.0) | 58 |
+
+Balance is a *ceiling raiser, not a floor raiser* — it can't make a bad throw good
+(casual stays at 5 skips, unspun stays at 0), it only lets a good throw run out its
+full length instead of dying early.
 
 ### Handling difficulty is TUNED, not simulated
 
@@ -75,6 +176,8 @@ Deterministic, correctable and legible reads as **craft**. Random, outpacing and
 
 Hand-tuned values, not derived. Record them here as they're set.
 
+- Balance → `env.balanceRetention` mapping per rock quality band — `TBD` (solver side
+  is calibrated: the 0..1 stat maps onto a 0..0.35 correction blend, peak measured)
 - Drift magnitude multiplier, per mass band — `TBD`
 - Drift frequency / oscillation rate — `TBD`
 - Drift bias strength from shape irregularity — `TBD`
