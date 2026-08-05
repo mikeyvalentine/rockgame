@@ -9,7 +9,7 @@
     "dev:hub": "vite",
     "build": "vite build",
     "build:site": "node tools/build-site.mjs",
-    "deploy": "node tools/build-site.mjs && wrangler pages deploy dist --project-name rockgame",
+    "deploy": "node tools/build-site.mjs && npx wrangler pages deploy dist --project-name rockgame",
     "preview": "vite preview",
     "install:all": "npm install && npm --prefix rock-sift install && npm --prefix rock-forge install && npm --prefix sand-sim install",
     "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs"
