@@ -41,7 +41,7 @@ import { HDRCubeTexture } from "@babylonjs/core/Materials/Textures/hdrCubeTextur
 
 import { S, set as setSetting } from "../core/settings.js";
 
-const HDRI_URL = "/assets/sky/autumn_field_puresky_4k.hdr";
+const HDRI_URL = "/assets/sky/puresky_1k.hdr";
 
 /** LUT size. 1024×512 keeps the clouds legible on the visible skybox. */
 const LUT_W = 1024;

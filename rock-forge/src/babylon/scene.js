@@ -67,7 +67,7 @@ export function createScene(engine) {
   // behind the field. skyboxBlur softens the 256-cube skybox enough to hide
   // its own resolution without blurring the reflections rocks pick up from it.
   const envSetup = createEnvironment(scene, camera, {
-    hdr: "/assets/sky/autumn_field_puresky_4k.hdr",
+    hdr: "/assets/sky/puresky_1k.hdr",
     cubeSize: 256,
     skyboxSize: 100,
     skyboxBlur: 0.18,

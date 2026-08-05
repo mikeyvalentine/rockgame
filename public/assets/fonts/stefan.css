@@ -18,15 +18,20 @@
  * their own monospace styles and must NOT adopt this.
  */
 
+/* AUDIT #B6: WOFF2 first (1.2 MB vs 5.1 MB per face — the TTF pair was
+   10.75 MB blocking the splash behind document.fonts.ready). TTF kept as the
+   fallback and the on-disk source of truth. */
 @font-face {
   font-family: "ABC Stefan Bubble Tight Twotone";
-  src: url("/assets/fonts/ABCStefanTrial-BubbleTightTwotone.ttf") format("truetype");
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTightTwotone.woff2") format("woff2"),
+       url("/assets/fonts/ABCStefanTrial-BubbleTightTwotone.ttf") format("truetype");
   font-display: swap;
 }
 
 @font-face {
   font-family: "ABC Stefan Bubble Twotone";
-  src: url("/assets/fonts/ABCStefanTrial-BubbleTwotone.ttf") format("truetype");
+  src: url("/assets/fonts/ABCStefanTrial-BubbleTwotone.woff2") format("woff2"),
+       url("/assets/fonts/ABCStefanTrial-BubbleTwotone.ttf") format("truetype");
   font-display: swap;
 }
 

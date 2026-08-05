@@ -119,7 +119,7 @@ export function buildEnvironment(scene, { U, bedRadius }) {
   //
   // 512 is the cube size Babylon resamples the source into. The stones are rough
   // enough that the mip chain does the work and a larger cube buys nothing.
-  const envTex = new HDRCubeTexture("/assets/sky/autumn_field_puresky_4k.hdr", scene, 512);
+  const envTex = new HDRCubeTexture("/assets/sky/puresky_1k.hdr", scene, 512);
   scene.environmentTexture = envTex;
   scene.environmentIntensity = 1.0;
 
