@@ -12,10 +12,10 @@ import { HavokPlugin, NullEngine, Scene, Vector3 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
 import { buildGroundCollider } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { addRock, boundingRadius } from "../src/field.js";
 import { loadBucket } from "../src/bucket.js";
-import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, U } from "../src/config.js";
+import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
 const wasm = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const scene = new Scene(new NullEngine());
@@ -28,8 +28,7 @@ const bucket = await loadBucket(scene, `data:;base64,${bglb.toString("base64")}`
 console.log(`rim ${(bucket.rimY / U * 100).toFixed(1)} cm, inner radius ${(bucket.radius / U * 100).toFixed(1)} cm`);
 bucket.place(new Vector3(0, 0, 0));
 
-const rglb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const arch = await loadRockArchetypes(scene, `data:;base64,${rglb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" });
+const arch = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
 for (const a of arch) a.radius = boundingRadius(a.vertexData.positions);
 
 // Drop five stones straight down the middle from just over the rim.

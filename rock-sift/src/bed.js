@@ -261,7 +261,7 @@ export function captureBed(rocks, archetypes, origin = null) {
 // silent random default is the worst kind of determinism break — two players
 // on the same daily seed sifting different beds. Every real caller already
 // passes a pick.
-export async function fetchBakedBed(manifestUrl, pick) {
+export async function fetchBakedBed(manifestUrl, pick, { expectSource = null } = {}) {
   if (typeof pick !== "number") {
     throw new Error("fetchBakedBed: pass a deterministic pick in [0,1) — the Math.random default is gone (docs/04)");
   }
@@ -269,6 +269,24 @@ export async function fetchBakedBed(manifestUrl, pick) {
   if (!res.ok) return null;
   const manifest = await res.json();
   if (!manifest.variants?.length) return null;
+
+  // A baked bed is a SNAPSHOT of one cast of stones. Rock generation is not
+  // finished and should not have to be: change the seed, the archetype count, or
+  // anything inside the forge, and these beds describe stones that no longer exist.
+  //
+  // Detected here rather than exploding later. `resolveArchetypes` fails loudly on
+  // an unknown stone name, which is right when a bed is SUPPOSED to match — but a
+  // deliberately changed generator is not a bug, and it should not hard-stop the
+  // lab. Returning null lets the caller pour a fresh bed, so iterating on rock
+  // generation never requires re-baking first.
+  if (expectSource && manifest.world?.source && manifest.world.source !== expectSource) {
+    console.warn(
+      `Baked beds are stale: built from "${manifest.world.source}", now generating ` +
+      `"${expectSource}". Pouring a fresh bed instead — run \`npm run bake\` to make ` +
+      `startup quick again once the generator settles.`
+    );
+    return null;
+  }
 
   const base = manifestUrl.slice(0, manifestUrl.lastIndexOf("/") + 1);
   const chosen = manifest.variants[Math.min(manifest.variants.length - 1,

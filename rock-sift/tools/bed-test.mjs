@@ -33,6 +33,13 @@
 //   restored dynamic   41.23 mm drift   1175 ms of physics
 //   restored static     0.00 mm drift     16 ms of physics
 //
+// The creep ROUGHLY DOUBLED when the bed became generated rather than scanned:
+// 43-64 mm across the variants before, 96-150 mm after. Same defect, more of it,
+// and the cause is the cast rather than the code — the forge produces near-equant
+// cobbles the five scanned stones never contained, and a rounder stone on a flat
+// floor has less reason to stop. The static restore is still 0.00 mm, so the game
+// is unaffected; it is the wake mechanism below that this is waiting on.
+//
 // Restoring static fixes it completely and costs 73x less, which is also what
 // the game wants anyway — stones only need to be dynamic where the player is
 // actually reaching. That needs a wake mechanism, which is the physics-tiering
@@ -48,11 +55,12 @@ import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
 
 import { buildGroundCollider } from "../src/environment.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius } from "../src/field.js";
 import { decodeBed, spawnBed } from "../src/bed.js";
 import {
   BED_RADIUS, GRAVITY, MAX_SPEED, MAX_SPIN, PHYSICS_SUBSTEP_MS, U,
+  ARCHETYPE_COUNT, ROCK_SEED,
 } from "../src/config.js";
 
 const DT = PHYSICS_SUBSTEP_MS / 1000;
@@ -69,7 +77,6 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
 const havok = await HavokPhysics({ wasmBinary });
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
 
 console.log(`manifest: ${manifest.variants.length} variants, ${manifest.stones} stones each`);
 console.log(`world at bake time: U=${manifest.world.U}, gravity=${manifest.world.gravity.toFixed(2)},` +
@@ -92,9 +99,7 @@ for (const file of manifest.variants) {
   scene.getPhysicsEngine().setSubTimeStep(PHYSICS_SUBSTEP_MS);
   buildGroundCollider(scene, { U, bedRadius: BED_RADIUS });
 
-  const archetypes = await loadRockArchetypes(
-    scene, `data:;base64,${glb.toString("base64")}`, { unitScale: U, seed: 99, pluginExtension: ".glb" }
-  );
+  const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
   for (const a of archetypes) a.radius = boundingRadius(a.vertexData.positions);
 
   const bytes = fs.readFileSync(path.join(bedsDir, file));

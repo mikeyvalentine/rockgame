@@ -11,7 +11,7 @@
     "U": 4,
     "gravity": -39.24,
     "bedRadius": 0.42,
-    "source": "river_rocks.glb"
+    "source": "forge:99:40"
   },
   "bakedWith": "bake-bed.mjs shore 4 540"
 }

@@ -22,7 +22,8 @@ import {
 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
-import { loadRockArchetypes } from "../src/assetRocks.js";
+import { createForgeArchetypes } from "../src/forgeRocks.js";
+import { ARCHETYPE_COUNT, ROCK_SEED, U } from "../src/config.js";
 
 const signedVolume = (p, idx) => {
   let v = 0;
@@ -47,10 +48,7 @@ const refSign = Math.sign(signedVolume(ref.getVerticesData(VertexBuffer.Position
 const refOrientation = ref.material._getEffectiveOrientation(ref);
 console.log(`reference (MeshBuilder sphere): winding ${refSign > 0 ? "+" : "-"}, culls ${orientationName(refOrientation)}\n`);
 
-const glb = fs.readFileSync(new URL("../../public/assets/river_rocks.glb", import.meta.url));
-const archetypes = await loadRockArchetypes(
-  scene, `data:;base64,${glb.toString("base64")}`, { unitScale: 4, seed: 99, pluginExtension: ".glb" }
-);
+const archetypes = createForgeArchetypes(scene, { unitScale: U, count: ARCHETYPE_COUNT, seed: ROCK_SEED });
 
 let bad = 0;
 console.log("name".padEnd(24) + "winding   culls   verdict");

@@ -1,0 +1,2 @@
+DELETE: public/assets/river_rocks.glb
+DELETE: rock-sift/src/assetRocks.js

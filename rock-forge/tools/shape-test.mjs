@@ -275,7 +275,7 @@ console.log("\nlibrary");
 
   const m = instanceMetrics(lib.shapes[0], 0.07);
   check("instance metrics sane", m.massGrams > 5 && m.massGrams < 3000 && m.rating.score >= 0 && m.rating.score <= 1,
-    `${lib.shapes[0].archetype} 7 cm -> ${m.massGrams.toFixed(0)} g, ${m.rating.stars}*`);
+    `${lib.shapes[0].archetype} 7 cm -> ${m.massGrams.toFixed(0)} g, ${m.rating.rarity.label}`);
 
   const detail = buildDetailMesh(lib.shapes[0], ARCHETYPES[lib.shapes[0].archetype], 5, 0.07);
   check("detail mesh builds", detail.vertexCount === 10242 && detail.positions.every(Number.isFinite));
