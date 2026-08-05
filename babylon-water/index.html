@@ -68,6 +68,7 @@
 <div id="panel"></div>
 <div id="hud">
     <button id="plungeBtn">Plunge</button>
+    <button id="skipBtn">Skip run</button>
     <b>click / drag</b> the water &nbsp;·&nbsp;
     <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
 </div>
@@ -123,10 +124,23 @@
 //
 // Going much beyond 24 m means either waves that travel visibly too fast or a
 // texture that will not fit in memory (48 m at this cell size needs 2048^2,
-// about 134 MB across the ping-pong pair). That is what the windowed sim solves.
+// about 134 MB across the ping-pong pair). That is what the WINDOWED SIM (now
+// implemented, audit #8) solves: the deviation field lives in a 24 m window
+// that follows the interaction — recentred by whole texels via a scroll pass,
+// so nothing resamples — while the pond itself is POND metres of analytic
+// ambient, which is continuous everywhere and needs no memory. The deviation
+// fades to zero at the window edge, and what remains is ambient, so there is
+// no join to hide. A skip run's ripples ride along with the stone.
 const RES     = 1024;    // simulation texture size
-const SIZE    = 24;      // pond span in metres, x and z in [-12, 12]
+const SIZE    = 24;      // interaction WINDOW span in metres (was the whole pond)
 const HALF    = SIZE / 2;
+// The pond the player sees. docs/01 asks for ~200 m "pending feasibility
+// check against the water sim" — the windowed sim IS that feasibility
+// answer. game-profile throws run ~61 m, arcade ~115 m; both now land on
+// water. Ambient waves are analytic so the only cost of the extra span is
+// mesh area.
+const POND      = 200;
+const POND_HALF = POND / 2;
 const SUBDIV  = 192;     // surface tessellation. 256 gave 65k verts every frame;
                          // the two shortest ambient octaves are normal-only
                          // anyway, so the geometry was carrying detail it could
@@ -198,6 +212,26 @@ void main(void) {
     gl_FragColor = info;
 }
 `.replace(/DAMP/g, DAMPING.toFixed(4));
+
+// Window recentre. Shifts the whole field (height, velocity, normals — every
+// channel) by a whole-texel offset so the window can follow the stone without
+// ever resampling between texels; content scrolled in from beyond the old
+// window is zero, which is correct — deviation out there had faded to nothing
+// by construction.
+const SCROLL_FRAG = `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D prev;
+uniform vec2 offset;
+void main(void) {
+    vec2 src = vUV + offset;
+    if (src.x < 0.0 || src.x > 1.0 || src.y < 0.0 || src.y > 1.0) {
+        gl_FragColor = vec4(0.0);
+    } else {
+        gl_FragColor = texture2D(prev, src);
+    }
+}
+`;
 
 // His normalShader. One-sided forward differences, cross product, stored into
 // the b/a channels as normal.x and normal.z. The y component is implied and is
@@ -320,6 +354,14 @@ vec3 ambientField(vec2 wp, float fine, float fp) {
     f += ambientWave(wp, rot * normalize(vec2(0.20,  1.00)), L3, 0.0007 * A * S * fine * detailWeight(L3, fp), time);
     return f;
 }
+
+// The deviation window's contribution at a window-relative UV. Fades to zero
+// over the outer 8% of the window, so the field always hands off to pure
+// ambient with no join — the whole windowed-sim seam in one function.
+float winFade(vec2 rel) {
+    vec2 m = min(rel, 1.0 - rel);
+    return smoothstep(0.0, 0.08, min(m.x, m.y));
+}
 `;
 
 BABYLON.Effect.ShadersStore["waterSurfaceVertexShader"] = glsl(AMBIENT_GLSL + `
@@ -329,30 +371,37 @@ attribute vec2 uv;
 uniform mat4 world;
 uniform mat4 viewProjection;
 uniform sampler2D sim;
-varying vec2 vUV;
+uniform vec2 windowCenter;
+varying vec2 vRel;
 varying vec3 vWorld;
 
 void main(void) {
-    vUV = uv;
     vec3 p = position;
     // Ambient is sampled at the UNDISPLACED world position, so the wave pattern
     // is anchored to the world rather than sliding around with its own output.
     vec4 flatW = world * vec4(position, 1.0);
+    // The deviation field is a WINDOW on the pond now: world position maps
+    // into the window's own [0,1], the same convention the drop pass writes
+    // with, and the contribution fades out at the window edge so the surface
+    // hands off to pure ambient with no seam. Outside the window the clamp
+    // reads an edge texel and the fade multiplies it away.
+    vRel = (flatW.xz - windowCenter) / WORLD_SIZE + 0.5;
+    float dev = texture2D(sim, clamp(vRel, 0.0, 1.0)).r * winFade(vRel);
     // Heights are already in the plane's own units, exactly as in the original,
     // so there is no height scale to apply.
     // No footprint in the vertex stage: geometry is not what aliases, and there
     // are no derivatives here anyway. Passing 0 keeps every octave at full
     // strength for displacement.
-    p.y += texture2D(sim, uv).r + ambientField(flatW.xz, 0.0, 0.0).x;
+    p.y += dev + ambientField(flatW.xz, 0.0, 0.0).x;
     vec4 wp = world * vec4(p, 1.0);
     vWorld = wp.xyz;
     gl_Position = viewProjection * wp;
 }
-`);
+`.replace(/WORLD_SIZE/g, SIZE.toFixed(1)));
 
 BABYLON.Effect.ShadersStore["waterSurfaceFragmentShader"] = glsl(AMBIENT_GLSL + `
 precision highp float;
-varying vec2 vUV;
+varying vec2 vRel;
 varying vec3 vWorld;
 uniform sampler2D sim;
 uniform samplerCube envTex;
@@ -364,7 +413,11 @@ void main(void) {
     // The sim normal comes straight out of the simulation texture, which is the
     // whole reason his normal pass exists. Reconstructing y from x and z works
     // because the stored pair are components of a unit vector.
-    vec4 info = texture2D(sim, vUV);
+    // vRel is the window-relative coordinate from the vertex stage; the same
+    // edge fade that removes the deviation height removes its normal, so the
+    // two cannot disagree at the seam.
+    float devFade = winFade(vRel);
+    vec4 info = texture2D(sim, clamp(vRel, 0.0, 1.0));
     vec3 Nsim = vec3(info.b, sqrt(max(0.0, 1.0 - dot(info.ba, info.ba))), info.a);
 
     // Normals do not add — SLOPES do. So both layers are converted to slope,
@@ -396,7 +449,9 @@ void main(void) {
     vec2 simSlope = -Nsim.xz / max(Nsim.y, 1e-4);
     // The sim's own ripples are high-frequency too and alias the same way, so
     // they fade on the same rule. 0.25 m is about their characteristic scale.
-    simSlope *= detailWeight(0.25, fp);
+    // devFade is the window edge — beyond it there is no deviation, only
+    // ambient.
+    simSlope *= detailWeight(0.25, fp) * devFade;
     vec3 amb = ambientField(vWorld.xz, 1.0, fp);
     vec2 slope = simSlope + amb.yz * WORLD_SIZE;
     vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
@@ -508,7 +563,7 @@ scene.clearColor = new BABYLON.Color4(0.05, 0.08, 0.13, 1);
 const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI / 2.2, 0.95, 20, BABYLON.Vector3.Zero(), scene);
 camera.attachControl(canvas, true);
 camera.lowerRadiusLimit = 3;
-camera.upperRadiusLimit = 90;
+camera.upperRadiusLimit = 320;   // enough to take in the full 200 m pond
 camera.upperBetaLimit = 1.52;          // stop the camera dropping under the plane
 camera.wheelPrecision = 8;
 
@@ -591,6 +646,15 @@ const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
 const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["center", "radius", "strength"]);
 const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
+const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
+
+// Where the interaction window sits on the pond. Centre is the authoritative
+// world position of the texture's middle; target is where the latest activity
+// wants it. Recentring happens in whole texels (see recenterWindow), so both
+// stay exact cell multiples.
+const windowCenter = new BABYLON.Vector2(0, 0);
+const windowTarget = { x: 0, z: 0 };
+const passScroll = new BABYLON.Vector2(0, 0);
 
 const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
 let passSrc = null, passDrop = { center: new BABYLON.Vector2(0, 0), radius: DROP_R, strength: 0 };
@@ -603,6 +667,26 @@ dropPass.onApplyObservable.add(() => {
     eff.setFloat("strength", passDrop.strength);
     if (passSrc) eff.setTexture("prev", passSrc);
 });
+scrollPass.onApplyObservable.add(() => {
+    scrollPass.effect.setVector2("offset", passScroll);
+    if (passSrc) scrollPass.effect.setTexture("prev", passSrc);
+});
+
+/// Snap the window onto its target in whole texels, scrolling the field so
+/// every ripple keeps its world position. One pass, and only when something
+/// actually moved the target — a resting pond never pays for this.
+function recenterWindow() {
+    const CELL = SIZE / RES;
+    const cx = Math.round((windowTarget.x - windowCenter.x) / CELL);
+    const cz = Math.round((windowTarget.z - windowCenter.y) / CELL);
+    if (cx === 0 && cz === 0) return;
+    if (!scrollPass.effect.isReady()) return;
+    passScroll.set(cx / RES, cz / RES);
+    runPass(scrollPass);
+    windowCenter.x += cx * CELL;
+    windowCenter.y += cz * CELL;
+    lastDisturb = performance.now();
+}
 for (const p of [updatePass, normalPass]) {
     p.onApplyObservable.add(() => {
         p.effect.setVector2("delta", DELTA);
@@ -636,8 +720,13 @@ function stepSimulation() { return runPass(updatePass); }
 function updateNormals()  { return runPass(normalPass); }
 
 // --- water mesh --------------------------------------------------------------
+// The pond mesh spans POND, not the window: the vertex shader displaces every
+// vertex by the analytic ambient and adds the windowed deviation only where
+// the window covers. ~1 m quads at 192 subdivisions over 200 m — the two long
+// swell octaves displace fine at that pitch, and the short chop was already
+// normal-only by design.
 const water = BABYLON.MeshBuilder.CreateGround(
-    "water", { width: SIZE, height: SIZE, subdivisions: SUBDIV }, scene
+    "water", { width: POND, height: POND, subdivisions: SUBDIV }, scene
 );
 
 const waterMat = new BABYLON.ShaderMaterial("waterMat", scene,
@@ -646,7 +735,7 @@ const waterMat = new BABYLON.ShaderMaterial("waterMat", scene,
         attributes: ["position", "uv"],
         uniforms: ["world", "viewProjection", "cameraPos", "sunDir", "tint",
                    "time", "windStrength", "windDir", "detailScale", "waveScale",
-                   "blurGain"],
+                   "blurGain", "windowCenter"],
         samplers: ["sim", "envTex"],
     }
 );
@@ -700,9 +789,13 @@ const DROP_QUEUE_MAX = 64;
 function queueDrop(worldX, worldZ, strength, radius) {
     if (dropQueue.length >= DROP_QUEUE_MAX) dropQueue.shift();
     lastDisturb = performance.now();   // AUDIT #6 — wakes the deviation sim
+    // World metres, verbatim. The window may move between queue and drain, so
+    // the world→window conversion happens at DRAIN time against the centre
+    // the window actually has that frame — converting here would smear a
+    // moving run's ripples by however far the window slid in between.
     dropQueue.push({
-        x: worldX / HALF,
-        z: worldZ / HALF,
+        x: worldX,
+        z: worldZ,
         strength,
         radius: radius === undefined ? DROP_R : radius,
     });
@@ -726,7 +819,13 @@ scene.onPointerObservable.add((pi) => {
     if (dist <= 0) return;
     const p = ray.origin.add(ray.direction.scale(dist));
 
-    if (Math.abs(p.x) < HALF && Math.abs(p.z) < HALF) queueDrop(p.x, p.z, DROP_S);
+    // Anywhere on the pond: the window snaps to the click (one scroll pass)
+    // and the ripple lands there. This is the same path a skip run drives.
+    if (Math.abs(p.x) < POND_HALF && Math.abs(p.z) < POND_HALF) {
+        windowTarget.x = p.x;
+        windowTarget.z = p.z;
+        queueDrop(p.x, p.z, DROP_S);
+    }
 });
 
 // --- controls ----------------------------------------------------------------
@@ -750,11 +849,11 @@ function reset() {
     return true;
 }
 
-/// His opening state: 20 drops of alternating sign.
+/// His opening state: 20 drops of alternating sign, inside the current window.
 function seed() {
     for (let i = 0; i < 20; i++) {
-        queueDrop((Math.random() * 2 - 1) * HALF * 0.9,
-                  (Math.random() * 2 - 1) * HALF * 0.9,
+        queueDrop(windowCenter.x + (Math.random() * 2 - 1) * HALF * 0.9,
+                  windowCenter.y + (Math.random() * 2 - 1) * HALF * 0.9,
                   (i & 1) ? DROP_S : -DROP_S);
     }
 }
@@ -965,7 +1064,11 @@ function retireSubmerged() {
         // Only the fattest droplets, and only while there is pass budget left.
         if (budget <= 0 || p.size < L.minSize) continue;
         const px = p.position.x, pz = p.position.z;
-        if (Math.abs(px) >= HALF || Math.abs(pz) >= HALF) continue;  // off the pond
+        // Off the interaction WINDOW (not the pond): a landing ripple outside
+        // it has no deviation field to write into. The droplet still splashed
+        // visually; only its ripple is skipped, same as any out-of-window drop.
+        if (Math.abs(px - windowCenter.x) >= HALF ||
+            Math.abs(pz - windowCenter.y) >= HALF) continue;
 
         // A droplet's ring scales with how big it is and how hard it arrives.
         // Both are known exactly here: size is the particle's own, and
@@ -1248,9 +1351,9 @@ const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 /// The stone hook. Everything an impact does to the water goes through here, so
 /// the ripple and the splash cannot disagree about how hard the hit was.
 ///
-///   x, z    world position on the pond, in METRES. The pond spans +/-HALF;
-///           queueDrop does the conversion into the sim's own space. (This doc
-///           previously said [-1, 1] — stale from before the 24 m resize.)
+///   x, z    world position on the pond, in METRES, anywhere on +/-POND_HALF.
+///           The interaction window snaps to each impact and queueDrop maps
+///           world into the window's own space at drain time.
 ///   opts.speed    impact speed, m/s
 ///   opts.mass     kg
 ///   opts.angle    radians below horizontal. 0 is a grazing skip, PI/2 straight
@@ -1262,6 +1365,11 @@ const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 ///                 The spray disc needs metres, so that one is converted at
 ///                 the burst assignment below.
 function stoneImpact(x, z, opts) {
+    // The window follows the stone: every impact drags the deviation field
+    // with it (whole-texel scroll, so the run's earlier ripples keep their
+    // world position for as long as they stay inside the span).
+    windowTarget.x = x;
+    windowTarget.z = z;
     const speed  = opts.speed  !== undefined ? opts.speed  : 6;
     const mass   = opts.mass   !== undefined ? opts.mass   : 0.15;
     const angle  = opts.angle  !== undefined ? opts.angle  : Math.PI / 4;
@@ -1369,6 +1477,24 @@ document.getElementById("plungeBtn").addEventListener("click", () => {
         dirZ: 0,
         radius: DROP_R,
     });
+});
+
+// A canned skip run — the windowed sim's whole reason to exist. Impacts march
+// ~55 m across the pond the way a game-profile throw does: the interaction
+// window follows the stone, each ripple keeps its world position while it
+// stays in span, and the run ends far beyond where the pond's old 24 m edge
+// used to be. Decaying gap and speed, roughly the solver's shape.
+document.getElementById("skipBtn").addEventListener("click", () => {
+    let x = -28, gap = 7.5, speed = 16, i = 0;
+    const step = () => {
+        if (gap < 2.2 || speed < 5) return;
+        stoneImpact(x, Math.sin(i * 1.7) * 1.5, {
+            speed, mass: 0.15, angle: 0.35, dirX: 1, dirZ: 0,
+        });
+        x += gap; gap *= 0.88; speed *= 0.93; i++;
+        setTimeout(step, (gap / speed) * 1000);
+    };
+    step();
 });
 
 // =============================================================================
@@ -1860,6 +1986,7 @@ scene.registerBeforeRender(() => {
     waterMat.setFloat("detailScale", WIND.detail);
     waterMat.setFloat("waveScale", WIND.waveScale);
     waterMat.setFloat("blurGain", WIND.blurGain);
+    waterMat.setVector2("windowCenter", windowCenter);
 
     // The effects compile asynchronously, so priming retries until it takes.
     if (!primed) {
@@ -1870,8 +1997,8 @@ scene.registerBeforeRender(() => {
     if (paused) { waterMat.setTexture("sim", simA); return; }
 
     if (raining && (frame % 14 === 0)) {
-        queueDrop((Math.random() * 2 - 1) * HALF * 0.9,
-                  (Math.random() * 2 - 1) * HALF * 0.9, DROP_S);
+        queueDrop(windowCenter.x + (Math.random() * 2 - 1) * HALF * 0.9,
+                  windowCenter.y + (Math.random() * 2 - 1) * HALF * 0.9, DROP_S);
     }
     frame++;
 
@@ -1880,12 +2007,22 @@ scene.registerBeforeRender(() => {
     // while the drop effect is still compiling, and a drop shifted off the
     // queue at that moment would be lost rather than retried — the 20-drop
     // opening seed could vanish that way.
+    recenterWindow();
+
     while (dropQueue.length && dropPass.effect.isReady()) {
         const d = dropQueue.shift();
         // d.z, not d.y — the queue stores the pond's x/z plane. Reading d.y
         // here fed addDrop undefined and silently killed every drop in the
         // project: clicks, rain, the seed, impact ripples, landing ripples.
-        addDrop(d.x, d.z, d.radius, d.strength);
+        //
+        // World → window [-1, 1], against THIS frame's centre. A drop outside
+        // the window (a droplet landing behind a fast run) is skipped — the
+        // deviation field it would write into does not exist out there, and
+        // by construction whatever it would have contributed has no home.
+        const cx = (d.x - windowCenter.x) / HALF;
+        const cz = (d.z - windowCenter.y) / HALF;
+        if (Math.abs(cx) > 0.92 || Math.abs(cz) > 0.92) continue;
+        addDrop(cx, cz, d.radius, d.strength);
     }
 
     // Then his per-frame loop: two simulation steps, one normal pass.
