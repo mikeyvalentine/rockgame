@@ -458,7 +458,10 @@ void main(void) {
 
 // --- scene -------------------------------------------------------------------
 const canvas = document.getElementById("c");
-const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false });
+// AUDIT #1 (docs/11): antialias off — MSAA anti-aliases geometry edges only,
+// does nothing for the specular sparkle (see the supersampling note below),
+// and the kept-aliasing art direction says this cost should not exist.
+const engine = new BABYLON.Engine(canvas, false, { preserveDrawingBuffer: false, stencil: false });
 
 // Supersampling. This is the real cure for the sparkle, as opposed to fading
 // detail away: the speckle is a SAMPLING failure, one sample per pixel trying
@@ -478,11 +481,23 @@ const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false, 
 // footprint-based filtering in the shader, which costs nothing per extra pixel.
 // Raise this only if aliasing reappears at a viewing angle the filtering misses.
 const RENDER = window.RENDER = { supersample: 1.0 };
-const dpr = Math.min(window.devicePixelRatio || 1, 2);
+// AUDIT #1 (docs/10 "resolution is the biggest lever"): dpr is pinned to 1 —
+// on a Retina panel the old Math.min(devicePixelRatio, 2) rendered 4x the
+// pixels of the CSS canvas before the supersample slider even moved. The
+// period-correct softness of 1x is the art direction, not a compromise.
+// Raise the supersample slider for stills if a shot needs it.
+const dpr = 1;
 function applyScaling() {
     engine.setHardwareScalingLevel(1 / (dpr * RENDER.supersample));
 }
 applyScaling();
+
+// AUDIT #6 — idle gate for the deviation sim (see the render loop). Any
+// disturbance (drop, ripple, impact, the opening seed) stamps this; the sim
+// integrates for SETTLE_MS past the last stamp, long enough for the damping
+// to flatten what the disturbance left, then freezes.
+const SETTLE_MS = 6000;
+let lastDisturb = performance.now();
 
 const scene = new BABYLON.Scene(engine);
 scene.clearColor = new BABYLON.Color4(0.05, 0.08, 0.13, 1);
@@ -684,6 +699,7 @@ const dropQueue = [];
 const DROP_QUEUE_MAX = 64;
 function queueDrop(worldX, worldZ, strength, radius) {
     if (dropQueue.length >= DROP_QUEUE_MAX) dropQueue.shift();
+    lastDisturb = performance.now();   // AUDIT #6 — wakes the deviation sim
     dropQueue.push({
         x: worldX / HALF,
         z: worldZ / HALF,
@@ -1517,12 +1533,17 @@ void main(void) {
     // Darkened with the surface's OWN colour rather than stamped with ink.
     // Pastel has no pen: an edge is where pigment piles up, so it reads as a
     // deeper version of the local hue instead of a black line over it.
-    vec2 ox = vec2(texelSize.x, 0.0) * outlineWidth;
-    vec2 oy = vec2(0.0, texelSize.y) * outlineWidth;
-    float edge = abs(depthAt(vUV - ox) - depthAt(vUV + ox))
-               + abs(depthAt(vUV - oy) - depthAt(vUV + oy));
-    float line = smoothstep(0.003, 0.02, edge);
-    color = mix(color, color * 0.35, line * edgeDark);
+    /* AUDIT #6: edgeDark ships at 0.0, and these four full-res depth taps were
+       being fetched and multiplied by zero every pixel. Branch is uniform, so
+       it costs nothing when off. */
+    if (edgeDark > 0.0) {
+        vec2 ox = vec2(texelSize.x, 0.0) * outlineWidth;
+        vec2 oy = vec2(0.0, texelSize.y) * outlineWidth;
+        float edge = abs(depthAt(vUV - ox) - depthAt(vUV + ox))
+                   + abs(depthAt(vUV - oy) - depthAt(vUV + oy));
+        float line = smoothstep(0.003, 0.02, edge);
+        color = mix(color, color * 0.35, line * edgeDark);
+    }
 
     // Paper tooth stays SCREEN-locked, and that is correct: the paper is a
     // fixed sheet the scene is drawn onto, so it should not travel with the
@@ -1840,7 +1861,7 @@ scene.registerBeforeRender(() => {
         primed = reset();
         if (!primed) return;
     }
-    if (needsSeed && updatePass.effect.isReady()) { seed(); needsSeed = false; }
+    if (needsSeed && updatePass.effect.isReady()) { seed(); needsSeed = false; lastDisturb = performance.now(); }
     if (paused) { waterMat.setTexture("sim", simA); return; }
 
     if (raining && (frame % 14 === 0)) {
@@ -1863,8 +1884,18 @@ scene.registerBeforeRender(() => {
     }
 
     // Then his per-frame loop: two simulation steps, one normal pass.
-    for (let i = 0; i < STEPS; i++) stepSimulation();
-    updateNormals();
+    //
+    // AUDIT #6 (docs/10 pausability): the deviation sim used to step
+    // unconditionally — ~64 MB/frame of RGBA32F traffic with nothing moving.
+    // The ambient waves are analytic in the water material, so the ping-pong
+    // field only carries drops and ripples; once the last disturbance is
+    // SETTLE_MS old the damping has flattened it and there is nothing left to
+    // integrate. Freeze the passes, keep the texture bound and rendered —
+    // the same shape as sand-sim's deformation gate.
+    if (performance.now() - lastDisturb < SETTLE_MS) {
+        for (let i = 0; i < STEPS; i++) stepSimulation();
+        updateNormals();
+    }
 
     waterMat.setTexture("sim", simA);
 });
