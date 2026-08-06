@@ -14,11 +14,15 @@
 # Until both exist the deploy step fails; the build still runs, so a broken
 # build is caught on every push either way.
 #
-# Tests do NOT gate the deploy, by request. They run alongside it as their own
-# job and report, so a red suite is visible without holding the site back. The
-# trade is deliberate and worth naming: a failing test can now reach the origin,
-# and the signal that something is wrong is the Actions tab rather than an
-# absent deployment.
+# Tests do NOT gate the deploy, by request. They live in `ci.yml`, which runs on
+# the same push to main as its own workflow, so a red suite is visible without
+# holding the site back. The trade is deliberate and worth naming: a failing test
+# can now reach the origin, and the signal that something is wrong is the Actions
+# tab rather than an absent deployment.
+#
+# They used to be a `test` job in THIS file, duplicating the lab list. That copy
+# had drifted and was missing rock-forge and stone-skipping-physics entirely. One
+# definition, in ci.yml, so it cannot drift again.
 
 name: Deploy site
 
@@ -35,24 +39,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Runs in parallel with the deploy and gates nothing. Its job is to tell you,
-  # not to stop you.
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npm test
-      - run: npm --prefix sand-sim ci
-      - run: npm --prefix sand-sim test
-      - run: npm --prefix rock-sift ci
-      # rock-sift's suite is five real Havok runs and takes a couple of minutes,
-      # which is affordable now that nothing is waiting on it.
-      - run: npm --prefix rock-sift test
-
   deploy:
     runs-on: ubuntu-latest
     steps:
