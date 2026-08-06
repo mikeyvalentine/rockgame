@@ -13,6 +13,7 @@
 // stones to the wrong shapes.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HavokPlugin, NullEngine, Scene, Vector3 } from "@babylonjs/core";
@@ -35,7 +36,10 @@ const COUNT = Number(process.argv[4]) || ROCK_COUNT;
 const outDir = fileURLToPath(new URL("../../public/assets/beds/", import.meta.url));
 fs.mkdirSync(outDir, { recursive: true });
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const havok = await HavokPhysics({ wasmBinary });
 
 /** A fresh world per variant: a bed must not inherit the previous one's state. */

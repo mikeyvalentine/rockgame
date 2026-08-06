@@ -50,6 +50,7 @@
 // failure modes a tier scheme would cause.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { HavokPlugin, NullEngine, PhysicsActivationControl, PhysicsMotionType, Scene, Vector3 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
@@ -66,7 +67,10 @@ const REST_STEPS = 240;
 const SWEEP_SECONDS = 2.0;
 const FRAME_BUDGET_MS = 6; // physics' share of a 60 fps frame
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const havok = await HavokPhysics({ wasmBinary });
 
 /** Median is the honest statistic here — the mean is dragged by one-off spikes. */

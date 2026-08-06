@@ -9,6 +9,7 @@
 // spread far past BED_RADIUS means the bed is thinner than it should look.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { NullEngine, Scene, Vector3, HavokPlugin } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js"; // Node needs the explicit path; Vite does not
@@ -24,7 +25,10 @@ const count = Number(process.argv[2]) || ROCK_COUNT;
 const RUNTIME_DT = PHYSICS_SUBSTEP_MS / 1000;
 const RUNTIME_SECONDS = 8;
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const havok = await HavokPhysics({ wasmBinary });
 
 const engine = new NullEngine();

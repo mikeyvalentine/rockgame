@@ -42,10 +42,33 @@ These constrain every system. Violating one is a bug even if the feature works.
 
 ## Stack
 
-- **Client:** vanilla three.js (not R3F)
+- **Client:** vanilla **Babylon.js** (not R3F, not three.js)
 - **Rendering:** WebGPU for the sand particle sim, with a reduced-fidelity WebGL fallback
 - **Backend:** Cloudflare Workers + Durable Objects, Cloudflare Pages
 - **Assets:** C4D / Blender → GLB
+
+> This line said *vanilla three.js* until 2026-08-06. There has never been any
+> three.js in the repository — every lab is Babylon, and had been for a long
+> time. The doc was corrected to match the code, not the other way round: the
+> Havok physics behind the sift is Babylon's first-party integration, and the
+> headless `NullEngine` is what lets the labs be tested in CI without a GPU.
+> Switching would mean rewriting four labs for nothing a player would see.
+
+### One Babylon, pinned
+
+The labs are **npm workspaces**, so there is one hoisted `node_modules`, one
+lockfile and exactly one copy of Babylon. Versions are pinned **exactly** (no
+caret) — a caret is how the labs silently ended up split across 8.56 and 9.18,
+and how a fresh `npm install` resolved 9.20 when 9.18 was meant.
+
+Two standalone pages (`babylon-water`, the physics demo) load Babylon from a CDN
+rather than a bundler. Those URLs are pinned to the same version, and
+`tools/pinned-cdn-check.mjs` fails the build if they drift apart or revert to an
+unpinned one.
+
+**`stone-skipping-physics` has no dependencies, and must not gain any.** It is
+what the entire scoring model rests on, its tests run with no install at all, and
+`src/babylonAdapter.js` is the only file in it permitted to know Babylon exists.
 
 ## Performance
 

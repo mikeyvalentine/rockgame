@@ -2,8 +2,14 @@
   "name": "rockgame",
   "private": true,
   "version": "0.1.0",
-  "description": "The stone-skipping game. App shell plus the feature labs: rock-forge, rock-sift, babylon-water, stone-skipping-physics, sand-sim — each living in its own page.",
+  "description": "The stone-skipping game. App shell plus the feature labs: rock-forge, rock-sift, babylon-water, stone-skipping-physics, sand-sim \u2014 each living in its own page.",
   "type": "module",
+  "workspaces": [
+    "rock-forge",
+    "rock-sift",
+    "sand-sim",
+    "stone-skipping-physics"
+  ],
   "scripts": {
     "dev": "concurrently -k -n hub,sift,forge,sand -c blue,green,yellow,magenta \"vite\" \"npm --prefix rock-sift run dev\" \"npm --prefix rock-forge run dev\" \"npm --prefix sand-sim run dev\"",
     "dev:hub": "vite",
@@ -12,11 +18,11 @@
     "deploy": "node tools/build-site.mjs && npx wrangler pages deploy dist --project-name rockgame",
     "preview": "vite preview",
     "install:all": "npm install && npm --prefix rock-sift install && npm --prefix rock-forge install && npm --prefix sand-sim install",
-    "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs && node babylon-water/tools/ambient-sync-check.mjs"
+    "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs && node tools/pinned-cdn-check.mjs && node babylon-water/tools/ambient-sync-check.mjs"
   },
   "license": "ISC",
   "dependencies": {
-    "@babylonjs/core": "^8.56.2",
+    "@babylonjs/core": "9.18.0",
     "@supabase/supabase-js": "^2.58.0"
   },
   "devDependencies": {
