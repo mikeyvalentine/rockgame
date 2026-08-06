@@ -269,6 +269,11 @@ export class SiftPhysics {
             // a bare Mesh per stone measured 1.9 s in the browser.
             const node = source.mesh.createInstance(`${name}_i${i}`);
             node.isPickable = true;
+            // An InstancedMesh does NOT inherit this from its source, and on
+            // the WebGPU path the group decides whether a stone is drawn with
+            // the sky (group 0, which still auto-clears depth) or with the
+            // terrain it is lying on.
+            node.renderingGroupId = source.mesh.renderingGroupId;
             node.position.copyFrom(pos);
             node.rotationQuaternion = rot.clone();
             // Third argument is startsAsleep, and it has to be true: the bed is

@@ -42,6 +42,7 @@
  */
 
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
+import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial.js";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
 
 import { createRockMaterials } from "../../../rock-forge/src/babylon/rockMaterial.js";
@@ -79,19 +80,42 @@ export function tintFor(shape, jitter, photo) {
  *
  * @returns {Promise<{byFamily: Record<string, import("@babylonjs/core").PBRMaterial>, photo: boolean, notes: string[]}>}
  */
-export async function createBedMaterials(scene) {
-    const grainTex = makeGrainTexture(scene, { size: 512, grit: 64, strength: 1.25, seed: 11 });
-    const varTex = makeVariationTexture(scene, { size: 512, seed: 4711 });
+export async function createBedMaterials(scene, { detailSize = 512, surfaces = true, forge = true } = {}) {
+    // `detailSize` and `surfaces` are parameters so this can be built small
+    // enough for a software WebGPU adapter to accept. It turned out not to be
+    // enough — that adapter refuses every `mappedAtCreation` buffer at any size,
+    // so no texture ever uploads and this material cannot be compiled without
+    // real hardware (see tools/wgsl-probe/README.md) — but a smaller grain map
+    // costs the shader nothing and the knob is worth keeping for the next
+    // attempt.
+    const grainTex = makeGrainTexture(scene, { size: detailSize, grit: 64, strength: 1.25, seed: 11 });
+    const varTex = makeVariationTexture(scene, { size: detailSize, seed: 4711 });
 
     let textures = null;
     const notes = [];
     try {
-        textures = await loadRockTextures(scene);
-        notes.push(...textures.notes);
+        if (surfaces) textures = await loadRockTextures(scene);
+        if (textures) notes.push(...textures.notes);
     } catch (err) {
         // Loud but not fatal — see above.
         console.warn("[sand-sim] rock textures unavailable, falling back to procedural grain:", err);
         notes.push(`rock textures: ${err.message}`);
+    }
+
+    // `forge: false` is the bisect: the same materials, minus the plugin and
+    // the photo surfaces, so a fault can be attributed to the shader rather
+    // than to the beds existing at all. Plain PBR still needs the scene's
+    // lights, so this is not the old black-stone state.
+    if (!forge) {
+        const plain = {};
+        for (const name of Object.keys(ARCHETYPES)) {
+            const m = new PBRMaterial(`rock_${name}`, scene);
+            m.albedoColor = new Color3(1, 1, 1);
+            m.metallic = 0;
+            m.roughness = 0.75;
+            plain[name] = m;
+        }
+        return { byFamily: plain, photo: false, notes: ["forge material bypassed (?forge=0)"], grainTex, varTex };
     }
 
     const byFamily = createRockMaterials(scene, null, {
@@ -108,14 +132,12 @@ export async function createBedMaterials(scene) {
         heightTex: null,
     });
 
-    for (const m of Object.values(byFamily)) {
-        // The stones are lit by the scene, and receive the beach's shadows.
-        m.receiveShadows = true;
-        // NOT frozen: freezing pins a material to the effect it has already
-        // compiled, and these need both the thin-instanced variant (scenery) and
-        // the ordinary instanced one (a woken bed). Same reasoning as
-        // siftingBeds.js.
-    }
+    // Deliberately NOT frozen: freezing pins a material to the effect it has
+    // already compiled, and these need both the thin-instanced variant (the
+    // scenery) and the ordinary instanced one (a woken bed). Same reasoning as
+    // siftingBeds.js. `receiveShadows` is not set here either — it is a mesh
+    // property, and an earlier version of this loop set it on the material,
+    // where it does nothing at all.
 
     return { byFamily, photo: !!textures?.perArchetype, notes, grainTex, varTex };
 }
