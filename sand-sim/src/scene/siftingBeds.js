@@ -90,13 +90,11 @@ const SCENERY_LOD = 2;
 /**
  * Icosphere level for the shore field.
  *
- * One below the beds. There are 8,000 stones out there rather than 620 in a
- * patch you are crouched over, and at 6 cm across from a standing eye a level-1
- * pebble (80 triangles) is the same silhouette as a level-2 one for a quarter
- * of the cost. The whole field at level 1 is about 640k triangles before any
- * culling; at level 2 it would be 2.6M, which is the beach twenty times over.
+ * Superseded by `shoreRocks.js` `LOD_LEVELS`, which draws the field at three
+ * levels by distance instead of one. Kept as the single-level fallback that
+ * `?lod=` selects, for judging a flat field against the ringed one.
  */
-export const FIELD_LOD = 1;
+export const FIELD_LOD = 0;
 
 /**
  * The cast, as a sequence — the single place the RNG is walked.

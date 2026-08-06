@@ -48,18 +48,18 @@ export const SCATTER_SEED = 20260806;
  * looks is a judgement made by standing on it, and it trades directly against
  * the triangle budget, so it is set by measuring rather than by arithmetic.
  *
- * What the arithmetic does say: the quadratic ramp averages a third of the
- * peak, so 54/m^2 over the 1,400 m^2 that carries anything is about 21,000
- * stones, covering roughly 14% of the ground at a 6 cm mean across.
+ * This is what is ASKED for, per attempt, not what lands — most candidates are
+ * rejected against a neighbour, and the harder the field is pushed the more of
+ * them are. At 160 the back of the strip settles around 145 stones/m^2, and the
+ * field is about 120,000 stones.
  *
- * Set by looking. At a third of this the beach reads as sprinkled rather than
- * stony; at double it the back of the strip runs together into an even carpet
- * and the ramp away from the water stops being the thing you notice.
- *
- * The ceiling is structural, not a matter of taste: one candidate per grid
- * cell means the field cannot exceed `1 / cell^2`, about 290/m^2.
+ * The ceiling is geometric and it is not far above that. Stones of this size
+ * mix jam at roughly 41% of the ground covered, around 170/m^2 — pushing the
+ * multiplier past 8 buys single-digit percentages for linearly more work, and
+ * past 16 the field gets slightly *worse* as the big stones crowd out the small
+ * ones that were filling the gaps.
  */
-export const PEAK_DENSITY = 54;
+export const PEAK_DENSITY = 160;
 
 /**
  * How the density climbs away from the water.
@@ -94,6 +94,22 @@ export function densityAt(depth) {
  * few millimetres between them makes the field read as scattered.
  */
 export const MIN_GAP = 0.012;
+
+/**
+ * Candidates thrown per grid cell.
+ *
+ * One was the obvious choice and it is what caps the field. Single-shot dart
+ * throwing jams at about a third of what the ground will actually hold: the
+ * first stone in a cell blocks the cell, so every gap a stone leaves beside
+ * itself is a gap nothing ever tries to fill. Throwing several and keeping
+ * whichever survive lets the small stones settle into the spaces the big ones
+ * left, which is both denser and how a shingle beach is actually graded.
+ *
+ * Six, because the returns fall off hard — the seventh candidate lands in an
+ * occupied cell almost every time — and every one of them is paid for whether
+ * it is accepted or not.
+ */
+export const ATTEMPTS = 6;
 
 /**
  * How deep a stone sits in the sand, as a fraction of its size.
@@ -165,8 +181,9 @@ export function scatterShore(opts = {}) {
 
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-            // One candidate per cell. Its position is jittered inside the cell,
-            // so the field has no grid in it even though it was built on one.
+        for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+            // Several candidates per cell, each jittered inside it, so the
+            // field has no grid in it even though it was built on one.
             const arc = -SHORE_HALF_ARC + (c + rng()) * cell;
             const depth = (r + rng()) * cell;
             const pick = rng();
@@ -219,6 +236,7 @@ export function scatterShore(opts = {}) {
                 archetype,
                 radius,
             });
+        }
         }
     }
     return out;

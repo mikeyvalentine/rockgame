@@ -61,14 +61,22 @@ import * as loading from "../core/loading.js";
 const GRID_SUBDIVISIONS = 256;
 
 /** @param {HTMLCanvasElement} canvas */
-/** `?density=1.8` — see the call site. Null when absent or unparseable. */
-function rockDensityFromURL() {
+/**
+ * A non-negative number from the query string, or null.
+ *
+ * `?density=` and `?lod=` are both judgements made by standing on the beach at
+ * a few values — and the field is generated once, behind the loading screen, so
+ * a settings slider cannot move either of them live.
+ */
+function numberFromURL(key) {
     if (typeof location === "undefined") return null;
-    const raw = new URLSearchParams(location.search).get("density");
+    const raw = new URLSearchParams(location.search).get(key);
     if (raw === null) return null;
     const v = Number.parseFloat(raw);
     return Number.isFinite(v) && v >= 0 ? v : null;
 }
+
+function rockDensityFromURL() { return numberFromURL("density"); }
 
 export async function run(canvas) {
     await loading.phase("creating context", 0.05);
@@ -178,6 +186,7 @@ export async function run(canvas) {
         // it at several values, which wants a reload knob rather than a
         // rebuild.
         density: rockDensityFromURL() ?? S.rockDensity,
+        lod: numberFromURL("lod"),
     });
     console.log(
         `[sand-sim] ${rocks.stones} stones across the shore ` +

@@ -164,7 +164,7 @@ export const SCHEMA = [
     {
         group: "Shore rocks",
         items: [
-            { k: "rockDensity", l: "Density", t: "f", min: 0, max: 3, step: 0.05 },
+            { k: "rockDensity", l: "Density", t: "f", min: 0, max: 4, step: 0.05 },
         ],
     },
     {

@@ -140,9 +140,19 @@ check("density peaks at the back",
 }
 
 // ---- the density multiplier does something ----------------------------------
-const sparse = scatterShore({ cast, density: 0.25 });
-check("the density multiplier thins the field", sparse.length < field.length * 0.5,
-    `${sparse.length} vs ${field.length}`);
+//
+// Monotonic, but nowhere near proportional, and the check says so rather than
+// pretending otherwise: the field is close to jammed at the default, so most
+// of what the multiplier asks for is rejected against a neighbour. Quartering
+// the ask only halves the field.
+const counts = [0.05, 0.25, 1, 2].map((d) => scatterShore({ cast, density: d }).length);
+let monotonic = true;
+for (let i = 1; i < counts.length; i++) if (counts[i] <= counts[i - 1]) monotonic = false;
+check("the density multiplier is monotonic", monotonic, counts.join(" < "));
+check("a twentieth of the density is a small fraction of the field",
+    counts[0] < field.length * 0.25, `${counts[0]} vs ${field.length}`);
+check("doubling the default barely moves a jammed field",
+    counts[3] < field.length * 1.35, `${counts[3]} vs ${field.length}`);
 
 console.log(`\n${field.length} stones across the shore`);
 console.log(failures ? `${failures} check(s) failed` : "all shore-scatter checks passed");
