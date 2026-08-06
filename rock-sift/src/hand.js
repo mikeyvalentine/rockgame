@@ -20,14 +20,20 @@ import { HAND, HAND_SPEED, U } from "./config.js";
 import { teleport } from "./field.js";
 
 // Far enough below the sand that the parked hand touches nothing.
+/** Default park depth, in the lab's own units. Hosts at other scales get their own — see createSiftHand. */
 export const PARK = new Vector3(0, -20 * U, 0);
 
 // The hand enters from above rather than materialising inside the pile.
-const ENTRY_HEIGHT = 0.16 * U;
+const ENTRY_HEIGHT_M = 0.16;
 
-export function createSiftHand(scene) {
+export function createSiftHand(scene, { unitScale = U } = {}) {
+  // config.js already scaled HAND by the lab's U, so a host at another scale
+  // re-scales by the ratio rather than re-deriving the metre values.
+  const k = unitScale / U;
+  const ENTRY_HEIGHT = ENTRY_HEIGHT_M * unitScale;
+  const PARK = new Vector3(0, -20 * unitScale, 0);
   const node = MeshBuilder.CreateBox(
-    "hand", { width: HAND.width, height: HAND.height, depth: HAND.depth }, scene
+    "hand", { width: HAND.width * k, height: HAND.height * k, depth: HAND.depth * k }, scene
   );
   node.isVisible = false; // 'H' reveals it for debugging the collider
   node.isPickable = false;
