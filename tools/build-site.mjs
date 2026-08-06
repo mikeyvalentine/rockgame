@@ -5,7 +5,7 @@
 //   /rock-forge/          } the Vite labs, each built with --base=/<name>/
 //   /sand-sim/            }
 //   /babylon-water/       static page, copied as-is
-//   /stone-skipping-physics/{demo,src}/   static page + the modules it imports
+//   /stone-skipping-physics/src/       solver modules, imported by the skip lab
 //   /props/               static page
 //   /shared/              scribble dials (the static pages import from here)
 //   /assets/              the ONE shared assets folder
@@ -104,7 +104,7 @@ function unbaseSharedAssets(html, lab) {
 
 // ------------------------------------------------- static pages + shared code
 cpSync(join(ROOT, "babylon-water"), join(DIST, "babylon-water"), { recursive: true });
-for (const dir of ["demo", "src"]) {
+for (const dir of ["src"]) {
   cpSync(join(ROOT, "stone-skipping-physics", dir),
     join(DIST, "stone-skipping-physics", dir), { recursive: true });
 }

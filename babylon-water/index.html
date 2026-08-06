@@ -55,6 +55,19 @@
         border-radius: 5px;
     }
     #panel .btns button:hover { background: #27506e; }
+    #skiphud {
+        position: fixed; right: 10px; top: 10px; width: 208px; z-index: 5;
+        font: 11px/1.5 ui-monospace, Consolas, monospace; color: #cfe2f0;
+        background: rgba(6,17,28,.82); border: 1px solid #24455f;
+        border-radius: 6px; padding: 9px 10px;
+    }
+    #skiphud .big { font-size: 26px; line-height: 1.1; color: #6fc3ff; }
+    #skiphud .big small { font-size: 11px; color: #7d8fa3; }
+    #skiphud table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    #skiphud td { padding: 1px 0; }
+    #skiphud td:last-child { text-align: right; color: #eaf4ff; }
+    #skiphud #outcome { color: #ffd28a; min-height: 15px; }
+    #skiphud #phase { margin-top: 5px; color: #7d8fa3; }
     #copyOut {
         width: 100%; height: 78px; margin-top: 8px; display: none;
         font: 10px/1.35 ui-monospace, Consolas, monospace;
@@ -67,10 +80,33 @@
 <canvas id="c"></canvas>
 <div id="panel"></div>
 <div id="hud">
+    <button id="throwBtn">Throw</button>
     <button id="plungeBtn">Plunge</button>
-    <button id="skipBtn">Skip run</button>
-    <b>click / drag</b> the water &nbsp;·&nbsp;
+    <button id="followBtn">Camera: follow</button>
+    <button id="slowBtn">Slow motion: off</button>
+    <b>space</b> throw &nbsp;·&nbsp; <b>click / drag</b> the water &nbsp;·&nbsp;
     <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
+</div>
+
+<!-- Solver readout. The whole point of merging the two labs: these numbers and
+     the water they describe are now the same scene, so a knob that changes the
+     score is visible against the splash it actually made. -->
+<div id="skiphud">
+    <div class="big"><span id="hops">0</span> <small>skips</small></div>
+    <div id="outcome"></div>
+    <table>
+      <tr><td>run distance</td><td id="rdist">0.0 m</td></tr>
+      <tr><td>total distance</td><td id="dist">0.0 m</td></tr>
+      <tr><td>ripples / taps</td><td id="rings">0</td></tr>
+      <tr><td>speed</td><td id="spd">0.0 m/s</td></tr>
+      <tr><td>attack</td><td id="atk">0.0&deg;</td></tr>
+      <tr><td>bank</td><td id="bnk">0.0&deg;</td></tr>
+      <tr><td>spin</td><td id="spn">0.0 rev/s</td></tr>
+      <tr><td>Rossby</td><td id="ros">0.0</td></tr>
+      <tr><td>drift</td><td id="drf">0.00 m</td></tr>
+      <tr><td>checksum</td><td id="csum">-</td></tr>
+    </table>
+    <div id="phase">-</div>
 </div>
 
 <!-- Babylon is PINNED. It used to be cdn.babylonjs.com/babylon.js, which serves
@@ -173,6 +209,36 @@ const STEPS   = 1;       // stepSimulation() calls per frame
 // safe: a twin of the update shader stays bounded all the way to 1.0 (no
 // damping at all), so this is a look knob, not a stability one.
 const RIPPLE = window.RIPPLE = { damping: 0.9992 };
+
+/**
+ * THE SKIP LAB's parameters — the stone-skipping demo's controls, now living on
+ * this page.
+ *
+ * Plain numbers, declared in this CLASSIC script so the tuning panel below can
+ * bind to them the same way it binds to WIND and RIPPLE. The solver itself is an
+ * ES module and cannot be imported here, so it is loaded in a module block at
+ * the foot of the page and reads these values at throw time. That split is the
+ * whole trick: data here, physics there, one panel over both.
+ *
+ * `profile` and `preset` are names; the module resolves them against
+ * PHYSICS_PROFILES and THROW_PRESETS. `assist` starts empty and is filled from
+ * the chosen profile by the module, so a stale literal here can never silently
+ * override a profile — which is a bug this project has now shipped twice.
+ */
+const SKIP = window.SKIP = {
+    profile: "game",
+    preset: "steinerThrow",
+    throw: {
+        speed: 19.2, elevationDeg: -2, attackAngleDeg: 20, spinRPS: 47,
+        bankAngleDeg: 0, spinAxisTiltDeg: 0, releaseHeight: 0.12,
+    },
+    stone: { radius: 0.045, thickness: 0.010, aspect: 1.0 },
+    assist: {},
+    follow: true,
+    slow: false,
+    /** Installed by the module block once the solver has loaded. */
+    doThrow: null,
+};
 
 /**
  * Wave coefficient in the update step: v += (average - h) * WAVE_C.
@@ -1630,22 +1696,22 @@ document.getElementById("plungeBtn").addEventListener("click", () => {
     });
 });
 
-// A canned skip run — the windowed sim's whole reason to exist. Impacts march
-// ~55 m across the pond the way a game-profile throw does: the interaction
-// window follows the stone, each ripple keeps its world position while it
-// stays in span, and the run ends far beyond where the pond's old 24 m edge
-// used to be. Decaying gap and speed, roughly the solver's shape.
-document.getElementById("skipBtn").addEventListener("click", () => {
-    let x = -28, gap = 7.5, speed = 16, i = 0;
-    const step = () => {
-        if (gap < 2.2 || speed < 5) return;
-        stoneImpact(x, Math.sin(i * 1.7) * 1.5, {
-            speed, mass: 0.15, angle: 0.35, dirX: 1, dirZ: 0,
-        });
-        x += gap; gap *= 0.88; speed *= 0.93; i++;
-        setTimeout(step, (gap / speed) * 1000);
-    };
-    step();
+// The skip run is REAL now. It used to be a canned march of impacts with a
+// decaying gap — a stand-in for the solver, written before the two labs shared
+// a page. The solver drives it from the module block at the foot of this file,
+// and each of its bounces comes back through stoneImpact() into the same spray,
+// foam and ripple path a click makes.
+document.getElementById("throwBtn").addEventListener("click", () => SKIP.doThrow?.());
+addEventListener("keydown", (e) => {
+    if (e.code === "Space" && e.target === document.body) { e.preventDefault(); SKIP.doThrow?.(); }
+});
+document.getElementById("followBtn").addEventListener("click", (e) => {
+    SKIP.follow = !SKIP.follow;
+    e.target.textContent = "Camera: " + (SKIP.follow ? "follow" : "free");
+});
+document.getElementById("slowBtn").addEventListener("click", (e) => {
+    SKIP.slow = !SKIP.slow;
+    e.target.textContent = "Slow motion: " + (SKIP.slow ? "on (1/6x)" : "off");
 });
 
 // =============================================================================
@@ -1981,6 +2047,31 @@ const CONTROLS = [
     // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
     // automatically, so a longer ripple keeps the sim awake longer to match.
     ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
+
+    ["Throw", null],
+    ["speed",           () => SKIP.throw.speed,           (v) => SKIP.throw.speed = v,           1,   45,  0.5],
+    ["launch elevation",() => SKIP.throw.elevationDeg,    (v) => SKIP.throw.elevationDeg = v,   -30,  10,  0.5],
+    ["attack angle",    () => SKIP.throw.attackAngleDeg,  (v) => SKIP.throw.attackAngleDeg = v, -15,  70,  1],
+    ["spin",            () => SKIP.throw.spinRPS,         (v) => SKIP.throw.spinRPS = v,         0,   80,  1],
+    ["bank (roll)",     () => SKIP.throw.bankAngleDeg,    (v) => SKIP.throw.bankAngleDeg = v,  -45,  45,  1],
+    ["spin-axis tilt",  () => SKIP.throw.spinAxisTiltDeg, (v) => SKIP.throw.spinAxisTiltDeg = v, 0,   30,  0.5],
+    ["release height",  () => SKIP.throw.releaseHeight,   (v) => SKIP.throw.releaseHeight = v,   0,   1.5, 0.02],
+
+    ["Stone", null],
+    ["radius",          () => SKIP.stone.radius,      (v) => SKIP.stone.radius = v,      0.02, 0.09, 0.001],
+    ["thickness",       () => SKIP.stone.thickness,   (v) => SKIP.stone.thickness = v,   0.003, 0.03, 0.001],
+    ["aspect (1=round)",() => SKIP.stone.aspect,      (v) => SKIP.stone.aspect = v,      0.4,  1,    0.05],
+
+    ["Assist (not physics)", null],
+    ["contact loss",    () => SKIP.assist.contactLossScale ?? 1, (v) => SKIP.assist.contactLossScale = v, 0.02, 1, 0.01],
+    ["hop height",      () => SKIP.assist.hopSpeedTarget ?? 0,   (v) => SKIP.assist.hopSpeedTarget = v,   0,    2, 0.05],
+    ["hop flatten cap", () => SKIP.assist.hopFlattenLimit ?? 0,  (v) => SKIP.assist.hopFlattenLimit = v,  0,    1, 0.05],
+    ["attitude hold",   () => SKIP.assist.attitudeAssist ?? 0,   (v) => SKIP.assist.attitudeAssist = v,   0, 2000, 25],
+    ["balance (rock)",  () => SKIP.assist.balanceRetention ?? 0, (v) => SKIP.assist.balanceRetention = v, 0,    1, 0.05],
+    // How long an impact ring survives. 0.990 is Wallace's original (gone in
+    // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
+    // automatically, so a longer ripple keeps the sim awake longer to match.
+    ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
     ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
     ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
 
@@ -2078,6 +2169,11 @@ const CONTROLS = [
         row.appendChild(lab); row.appendChild(slider);
         panel.appendChild(row);
         show();
+        // Exposed so code that changes a value programmatically — the skip lab's
+        // profile and preset pickers — can push it back into the slider. Without
+        // this the panel keeps showing the old number after a preset change,
+        // which reads as the control being broken.
+        (window.__panelSync || (window.__panelSync = [])).push(show);
         live.push({ label, get });
     }
 
@@ -2209,15 +2305,163 @@ engine.runRenderLoop(() => scene.render());
 addEventListener("resize", () => engine.resize());
 </script>
 <script type="module">
-// The CPU twin of the ambient field (shared/ambientWater.js — drift-guarded by
-// tools/ambient-sync-check.mjs). Exposed for the skip solver and the console:
-//   waterAmbient(x, z)          — height/normal/flow at now, current wind
-//   waterAmbient(x, z, tSecs)   — at an explicit sim time
+// =============================================================================
+// THE SKIP LAB. The stone-skipping solver, driving THIS water.
+//
+// These were two pages until 2026-08-06: a water sim whose "Skip run" button
+// marched a canned sequence of impacts across the pond, and a solver demo that
+// skipped a stone over a flat plane of its own with wireframe discs for
+// splashes. Neither showed the real thing. Now the solver's bounces come back
+// through stoneImpact() into this page's spray, foam and ripples, and the
+// readout describes the water you are looking at.
+//
+// A module, because the solver is one and this page's main script is a classic
+// script that cannot import. The parameters live over there on `window.SKIP`
+// (plain numbers the tuning panel binds to); the physics lives here and reads
+// them at throw time.
+// =============================================================================
+import {
+    StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, DEFAULT_ENV,
+} from "../stone-skipping-physics/src/stoneSkipping.js";
+// The CPU twin of this page's own AMBIENT_GLSL — drift-guarded against it by
+// babylon-water/tools/ambient-sync-check.mjs. The stone planes on exactly the
+// surface being drawn, which is the reason the twin exists.
 import { sampleAmbient, makeAmbientWater } from "../shared/ambientWater.js";
 window.waterAmbient = (x, z, t) => sampleAmbient(
     x, z, t !== undefined ? t : performance.now() * 0.001,
     { windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale });
 window.makeAmbientWater = makeAmbientWater;
+
+const $ = (id) => document.getElementById(id);
+
+/* ---- profile + preset pickers, prepended to the tuning panel ------------ */
+const picker = document.createElement("div");
+picker.style.cssText = "margin:0 0 8px";
+picker.innerHTML =
+    '<select id="skipProfile" style="width:100%;margin-bottom:5px"></select>' +
+    '<select id="skipPreset" style="width:100%"></select>';
+$("panel").prepend(picker);
+for (const name of Object.keys(PHYSICS_PROFILES)) {
+    $("skipProfile").add(new Option(name + " profile", name, false, name === SKIP.profile));
+}
+for (const name of Object.keys(THROW_PRESETS)) {
+    $("skipPreset").add(new Option(
+        (PRESET_LABELS && PRESET_LABELS[name]) || name, name, false, name === SKIP.preset));
+}
+
+/** Assist values come FROM the profile, never from a literal — a stale literal
+ *  silently overriding the profile is a bug this project has shipped twice. */
+function assistFromProfile(name) {
+    const merged = { ...DEFAULT_ENV, ...(PHYSICS_PROFILES[name] || {}) };
+    for (const k of ["contactLossScale", "hopSpeedTarget", "hopFlattenLimit",
+                     "attitudeAssist", "balanceRetention"]) SKIP.assist[k] = merged[k];
+}
+assistFromProfile(SKIP.profile);
+
+$("skipProfile").addEventListener("change", (e) => {
+    SKIP.profile = e.target.value; assistFromProfile(SKIP.profile);
+    syncPanel(); doThrow();
+});
+$("skipPreset").addEventListener("change", (e) => {
+    SKIP.preset = e.target.value;
+    Object.assign(SKIP.throw, THROW_PRESETS[SKIP.preset]);
+    syncPanel(); doThrow();
+});
+/** Push changed values back into the panel's inputs. The panel builds its own
+ *  refreshers; this reuses them rather than reaching into the DOM. */
+function syncPanel() { (window.__panelSync || []).forEach((f) => f()); }
+
+/* ---- the stone ---------------------------------------------------------- */
+const stoneMesh = BABYLON.MeshBuilder.CreateCylinder(
+    "stone", { diameter: 0.09, height: 0.01, tessellation: 24 }, scene);
+const stoneMat = new BABYLON.StandardMaterial("stoneMat", scene);
+stoneMat.diffuseColor = new BABYLON.Color3(0.30, 0.31, 0.33);
+stoneMat.specularColor = new BABYLON.Color3(0.12, 0.12, 0.12);
+stoneMesh.material = stoneMat;
+stoneMesh.rotationQuaternion = BABYLON.Quaternion.Identity();
+stoneMesh.isPickable = false;
+
+let sim = null, trail = null, trailPts = [];
+
+function doThrow() {
+    stoneMesh.scaling.set(
+        SKIP.stone.radius / 0.045, SKIP.stone.thickness / 0.01,
+        (SKIP.stone.radius / 0.045) * SKIP.stone.aspect);
+    sim = new StoneSkipSim({
+        profile: SKIP.profile,
+        stone: { ...SKIP.stone },
+        // THE POINT OF THE MERGE: the solver samples this page's own surface.
+        water: (x, z, t) => sampleAmbient(x, z, t, {
+            windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale }),
+        env: { ...SKIP.assist },
+    });
+    // Thrown from the near shore, down the lane, so the run crosses the pond
+    // rather than starting in the middle of it.
+    sim.throwStone({ ...SKIP.throw, headingDeg: 0, origin: { x: -POND_HALF * 0.42, z: 0 } });
+    trailPts = [];
+    if (trail) { trail.dispose(); trail = null; }
+    $("outcome").textContent = "";
+}
+SKIP.doThrow = doThrow;
+
+/* ---- readout ------------------------------------------------------------ */
+function sync() {
+    const d = sim.getDiagnostics();
+    $("hops").textContent = sim.cleanHops;
+    $("rings").textContent = sim.ripples;
+    $("csum").textContent = sim.checksum();
+    $("dist").textContent = d.distance.toFixed(1) + " m";
+    $("rdist").textContent = (sim.runEnded ? sim.runDistance : d.distance).toFixed(1) + " m";
+    $("hops").style.color = sim.runEnded ? "#7d8fa3" : "#6fc3ff";
+    $("spd").textContent = d.speed.toFixed(1) + " m/s";
+    $("atk").textContent = d.attackAngleDeg.toFixed(1) + "\u00b0";
+    $("bnk").textContent = d.bankAngleDeg.toFixed(1) + "\u00b0";
+    $("spn").textContent = d.spinRPS.toFixed(1) + " rev/s";
+    $("ros").textContent = d.rossby.toFixed(1);
+    $("drf").textContent = (sim._lateralDrift ? sim._lateralDrift() : 0).toFixed(2) + " m";
+    $("phase").textContent = sim.finished
+        ? SKIP.profile + " \u2014 settled: " + (sim.settleReason || "")
+        : sim.runEnded ? SKIP.profile + " \u2014 coasting / sinking\u2026"
+        : SKIP.profile + " \u2014 skipping";
+}
+
+/* ---- the loop ----------------------------------------------------------- */
+doThrow();
+scene.onBeforeRenderObservable.add(() => {
+    if (!sim || sim.finished) return;
+    const raw = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    for (const e of sim.advance(SKIP.slow ? raw / 6 : raw)) {
+        if (e.type === "bounce") {
+            // Into the REAL water: spray, foam, aeration and a ripple whose size
+            // comes from the momentum the solver actually delivered.
+            const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
+            stoneImpact(e.position.x, e.position.z, {
+                speed: e.speed, mass: sim.mass, angle: Math.abs(Math.atan2(v.y, h)),
+                dirX: v.x / h, dirZ: v.z / h,
+            });
+        }
+        if (e.type === "outcome") {
+            $("outcome").textContent = e.outcome.replace(/-/g, " ") +
+                " \u2014 " + e.cleanHops + " skips, " + e.distance.toFixed(1) + " m";
+        }
+    }
+    const p = sim.state.position, q = sim.state.orientation;
+    stoneMesh.position.set(p.x, p.y, p.z);
+    stoneMesh.rotationQuaternion.set(q.x, q.y, q.z, q.w);
+
+    if (!sim.runEnded) trailPts.push(new BABYLON.Vector3(p.x, p.y, p.z));
+    if (trailPts.length > 1) {
+        trail = BABYLON.MeshBuilder.CreateLines(
+            "tr", { points: trailPts, instance: trail, updatable: true }, scene);
+        trail.color = new BABYLON.Color3(0.42, 0.76, 1);
+        trail.isPickable = false;
+    }
+    if (SKIP.follow) {
+        camera.target.x += (p.x - camera.target.x) * 0.06;
+        camera.target.z += (p.z - camera.target.z) * 0.06;
+    }
+    sync();
+});
 </script>
 </body>
 </html>

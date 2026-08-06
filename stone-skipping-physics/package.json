@@ -11,7 +11,6 @@
   "scripts": {
     "test": "node test/headless-sweep.mjs && node test/api-audit.mjs && node test/mesh-audit.mjs && node test/skill-ladder.mjs && node test/frame-budget.mjs",
     "debug": "node test/debug-contact.mjs",
-    "serve": "node tools/dev-server.mjs 5291",
     "test:physics": "node test/headless-sweep.mjs",
     "test:api": "node test/api-audit.mjs",
     "test:mesh": "node test/mesh-audit.mjs",
