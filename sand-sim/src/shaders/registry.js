@@ -260,7 +260,7 @@ void main() {
         // d = 0 there is no angle to speak of, so any fixed value is correct.
         float ang = (d > 1e-6) ? atan(q.y, q.x) : 0.0;
         // And keep the divisor away from zero: wob is 1 +/- 0.22 by construction,
-        // but a bad `edge` or seed would make d / wob a second NaN source.
+        // but a bad edge or seed would make d / wob a second NaN source.
         float wob = max(1.0 + cc.z * 0.22 * vnoise2(vec2(cos(ang), sin(ang)) * 2.7 + cc.w), 0.05);
         float dn = d / wob;
 

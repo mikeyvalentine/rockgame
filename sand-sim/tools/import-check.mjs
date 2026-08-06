@@ -22,6 +22,7 @@
 // which is exactly the shape of the bug, with no configuration and no false
 // positives to argue about.
 
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,6 +128,30 @@ function code(src) {
 
 const files = walk(SRC);
 check("there are modules to check", files.length > 0, files.length + " files");
+
+// ---- does every module PARSE? ----------------------------------------------
+//
+// This exists because a syntax error shipped while all 226 other checks passed.
+// A backtick inside a comment — ``a bad `edge` or seed`` — sat inside the GLSL
+// template literal in `shaders/registry.js`, closed the string early, and left
+// a bare identifier in expression position. The whole app failed to boot with
+// `SyntaxError: Unexpected identifier 'edge'`, and nothing in the suite noticed,
+// because every check that touches that file reads it as TEXT.
+//
+// That is the hazard of keeping shader source in template literals: prose that
+// is harmless in a comment is a string delimiter to the parser. `node --check`
+// costs a process per file and answers the one question none of the rest do.
+const unparseable = [];
+for (const file of files) {
+    try {
+        execFileSync(process.execPath, ["--check", file], { stdio: "pipe" });
+    } catch (err) {
+        const msg = String(err.stderr || err.message).split("\n")
+            .find((l) => l.includes("Error")) ?? "parse failed";
+        unparseable.push(`${file.slice(SRC.length)}: ${msg.trim()}`);
+    }
+}
+check("every module parses", unparseable.length === 0, unparseable.join("; "));
 
 const missing = [];
 for (const file of files) {
