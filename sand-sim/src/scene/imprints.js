@@ -21,14 +21,30 @@
  * it. That single hook is enough for everything that grounds on the terrain —
  * the walker, and stones spawned onto a bed that has already been dug.
  *
- * What this does NOT yet do is change what the sand LOOKS like: the drawn
- * surface comes from the height bake on WebGPU and a displaced grid on WebGL,
- * and neither reads these layers. So a divot is currently something you stand
- * in rather than something you see. That is the next piece, and it is shader
- * work on both renderers rather than more of this.
+ * How the dent is SEEN
+ * --------------------
+ * Through the deformation field, exactly the way a footprint is. Its own header
+ * settles this: "Everything that touches the snow writes here through `brush()`
+ * — feet, the surf wake, every spell. That shared write path is what makes the
+ * effects part of the snow rather than decals floating above it." A stone is
+ * just another thing that touches the sand.
+ *
+ * An earlier version of this file claimed the divots could not be drawn without
+ * new shader work on both renderers. That was wrong, and the mistake is worth
+ * naming: "it must persist" was treated as ruling the deformation field out,
+ * and the ruling-out quietly took visibility with it. They are two separate
+ * requirements and they want two mechanisms —
+ *
+ *   the field    draws it, and forgets, because it relaxes and follows the player
+ *   this layer   remembers it, and does not draw
+ *
+ * — so a divot is written to both, and re-stamped into the field when the
+ * player comes back to a spot. Nothing about that needs a shader touched.
  */
 
-import { SpotImprint, bakeBedImprint, BED_PRESS } from "../../../shared/spotImprint.js";
+import {
+    SpotImprint, bakeBedImprint, BED_PRESS, IMPRINT_HALF,
+} from "../../../shared/spotImprint.js";
 import { SIFT_SPOTS } from "../../../shared/pileField.js";
 import { U } from "./siftingBeds.js";
 
@@ -50,8 +66,12 @@ export class Imprints {
      * @param terrain  wrapped, not modified — see `heightAt` below
      * @param beds     the handle from `buildSiftingBeds`
      */
-    constructor(terrain, beds) {
+    constructor(terrain, beds, deform = null) {
         this.terrain = terrain;
+        // The thing that draws marks. Optional: on a machine with no half-float
+        // render targets the field is off (webglApp warns and carries on), and
+        // the imprint should still be felt even when it cannot be seen.
+        this.deform = deform;
         this.layers = new Map();
 
         for (const spot of SIFT_SPOTS) {
@@ -126,7 +146,14 @@ export class Imprints {
             const speed = Math.hypot(v.x, v.y, v.z);
             if (speed < 0.02 || speed > IMPACT_SPEED) continue;
             const radius = r.arch?.radius ?? 0.05;
-            layer.press(r.node.position.x, r.node.position.z, radius, radius * IMPACT_PRESS);
+            const depth = radius * IMPACT_PRESS;
+            layer.press(r.node.position.x, r.node.position.z, radius, depth);
+            // And drawn, the same way a boot is. The berm is half the depth,
+            // as it is for a footfall: displaced sand has to go somewhere.
+            this.deform?.brush(
+                r.node.position.x, r.node.position.z,
+                radius * 1.6, depth, depth * 0.5, 0.2, 0, 0, 1, 0.85
+            );
             pressed++;
         }
         return pressed;
@@ -139,6 +166,43 @@ export class Imprints {
         for (const s of stones) {
             layer.press(s.x, s.z, s.radius, s.radius * BED_PRESS);
         }
+    }
+
+    /**
+     * Redraw a spot's remembered dents into the deformation field.
+     *
+     * The field relaxes and is anchored to the player, so by the time someone
+     * walks back to a bed they dug yesterday it has forgotten every hole. This
+     * is what makes the memory visible again: on crouching, the layer replays
+     * itself as brushes.
+     *
+     * Sampled on a coarse grid rather than replayed stone by stone — the field
+     * takes 96 brushes a frame and a dug bed can hold far more presses than
+     * that, so what is redrawn is the SHAPE of the excavation rather than every
+     * event that made it.
+     */
+    restamp(spotId, { step = 0.25, maxBrushes = 80 } = {}) {
+        const layer = this.layers.get(spotId);
+        if (!layer || !this.deform) return 0;
+        const spot = SIFT_SPOTS.find((s) => s.id === spotId);
+        if (!spot) return 0;
+
+        const found = [];
+        for (let dx = -IMPRINT_HALF; dx <= IMPRINT_HALF; dx += step) {
+            for (let dz = -IMPRINT_HALF; dz <= IMPRINT_HALF; dz += step) {
+                const d = layer.depthAt(spot.x + dx, spot.z + dz);
+                if (d > 0.004) found.push({ x: spot.x + dx, z: spot.z + dz, d });
+            }
+        }
+        // Deepest first, so if the bed is more dug than the budget allows it is
+        // the real holes that survive the truncation rather than an arbitrary
+        // corner of the grid.
+        found.sort((a, b) => b.d - a.d);
+        const drawn = found.slice(0, maxBrushes);
+        for (const f of drawn) {
+            this.deform.brush(f.x, f.z, step * 1.5, f.d, f.d * 0.4, 0.25, 0, 0, 1, 0.8);
+        }
+        return drawn.length;
     }
 
     /** For the overlay and the checks: how dug the beach is. */

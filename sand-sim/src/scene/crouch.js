@@ -91,6 +91,9 @@ export class Crouch {
         if (this.engaged) return false;
         this.spot = spot;
         this.physics.wake(this.beds, spot);
+        // The field has long since relaxed away anything dug here before. Replay
+        // it, so a bed you excavated yesterday still looks excavated.
+        this.imprints?.restamp(spot.id);
         this.tween = {
             from: this._pose(),
             to: {

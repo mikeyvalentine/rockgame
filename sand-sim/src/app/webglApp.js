@@ -242,7 +242,7 @@ export async function run(canvas) {
     // The sand the beds have been resting in, and the holes sifting leaves.
     // Built after the beds because it is derived from the transforms they were
     // placed with.
-    const imprints = beds ? new Imprints(terrain, beds) : null;
+    const imprints = beds ? new Imprints(terrain, beds, deform) : null;
     // The walker grounds on the DUG terrain from here on, so a bed that has
     // been sifted is one you stand lower in. Reassigned rather than passed at
     // construction because the imprints are derived from bed transforms that do
