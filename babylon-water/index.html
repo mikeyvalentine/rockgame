@@ -773,10 +773,15 @@ waterMat.setColor3("tint", waterTint);
 // The day's weather. strength 0 is dead glass, 1 is a choppy afternoon.
 // Live-tunable: WIND.set(0.6, 40) for a moderate breeze out of 40 degrees.
 const WIND = window.WIND = {
-    // The user's dialled look (2026-08-05 dump): near-glass water — strength
-    // 0.01 is the hero-calm morning docs/11 names, with the swell stretched
-    // long (waveScale 8 puts the octaves at 7.2 m down to 1.2 m) so what
-    // little motion remains is a slow heavy roll, not chop. Wind out of 93°.
+    // These three MUST equal POND_CONDITIONS in shared/ambientWater.js — the one
+    // definition of the pond's still-water look, which the skip solver is tuned
+    // against and the daily will roll around.
+    //
+    // Written as literals rather than imported because this is a classic script
+    // (no import), and because `POND` here already means the pond's SIZE. The
+    // agreement is enforced instead of expressed: ambient-sync-check.mjs parses
+    // these values out of this file and fails if they drift, the same way it
+    // already guards the octave table against AMBIENT_GLSL.
     strength: 0.01,
     dirDeg: 93,
     detail: 3.0,       // full detail, now that supersampling handles the aliasing
@@ -2079,11 +2084,11 @@ engine.runRenderLoop(() => scene.render());
 addEventListener("resize", () => engine.resize());
 </script>
 <script type="module">
-// The CPU twin of the ambient field (see ambient.js — drift-guarded by
+// The CPU twin of the ambient field (shared/ambientWater.js — drift-guarded by
 // tools/ambient-sync-check.mjs). Exposed for the skip solver and the console:
 //   waterAmbient(x, z)          — height/normal/flow at now, current wind
 //   waterAmbient(x, z, tSecs)   — at an explicit sim time
-import { sampleAmbient, makeAmbientWater } from "./ambient.js";
+import { sampleAmbient, makeAmbientWater } from "../shared/ambientWater.js";
 window.waterAmbient = (x, z, t) => sampleAmbient(
     x, z, t !== undefined ? t : performance.now() * 0.001,
     { windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale });

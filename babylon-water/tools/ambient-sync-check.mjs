@@ -1,4 +1,4 @@
-// Does ambient.js still agree with AMBIENT_GLSL in index.html?
+// Does shared/ambientWater.js still agree with AMBIENT_GLSL in index.html?
 //
 // The CPU twin exists so the skip solver planes on the surface the player
 // sees; the moment the two drift, the stone skips on water that is not there.
@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { OCTAVES, sampleAmbient } from "../ambient.js";
+import { OCTAVES, sampleAmbient, POND_CONDITIONS } from "../../shared/ambientWater.js";
 
 let failures = 0;
 const check = (name, ok, detail = "") => {
@@ -88,5 +88,26 @@ check("deterministic in (x,z,t)", a === b);
 check("windStrength 0 is glass",
   sampleAmbient(9, 9, 9, { ...W, windStrength: 0 }).height === 0);
 
+// ------------------------------------------------------- pond conditions
+// The page's WIND panel STARTS at the pond's still-water look. Those starting
+// values and POND_CONDITIONS are the same fact written twice — once here as a
+// live JS object the sliders mutate, once in shared/ as the constant the solver
+// and the daily read. Drift between them means the water the player sees and
+// the water the stone is scored on are different water, which is the whole
+// failure this file exists to prevent.
+const windBlock = html.slice(html.indexOf("const WIND = window.WIND = {"));
+const num = (key) => {
+  const m = windBlock.match(new RegExp(`^\\s*${key}:\\s*([0-9.]+)`, "m"));
+  return m ? Number(m[1]) : NaN;
+};
+for (const [pageKey, condKey] of [
+  ["strength", "windStrength"], ["dirDeg", "windDirDeg"], ["waveScale", "waveScale"],
+]) {
+  const onPage = num(pageKey), inShared = POND_CONDITIONS[condKey];
+  check(`WIND.${pageKey} matches POND_CONDITIONS.${condKey}`,
+    onPage === inShared, `page ${onPage} vs shared ${inShared}`);
+}
+
 console.log(failures ? `\n${failures} CHECK(S) FAILED` : "\nambient twin: all checks passed");
 process.exit(failures ? 1 : 0);
+

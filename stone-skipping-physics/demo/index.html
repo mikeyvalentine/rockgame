@@ -121,14 +121,18 @@
     <div data-ctl="aspect"    data-min="0.4"  data-max="1"     data-step="0.05"  data-unit=""     data-grp="stone"></div>
 
     <h2>Water</h2>
-    <!-- Gerstner is the controlled test input (one wave train, two knobs).
-         "Pond ambient" is babylon-water's real four-octave surface via its
-         CPU twin — same waves the game pond shows. Only offered when
-         /babylon-water/ambient.js is reachable (i.e. under the rockgame hub
-         or the deployed site; the standalone dev-server can't see it). -->
+    <!-- POND AMBIENT IS THE DEFAULT, and is the water the game actually has:
+         shared/ambientWater.js, the CPU twin of babylon-water's AMBIENT_GLSL,
+         drift-guarded against it by babylon-water/tools/ambient-sync-check.mjs.
+         Tuning the solver against anything else means tuning against a surface
+         no player will ever throw on.
+
+         Gerstner stays as the CONTROLLED input — one wave train, two knobs —
+         for isolating what a single wavelength does. It is a test instrument,
+         not the pond. -->
     <select id="waveSource" style="margin-bottom:9px">
-      <option value="gerstner">gerstner — sliders below</option>
-      <option value="ambient" disabled id="ambientOpt">pond ambient — loading…</option>
+      <option value="ambient">pond ambient — the real surface (default)</option>
+      <option value="gerstner">gerstner — controlled test wave, sliders below</option>
     </select>
     <div data-ctl="amplitude"  data-min="0" data-max="0.15" data-step="0.005" data-unit=" m" data-grp="water"></div>
     <div data-ctl="wavelength" data-min="0.5" data-max="8"  data-step="0.1"   data-unit=" m" data-grp="water"></div>
@@ -149,6 +153,13 @@
 <script type="module">
 import { StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, DEFAULT_ENV, VERSION, Outcome } from '../src/stoneSkipping.js'
 import { makeGerstnerWater } from '../src/babylonAdapter.js'
+// The pond's real surface. A RELATIVE import, which resolves both standalone
+// (the dev-server serves the repo root) and under the hub — the old absolute
+// `/babylon-water/ambient.js` only worked under the hub, so the standalone lab
+// silently fell back to a synthetic wave and could not be tuned against the
+// water the game has. Static, so a failure is loud rather than a disabled
+// dropdown option nobody notices.
+import * as ambient from '../../shared/ambientWater.js'
 
 const $ = id => document.getElementById(id)
 
@@ -330,27 +341,19 @@ function rebuild() {
 
 let sim, trailPts, trail, ripples = []
 
-// The pond's real ambient surface, when reachable (see the select's comment).
-// Wind numbers mirror babylon-water's own defaults so the demo's stone planes
-// on the same swell the pond page shows.
-let ambient = null
-let waveSource = 'gerstner'
-const AMBIENT_WIND = { windStrength: 0.01, windDirDeg: 93, waveScale: 8 }
-import('/babylon-water/ambient.js')
-  .then((m) => {
-    ambient = m
-    const opt = $('ambientOpt')
-    opt.disabled = false
-    opt.textContent = 'pond ambient — babylon-water, near-glass 0.01 @ 93deg'
-  })
-  .catch(() => { $('ambientOpt').textContent = 'pond ambient — unavailable here' })
+// THE pond conditions, imported rather than copied. This used to be a local
+// literal; a local literal is how the water page and this lab could have
+// drifted apart without either one looking wrong.
+let waveSource = 'ambient'
+const AMBIENT_WIND = ambient.POND_CONDITIONS
+
 $('waveSource').addEventListener('change', (e) => {
   waveSource = e.target.value
   rebuild()
 })
 
 const waterFn = () =>
-  waveSource === 'ambient' && ambient
+  waveSource === 'ambient'
     ? ambient.makeAmbientWater(AMBIENT_WIND)
     : makeGerstnerWater({
         level: 0, amplitude: waterParams.amplitude, wavelength: waterParams.wavelength,
