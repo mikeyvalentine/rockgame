@@ -13,18 +13,18 @@
  * grounds on this function directly), and nothing compares heights across
  * renderers.
  *
- * The sifting piles are the exception to that arrangement, and deliberately so:
- * their WGSL is *generated* from `shared/pileField.js` rather than hand-twinned,
- * because a mound in a place the grounding does not know about is a bank the
- * player walks through.
+ * The sifting pads are the exception to that arrangement, and deliberately so:
+ * their WGSL is *generated* from `shared/siftPad.js` rather than hand-twinned,
+ * because sand the grounding thinks is level while the bake tilts it is a bed of
+ * stones half sunk at one end.
  */
 
-import { pileCoverage, pileLift } from "../../../shared/pileField.js";
+import { padCoverage, padLevel } from "../../../shared/siftPad.js";
 
-// The deterministic shape constants live in shared/shoreRamp.js — pileField
-// needs the foreshore slope to level a crown, and this module imports
-// pileField, so they cannot live here without a cycle. Re-exported, so every
-// existing import site is unchanged.
+// The deterministic shape constants live in shared/shoreRamp.js — siftPad needs
+// the foreshore slope to level a pad, and this module imports siftPad, so they
+// cannot live here without a cycle. Re-exported, so every existing import site
+// is unchanged.
 export {
     WATERLINE_Z, WATER_LEVEL_Y, FORESHORE_SLOPE,
     SEABED_DEPTH, BERM_HEIGHT, BERM_RELAX,
@@ -136,21 +136,21 @@ export function shoreProfileJS(x, z, amp = 1) {
         relief += (DUNE_BASE + fbm2(x / 38, z / 24, 4) * DUNE_AMP) * duneT;
     }
 
-    // Shingle piles — the sifting spots, from shared/pileField.js. Applied
-    // before micro relief because the crown has to end up flat: rock-sift's
-    // bed is poured on flat ground, so the mound damps micro in the same
-    // proportion as it rises rather than sitting on top of it.
+    // Sifting pads — the sifting spots, from shared/siftPad.js. Applied before
+    // micro relief because the pad has to end up flat AND level: rock-sift's
+    // bed is poured on flat ground, so the pad damps micro relief in proportion
+    // to its coverage rather than levelling on top of it. It adds no height.
     //
-    // Outside `amp` on purpose: the piles are where the player sifts, so their
-    // geometry is level design, not an art-direction relief tunable.
-    const cov = pileCoverage(x, z);
+    // Outside `amp` on purpose: the pads are where the player sifts, so this is
+    // a correctness term, not an art-direction relief tunable.
+    const cov = padCoverage(x, z);
 
     // Micro relief on the open beach (fades out under the dunes, and under
-    // the piles).
+    // the pads).
     relief += fbm2(x / 21 + 7.3, z / 21 - 4.1, 3) * MICRO_AMP *
         (1 - duneT * 0.7) * (1 - cov);
 
-    return h + relief * amp + pileLift(x, z);
+    return h + relief * amp + padLevel(x, z);
 }
 
 /** Rectangular walkable-zone clamp, in place. */

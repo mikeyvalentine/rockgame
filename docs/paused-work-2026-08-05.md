@@ -8,12 +8,19 @@ Everything here is measured or read out of the code, not assumed.
 
 ---
 
-## 1. The forge material port — attempted, reverted
+## 1. The forge material port — done, in sand-sim
 
-**Goal:** make `rock-sift` shade its stones the way `rock-forge` does, so the sift bed
-looks like the lab instead of like flat grey pebbles.
+**Goal:** make the sift bed shade its stones the way `rock-forge` does, so it looks
+like the lab instead of like flat grey pebbles.
 
-**Status:** reverted. It is not a port. It needs a shader change in `rock-forge`.
+**Status:** ✅ built, for sand-sim's beds. `rock-forge/src/babylon/rockMaterial.js`
+gained a **real-geometry mode** (`realGeometry: true`) and sand-sim's
+`scene/rockMaterials.js` uses it; `sand-sim/tools/rock-material-check.mjs` covers it.
+The analysis below was right about the problem and half right about the fix — the
+resolution is at the end of this section.
+
+`rock-sift`'s own lab still uses its plain per-stone `PBRMaterial`. Nothing forces it
+to; the mode is there whenever that becomes worth doing.
 
 ### Why it does not just wire up
 
@@ -66,14 +73,32 @@ is not available to any code path that has to run under `NullEngine`.
    before instancing should propagate.
 3. Carry per-stone tint through `rockInst.yzw` — **not** through a material clone.
 
-Needs a browser in the loop to verify. It is a focused change to the forge's shader,
-not a wiring job.
+### How it was actually resolved
 
-### What is in place meanwhile
+Step 1 above was right and is what shipped: `realGeometry: true` skips the vertex half
+entirely rather than adding a third branch to it, since with real geometry there is
+nothing for that half to do. `vRockObj` comes from the mesh's own position (already in
+metres), `vRockNrm` from its own normal.
 
-`rock-sift/src/forgeRocks.js` builds a plain `PBRMaterial` per stone from the
-archetype's own `colour` and `roughness`. Honest per-lithology shading, no textures.
-That is why the sift screenshots read pale and flat next to the forge lab.
+Steps 2 and 3 were the wrong shape, and the reason is worth keeping. `rockInst` exists
+to carry a per-*instance* tint through a shared unit sphere; a real-geometry mesh is
+already per-stone, so the tint has a much simpler home — **vertex colours**. PBR folds
+`vColor.rgb` into `surfaceAlbedo` before the plugin's fragment hook runs, so the
+photograph multiplies it with exactly the arithmetic the instanced branch does. No
+instanced buffer to register, no attribute that silently reads zero, and no material
+clone: **one material per lithology**, seven programs rather than forty.
+
+Two things the original analysis did not reach, both discovered building it:
+
+- **WGSL is not optional.** `MaterialPluginManager` *throws* when a plugin is added to
+  a material whose shader language it does not claim, and `PBRMaterial` picks WGSL by
+  itself the moment the engine is WebGPU. A GLSL-only plugin does not degrade there —
+  it takes the scene down at construction. Real-geometry mode therefore emits both
+  dialects. (`forceGLSL` works too, and costs a CDN fetch of glslang at first compile.)
+- **The stones were black for a second reason as well.** sand-sim's WebGPU scene had
+  no lights at all, correctly — terrain, sky, water and spray all light themselves in
+  WGSL. A PBR mesh in a scene with no lights is black whatever its material says. Both
+  causes had to go.
 
 ---
 
@@ -122,11 +147,17 @@ Piles follow the same twin pattern.
 
 ### Slices
 
-1. **Pile field.** ✅ Built. `shared/pileField.js` + the mound term in the height bake.
-2. **Rock instances.** ✅ Built. `sand-sim/src/scene/siftingBeds.js` — 2160 stones
-   across four spots, drawn and culled, no physics.
-3. **Crouch transition.** ✅ Built. Stand on a pile, press E, sift; Escape comes
-   back. The beach pauses while the sift world is up.
+1. **Pile field.** ✅ Built, then deliberately flattened. `shared/pileField.js` became
+   `shared/siftPad.js`: the mound is gone and only the levelling survives. See
+   docs/09 · "The sift pad".
+2. **Rock instances.** ✅ Built. `sand-sim/src/scene/siftingBeds.js` — 2480 stones
+   across four spots, drawn and culled, no physics, shaded by the forge material.
+3. **Crouch transition.** ✅ Built. Stand at a spot, press E, sift; E or Escape comes
+   back. The walker freezes; everything the stones touch keeps running.
+
+**Everything below this line describes the mound**, which no longer exists. It is kept
+because the reasoning about *where* a spot belongs in the pipeline — the height bake,
+not the deformation field — is unchanged and was the expensive part to work out.
 
 ### Slice 1, as built
 

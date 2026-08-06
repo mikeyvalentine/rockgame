@@ -1,8 +1,8 @@
 /**
- * The stones on the shingle piles — integration slice 2.
+ * The stones on the sifting pads.
  *
- * Every sifting spot gets its baked bed drawn on the crown of its mound. This
- * is the *scenery* half: no Havok, no bodies, nothing pickable. The physics bed
+ * Every sifting spot gets its baked bed drawn on the sand. This is the
+ * *scenery* half: no Havok, no bodies, nothing pickable. The physics bed
  * wakes when the player crouches (slice 3), which is the whole point of the
  * rock-field LOD in docs/09 — simulated particles at standing distance, full
  * physics objects only where the player's hands are.
@@ -32,14 +32,15 @@
  * quarter-metres. sand-sim is in metres. Everything read out of a bed is
  * divided by `U` exactly once, here.
  *
- * Why the crown had to be flat
- * ----------------------------
+ * Why the sand under a bed has to be level
+ * ----------------------------------------
  * A bed is a snapshot of stones poured onto flat ground. It is placed by adding
- * the crown height to every stone's baked y. If the crown were domed or carried
- * the beach's micro relief, stones would float on the high side and sink on the
- * low one — which is why `shared/pileField.js` flattens it and
- * `tools/pile-field-check.mjs` measures that it stayed flat through the
- * resampling.
+ * the sand height at the spot to every stone's baked y. If that patch of sand
+ * carried the beach's 2 degree foreshore ramp or its micro relief, stones would
+ * float on the high side and sink on the low one — which is why
+ * `shared/siftPad.js` levels it, and `tools/sift-pad-check.mjs` measures that it
+ * stayed level through the resampling. The pad adds no HEIGHT; it is not a
+ * mound, and there is nothing to climb.
  */
 
 // Explicit .js: this module is also loaded by the headless checks under plain
@@ -53,16 +54,14 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 // of trap as the `engine.dynamicTexture.js` import in both app modules.
 import "@babylonjs/core/Meshes/thinInstanceMesh.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
-import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial.js";
-import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 
 import { bakeLibrary, buildDetailMesh } from "../../../rock-forge/src/forge/bake.js";
 import { ARCHETYPES } from "../../../rock-forge/src/forge/archetypes.js";
 import { mulberry32 } from "../../../rock-forge/src/forge/rng.js";
 import { decodeBed } from "../../../shared/bedFormat.js";
-import { SIFT_SPOTS } from "../../../shared/pileField.js";
-import { scatterStones } from "../../../shared/scatterField.js";
+import { SIFT_SPOTS } from "../../../shared/siftPad.js";
+import { createBedMaterials, tintFor, tintColours } from "./rockMaterials.js";
 
 /**
  * rock-sift's cast, as constants. These are not free parameters: the baked beds
@@ -116,11 +115,21 @@ export function castSequence({ count = ARCHETYPE_COUNT, seed = ROCK_SEED } = {})
     return out;
 }
 
-/** Generate the archetype meshes, in metres. */
-export function createBedArchetypes(scene, opts = {}) {
+/**
+ * Generate the archetype meshes, in metres.
+ *
+ * @param materials  family name -> PBRMaterial, from `createBedMaterials`
+ * @param photo      whether those materials carry photographed surfaces, which
+ *                   decides how the per-stone tint is normalised
+ */
+export function createBedArchetypes(scene, opts = {}, materials = {}, photo = false) {
     const archetypes = [];
+    // One extra walk of the RNG, for the per-stone brightness jitter. Kept
+    // separate from `castSequence`'s so adding it cannot shift the cast.
+    const jrng = mulberry32((opts.seed ?? ROCK_SEED) ^ 0x5bf03635);
 
     for (const { name, shape, params, sizeMetres } of castSequence(opts)) {
+        const jitter = 0.86 + jrng() * 0.28;
         const detail = buildDetailMesh(shape, params, SCENERY_LOD, sizeMetres);
         const positions = Float32Array.from(detail.positions);
         const indices = Array.from(detail.indices);
@@ -132,17 +141,14 @@ export function createBedArchetypes(scene, opts = {}) {
         vertexData.indices = indices;
         vertexData.normals = normals;
 
-        const material = new PBRMaterial(`${name}_mat`, scene);
-        const [r, g, b] = shape.colour;
-        material.albedoColor = new Color3(r, g, b);
-        material.roughness = shape.roughness ?? 0.7;
-        material.metallic = 0;
-        material.environmentIntensity = 0.85;
-        material.backFaceCulling = true;
-        material.twoSidedLighting = false;
-        // Built with Babylon's own winding, so no compensating flip — the same
-        // reasoning as rock-sift/src/forgeRocks.js, and its winding-check.
-        material.sideOrientation = null;
+        // The stone's own colour rides in the vertex buffer rather than in a
+        // material, which is what lets forty stones share seven materials —
+        // see scene/rockMaterials.js. PBR folds vColor into surfaceAlbedo
+        // before the forge plugin's fragment hook runs, so this is exactly the
+        // per-instance tint the forge lab passes in `rockInst.yzw`.
+        vertexData.colors = Array.from(tintColours(positions, tintFor(shape, jitter, photo)));
+
+        const material = materials[shape.archetype] ?? Object.values(materials)[0];
 
         // A parked source mesh, for the one spot that is awake at a time.
         //
@@ -178,7 +184,7 @@ export function createBedArchetypes(scene, opts = {}) {
  * Fetch the manifest and every variant it lists.
  *
  * All of them, not one: a shore has several spots and each takes a different
- * variant, so the player does not walk past the same 540 stones four times.
+ * variant, so the player does not walk past the same stones four times.
  * Which spot gets which is fixed in `SIFT_SPOTS`, so the beach is the same
  * every load — no `Math.random`, for the same reason `fetchBakedBed` had its
  * random default taken away (docs/04).
@@ -211,7 +217,7 @@ export async function fetchBedVariants(manifestUrl = "/assets/beds/shore.json") 
  *
  * @param bed        decoded bed, in rock-sift world units
  * @param origin     {x, z} spot centre, metres
- * @param baseY      crown height at that spot, metres
+ * @param baseY      sand height at that spot, metres
  * @param names      archetype names, in the order the caller will index them
  * Returns the buffers plus, for every stone in bed order, which archetype
  * buffer it landed in and at which slot. The crouch needs that mapping to write
@@ -273,47 +279,7 @@ export function bedInstanceMatrices(bed, origin, baseY, names) {
 }
 
 /**
- * The scattered option: stones strewn on the shore instead of heaped.
- *
- * Same instance buffers, same draw calls — only the transforms come from a seed
- * rather than a baked file, and each stone sits on the terrain where it lands
- * rather than on a crown levelled to receive it.
- */
-function scatterInstanceMatrices(spot, names, archetypes, terrain) {
-    const radiusOf = new Map(archetypes.map((a) => [a.name, a.radius]));
-    const stones = scatterStones(spot, {
-        seed: 4242 + (spot.variant ?? 0) * 101,
-        names,
-        radiusOf: (n) => radiusOf.get(n) ?? 0.05,
-        heightAt: (x, z) => terrain.heightAt(x, z),
-    });
-
-    const counts = new Map();
-    for (const st of stones) counts.set(st.name, (counts.get(st.name) ?? 0) + 1);
-    const buffers = new Map();
-    const cursor = new Map();
-    for (const [n, c] of counts) { buffers.set(n, new Float32Array(c * 16)); cursor.set(n, 0); }
-
-    const m = new Matrix();
-    const scale = Vector3.One();
-    const pos = new Vector3();
-    const rot = new Quaternion();
-    const slots = new Array(stones.length);
-
-    for (const [i, st] of stones.entries()) {
-        pos.set(st.x, st.y, st.z);
-        Quaternion.FromEulerAnglesToRef(st.tilt, st.yaw, st.tilt * 0.5, rot);
-        Matrix.ComposeToRef(scale, rot, pos, m);
-        const at = cursor.get(st.name);
-        m.copyToArray(buffers.get(st.name), at * 16);
-        slots[i] = { name: st.name, slot: at };
-        cursor.set(st.name, at + 1);
-    }
-    return { buffers, slots };
-}
-
-/**
- * Draw every spot's bed on its pile.
+ * Draw every spot's bed on its pad.
  *
  * @param scene
  * @param terrain   anything with `heightAt(x, z)` — both renderers qualify
@@ -324,11 +290,17 @@ function scatterInstanceMatrices(spot, names, archetypes, terrain) {
 export async function buildSiftingBeds(scene, terrain, opts = {}) {
     const loaded = await fetchBedVariants(opts.manifestUrl);
     if (!loaded) {
-        console.warn("[sand-sim] no baked beds found — piles will be bare sand");
+        console.warn("[sand-sim] no baked beds found — the spots will be bare sand");
         return null;
     }
 
-    const archetypes = createBedArchetypes(scene, opts);
+    // The forge's materials and their photographed surfaces. An await, and the
+    // reason this whole function is one: it belongs behind the loading screen
+    // with Havok and the hulls, not in front of the player.
+    const { byFamily, photo, notes } = await createBedMaterials(scene);
+    if (notes.length) console.info("[sand-sim] rock surfaces:", notes.join("; "));
+
+    const archetypes = createBedArchetypes(scene, opts, byFamily, photo);
     const names = archetypes.map((a) => a.name);
     const byName = new Map(archetypes.map((a) => [a.name, a]));
 
@@ -368,9 +340,7 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
         };
         const baseY = terrain.heightAt(spot.x, spot.z);
         bedForSpot.set(spot.id, { bed, baseY });
-        const { buffers, slots } = spot.style === "scattered"
-            ? scatterInstanceMatrices(spot, names, archetypes, terrain)
-            : bedInstanceMatrices(bed, spot, baseY, names);
+        const { buffers, slots } = bedInstanceMatrices(bed, spot, baseY, names);
         slotsForSpot.set(spot.id, slots);
 
         for (const [name, buf] of buffers) {

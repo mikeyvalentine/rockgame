@@ -6,10 +6,10 @@
  * profile is *composed*; this module only owns the numbers, and beachParams
  * re-exports them so nothing downstream changed.
  *
- * They moved because `shared/pileField.js` needs the foreshore slope to level a
- * pile's crown, and beachParams imports pileField — so reading them from there
- * would be a cycle. A constant with two owners is the other way that ends, and
- * the wrong one.
+ * They moved because `shared/siftPad.js` needs the foreshore slope to level the
+ * sand under a sift bed, and beachParams imports siftPad — so reading them from
+ * there would be a cycle. A constant with two owners is the other way that ends,
+ * and the wrong one.
  */
 
 export const WATERLINE_Z = 0;

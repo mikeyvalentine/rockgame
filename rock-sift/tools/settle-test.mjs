@@ -16,7 +16,7 @@ import "@babylonjs/loaders/glTF/index.js"; // Node needs the explicit path; Vite
 import { buildGroundCollider, shoreHeight } from "../src/environment.js";
 import { createForgeArchetypes } from "../src/forgeRocks.js";
 import { boundingRadius, pourAndSettle } from "../src/field.js";
-import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, POOL_RADIUS, ROCK_COUNT, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
+import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, POOL_HALF_X, POOL_HALF_Z, ROCK_COUNT, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
 const count = Number(process.argv[2]) || ROCK_COUNT;
 // Runtime steps at the frame delta, not the fine step used while settling. A bed
@@ -81,6 +81,7 @@ console.log(`  still moving   : ${moving}   <- must be ~0`);
 console.log(`  height range   : ${cm(minY)} .. ${cm(maxY)} cm   (flat sand at 0 cm)`);
 console.log(`  spread p50/p90/max: ${(radii[radii.length >> 1] * 100).toFixed(1)} / ` +
   `${(radii[Math.floor(radii.length * 0.9)] * 100).toFixed(1)} / ` +
-  `${(radii[radii.length - 1] * 100).toFixed(1)} cm  (poured within ${POOL_RADIUS * 100} cm)`);
+  `${(radii[radii.length - 1] * 100).toFixed(1)} cm  ` +
+  `(poured within ${POOL_HALF_X * 100} x ${POOL_HALF_Z * 100} cm)`);
 return under > 0 || moving > 3;
 }

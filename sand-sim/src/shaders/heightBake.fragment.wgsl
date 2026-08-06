@@ -18,7 +18,7 @@
 
 #include<snowNoise>
 #include<snowTerrain>
-#include<snowPiles>
+#include<siftPad>
 
 varying vUV: vec2f;
 
@@ -64,24 +64,24 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
         relief += (uniforms.duneBase + dune.x * uniforms.duneAmp) * duneT;
     }
 
-    // Shingle piles — the sifting spots (shared/pileField.js, generated into
-    // the snowPiles include). x is coverage, y is the levelled lift.
+    // Sifting pads — the sifting spots (shared/siftPad.js, generated into the
+    // siftPad include). x is coverage, y is the levelling correction.
     //
-    // Applied before micro relief because the crown has to end up flat AND
-    // level: rock-sift's bed is poured on flat ground under vertical gravity,
-    // so the mound both damps micro in the same proportion as it rises and
-    // cancels the foreshore ramp under itself. Outside heightAmp on purpose —
-    // the piles are where the player sifts, so their geometry is level design,
-    // not a relief tunable.
-    let pile = pileDominant(p);
+    // No lift: a pad adds no height at all, it only makes the beach LEVEL where
+    // the bed lies. rock-sift's bed is poured on flat ground under vertical
+    // gravity, so the pad both damps micro relief in proportion to its coverage
+    // and cancels the foreshore ramp under itself. Outside heightAmp on purpose
+    // — the pads are where the player sifts, so this is a correctness term, not
+    // a relief tunable.
+    let pad = padDominant(p);
 
     // Micro relief on the open beach (fades out under the dunes, and under
-    // the piles).
+    // the pads).
     let m2 = windMat(uniforms.windAngle, 1.2, 1.0, 21.0);
     let micro = fbmDamped(m2 * p + vec2f(7.3, -4.1), 3, 2.07, 0.5, 1.2);
-    relief += micro.x * uniforms.microAmp * (1.0 - duneT * 0.7) * (1.0 - pile.x);
+    relief += micro.x * uniforms.microAmp * (1.0 - duneT * 0.7) * (1.0 - pad.x);
 
-    h += relief * uniforms.heightAmp + pile.y;
+    h += relief * uniforms.heightAmp + pad.y;
 
     fragmentOutputs.color = vec4f(h, 0.0, 0.0, 1.0);
 }

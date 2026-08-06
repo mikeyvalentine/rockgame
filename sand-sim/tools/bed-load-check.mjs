@@ -12,16 +12,15 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decodeBed } from "../../shared/bedFormat.js";
-import { SIFT_SPOTS, CROWN_RADIUS, pileCoverage } from "../../shared/pileField.js";
+import { SIFT_SPOTS, PAD_HALF_X, PAD_HALF_Z, padCoverage } from "../../shared/siftPad.js";
 import { bedInstanceMatrices, U, ROCK_SEED, ARCHETYPE_COUNT } from "../src/scene/siftingBeds.js";
 import { bakeLibrary } from "../../rock-forge/src/forge/bake.js";
 import { ARCHETYPES } from "../../rock-forge/src/forge/archetypes.js";
 import { shoreProfileJS } from "../src/terrain/beachParams.js";
 
-// One spot is deliberately the scattered A/B — no mound, no crown, no baked
-// bed. The pile checks below are about piles, so they say so rather than
-// quietly asserting something the scattered spot was never meant to satisfy.
-const PILE_SPOTS = SIFT_SPOTS.filter((s) => s.style !== "scattered");
+// Every spot is a baked bed on a levelled pad now. There used to be a fourth
+// that was a loose scatter, kept as an A/B against the heap; the heap is gone,
+// the bed is one tightly packed layer, and the comparison went with it.
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BEDS = join(ROOT, "public", "assets", "beds");
@@ -97,7 +96,7 @@ let worstRadius = 0;
 let worstBelow = 0;
 let highest = -Infinity;
 
-for (const spot of PILE_SPOTS) {
+for (const spot of SIFT_SPOTS) {
     const bed = beds[spot.variant % beds.length];
     const baseY = shoreProfileJS(spot.x, spot.z, 1);
     const { buffers } = bedInstanceMatrices(bed, spot, baseY, names);
@@ -124,25 +123,45 @@ for (const spot of PILE_SPOTS) {
     placed += n;
 }
 
-check("every pile spot's stones are placed", placed === PILE_SPOTS.length * manifest.stones,
-    placed + " of " + PILE_SPOTS.length * manifest.stones);
+check("every spot's stones are placed", placed === SIFT_SPOTS.length * manifest.stones,
+    placed + " of " + SIFT_SPOTS.length * manifest.stones);
 
-// The bed must land on the flat crown, not spill down the face — that is the
-// whole reason CROWN_RADIUS is sized clear of rock-sift's BED_RADIUS.
-check("the bed sits inside the flat crown", worstRadius < CROWN_RADIUS,
-    "furthest stone " + worstRadius.toFixed(3) + " m, crown " + CROWN_RADIUS + " m");
+// The bed must land inside the levelled region, not out on the blend — that is
+// the whole reason PAD_HALF_* is sized clear of rock-sift's POOL_HALF_*.
+check("the bed sits inside the levelled pad", worstRadius < Math.hypot(PAD_HALF_X, PAD_HALF_Z),
+    "furthest stone " + worstRadius.toFixed(3) + " m, pad " +
+    Math.hypot(PAD_HALF_X, PAD_HALF_Z).toFixed(3) + " m");
 
 // A units error is the failure mode here: undivided, a 2 m bed becomes an 8 m
 // one and the stones tower over the walker.
 check("the bed is a bed, not a monument", highest < 0.35,
-    "tallest stone " + highest.toFixed(3) + " m above the crown");
-check("no stone is buried under the crown", worstBelow > -0.1,
+    "tallest stone " + highest.toFixed(3) + " m above the sand");
+check("no stone is buried under the sand", worstBelow > -0.1,
     "lowest " + worstBelow.toFixed(3) + " m");
+
+// ONE LAYER. This is the shape of the bed, and the only place it is asserted:
+// a heap four stones deep and a single packed sheet both pass every check
+// above. The median stone in a single layer is resting ON the sand, so its
+// centre sits about half a stone up; in a heap it sits two or three stones up.
+const heights = [];
+for (const spot of SIFT_SPOTS) {
+    const bed = beds[spot.variant % beds.length];
+    const baseY = shoreProfileJS(spot.x, spot.z, 1);
+    const { buffers } = bedInstanceMatrices(bed, spot, baseY, names);
+    for (const [, buf] of buffers) {
+        for (let i = 0; i < buf.length; i += 16) heights.push(buf[i + 13] - baseY);
+    }
+}
+heights.sort((a, b) => a - b);
+const median = heights[Math.floor(heights.length / 2)];
+const p95 = heights[Math.floor(heights.length * 0.95)];
+check("the bed is one layer, not a heap", median < 0.04 && p95 < 0.08,
+    "median " + (median * 1000).toFixed(0) + " mm, p95 " + (p95 * 1000).toFixed(0) + " mm");
 
 // And the ground it lands on is genuinely flat, sampled where the stones are.
 let crownMin = Infinity;
 let crownMax = -Infinity;
-for (const spot of PILE_SPOTS) {
+for (const spot of SIFT_SPOTS) {
     for (let a = 0; a < Math.PI * 2; a += 0.3) {
         for (const r of [0, worstRadius * 0.5, worstRadius]) {
             const h = shoreProfileJS(spot.x + Math.cos(a) * r, spot.z + Math.sin(a) * r, 1) -
@@ -153,21 +172,15 @@ for (const spot of PILE_SPOTS) {
     }
 }
 check("the ground under every bed is flat", crownMax - crownMin < 0.03,
-    ((crownMax - crownMin) * 1000).toFixed(1) + " mm across the pile crowns");
+    ((crownMax - crownMin) * 1000).toFixed(1) + " mm across the pads");
 
 // Each spot draws a different variant, so the shore does not repeat.
 check("each spot uses its own variant",
     new Set(SIFT_SPOTS.map((s) => s.variant % beds.length)).size === SIFT_SPOTS.length);
 
-// Every spot's centre is fully covered, i.e. the bed is on a pile at all.
-check("every pile spot is on a pile",
-    PILE_SPOTS.every((s) => pileCoverage(s.x, s.z) === 1));
-// And the scattered one is on open beach — no mound under it at all, which is
-// the comparison: stones on the shore as it is, against stones on a bank built
-// to receive them.
-check("the scattered spot raises no mound",
-    SIFT_SPOTS.filter((s) => s.style === "scattered")
-        .every((s) => pileCoverage(s.x, s.z) === 0));
+// Every spot's centre is fully covered, i.e. every bed is on levelled sand.
+check("every spot is on a levelled pad",
+    SIFT_SPOTS.every((s) => padCoverage(s.x, s.z) === 1));
 
 // ---------------------------------------------------------------------------
 // The loud failure

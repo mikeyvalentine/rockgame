@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { decodeBed } from "../../shared/bedFormat.js";
-import { SIFT_SPOTS, CROWN_RADIUS } from "../../shared/pileField.js";
+import { SIFT_SPOTS, PAD_HALF_X, PAD_HALF_Z } from "../../shared/siftPad.js";
 import { SpotImprint, bakeBedImprint, IMPRINT_HALF, BED_PRESS } from "../../shared/spotImprint.js";
 import { Imprints } from "../src/scene/imprints.js";
 import { castSequence } from "../src/scene/siftingBeds.js";
@@ -29,14 +29,19 @@ const baseY = shoreProfileJS(spot.x, spot.z, 1);
 const imp = new SpotImprint(spot);
 
 check("a fresh layer is untouched sand", imp.maxDepth() === 0 && imp.coverage() === 0);
-check("the layer covers the whole crown", IMPRINT_HALF > CROWN_RADIUS,
-    IMPRINT_HALF + " m half-extent vs " + CROWN_RADIUS + " m crown");
+check("the layer covers the whole pad", IMPRINT_HALF > Math.max(PAD_HALF_X, PAD_HALF_Z),
+    IMPRINT_HALF + " m half-extent vs " + Math.max(PAD_HALF_X, PAD_HALF_Z) + " m pad");
 
 const pressed = bakeBedImprint(imp, bed, radiusOf, { unitScale: 4, baseY, spot });
 check("the bed presses the sand it rests in", pressed > 0, pressed + " stones of " + bed.count);
-// Only the stones touching the sand press it — a pile 30 cm deep would flatten
-// the crown if all 540 counted.
-check("only the bottom layer presses", pressed < bed.count * 0.6,
+// Nearly every stone presses, and that is the point rather than a slack bound:
+// the bed is ONE layer, so almost all of it is touching the sand. The old
+// four-deep heap passed at under 60%, and this check reading 55% today would
+// mean the bed had quietly gone back to being a heap.
+//
+// Not 100%: `bakeBedImprint` still skips a stone perched more than 1.6 radii up,
+// and a packed layer has a few of those sitting in the gaps.
+check("a single layer presses nearly all of itself", pressed > bed.count * 0.9,
     pressed + " of " + bed.count + " pressed");
 
 const deepest = imp.maxDepth();

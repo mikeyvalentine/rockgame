@@ -58,6 +58,13 @@ export class FpsRig {
          */
         this.fov = 1.02;
 
+        /**
+         * Optional gate on where the view may point, `(pose) => void`, mutating
+         * `{yaw, pitch}` in place. Null while walking; the crouch installs one
+         * so a knelt player leans rather than turns — see scene/crouch.js.
+         */
+        this.lookFilter = null;
+
         /** Camera basis, republished every frame for anything that aims. */
         this.forward = new Vector3(0, 0, 1);
         this.right = new Vector3(1, 0, 0);
@@ -69,10 +76,13 @@ export class FpsRig {
      * @param {Vector3} feetPos controller world position (feet, ground-snapped)
      */
     update(dt, feetPos) {
-        this.yaw += input.lookX;
-        this.pitch = Scalar.Clamp(
-            this.pitch + input.lookY, -PITCH_LIMIT, PITCH_LIMIT
-        );
+        const pose = {
+            yaw: this.yaw + input.lookX,
+            pitch: Scalar.Clamp(this.pitch + input.lookY, -PITCH_LIMIT, PITCH_LIMIT),
+        };
+        this.lookFilter?.(pose);
+        this.yaw = pose.yaw;
+        this.pitch = pose.pitch;
 
         const cp = Math.cos(this.pitch);
         this.forward.set(

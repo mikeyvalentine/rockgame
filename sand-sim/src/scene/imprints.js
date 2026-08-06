@@ -6,7 +6,7 @@
  *
  * Two things press the sand:
  *
- *   1. **The bed, at placement.** 540 stones have been resting there; the sand
+ *   1. **The bed, at placement.** Hundreds of stones have been resting there; the sand
  *      under them should already be dented. Every resting position is in the
  *      bed file, so this is derived rather than authored — no bake step, no
  *      asset, just a pass over the transforms the spot was placed with.
@@ -43,9 +43,9 @@
  */
 
 import {
-    SpotImprint, bakeBedImprint, BED_PRESS, IMPRINT_HALF,
+    SpotImprint, bakeBedImprint, IMPRINT_HALF,
 } from "../../../shared/spotImprint.js";
-import { SIFT_SPOTS } from "../../../shared/pileField.js";
+import { SIFT_SPOTS } from "../../../shared/siftPad.js";
 import { U } from "./siftingBeds.js";
 
 /**
@@ -79,10 +79,10 @@ export class Imprints {
             this.layers.set(spot.id, layer);
 
             // The bed's own imprint, from the transforms this spot was placed
-            // with. A scattered spot has no baked bed; its stones each press
-            // where they landed instead, which `pressScatter` does.
+            // with. Every stone in a single-layer bed is touching the sand, so
+            // unlike the old four-deep heap this is very nearly all of them.
             const entry = beds?.bedForSpot?.get(spot.id);
-            if (entry && spot.style !== "scattered") {
+            if (entry) {
                 const radiusOf = new Map(
                     (beds.archetypeList ?? []).map((a) => [a.name, a.radius])
                 );
@@ -159,15 +159,6 @@ export class Imprints {
         return pressed;
     }
 
-    /** Stones strewn on open sand each press where they came to rest. */
-    pressScatter(spotId, stones) {
-        const layer = this.layers.get(spotId);
-        if (!layer) return;
-        for (const s of stones) {
-            layer.press(s.x, s.z, s.radius, s.radius * BED_PRESS);
-        }
-    }
-
     /**
      * Redraw a spot's remembered dents into the deformation field.
      *
@@ -203,6 +194,36 @@ export class Imprints {
             this.deform.brush(f.x, f.z, step * 1.5, f.d, f.d * 0.4, 0.25, 0, 0, 1, 0.8);
         }
         return drawn.length;
+    }
+
+    /**
+     * Keep the nearest spot's dents drawn while the player can see them.
+     *
+     * `restamp` on crouching is not enough on its own. The dents are most of
+     * what makes a bed read as stones lying IN the sand rather than on it, and
+     * the field relaxes — so a bed you are walking towards would smooth back to
+     * flat sand before you reached it, and only dent once you knelt. Redrawn on
+     * a slow tick instead, which the field's own relaxation absorbs.
+     *
+     * Deliberately cheap and deliberately rare: one spot, a fraction of a
+     * frame's brush budget, once a second and a half. The budget is shared with
+     * footfalls, and a boot that fails to print because a bed was being redrawn
+     * is a worse trade than a dent that fades a little between redraws.
+     */
+    tick(dt, x, z, radius = 14) {
+        this._since = (this._since ?? 1e9) + dt;
+        if (this._since < 1.5) return 0;
+
+        let near = null;
+        let bestD = radius;
+        for (const spot of SIFT_SPOTS) {
+            const d = Math.hypot(x - spot.x, z - spot.z);
+            if (d < bestD) { bestD = d; near = spot; }
+        }
+        if (!near) return 0;
+
+        this._since = 0;
+        return this.restamp(near.id, { maxBrushes: 48 });
     }
 
     /** For the overlay and the checks: how dug the beach is. */
