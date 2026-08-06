@@ -1,0 +1,79 @@
+# Build the whole monorepo and publish it to Cloudflare Pages.
+#
+# Deployment used to be `npm run deploy` from somebody's laptop, which meant
+# merging to main changed nothing on the live site and the site's contents
+# depended on whose machine ran it. This runs the same script — tools/
+# build-site.mjs — on a clean checkout instead.
+#
+# Two secrets are needed on the repository (Settings → Secrets and variables →
+# Actions). Neither belongs in this file:
+#
+#   CLOUDFLARE_API_TOKEN    a token with the "Cloudflare Pages: Edit" permission
+#   CLOUDFLARE_ACCOUNT_ID   from the Cloudflare dashboard URL or Workers page
+#
+# Until both exist the deploy step fails; the build still runs, so a broken
+# build is caught on every push either way.
+#
+# Tests do NOT gate the deploy, by request. They run alongside it as their own
+# job and report, so a red suite is visible without holding the site back. The
+# trade is deliberate and worth naming: a failing test can now reach the origin,
+# and the signal that something is wrong is the Actions tab rather than an
+# absent deployment.
+
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+  # Deploy on demand too, so a failed run can be retried without an empty commit.
+  workflow_dispatch:
+
+# One deploy at a time. Two overlapping runs would race to publish and the
+# loser's output is what sticks.
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: false
+
+jobs:
+  # Runs in parallel with the deploy and gates nothing. Its job is to tell you,
+  # not to stop you.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm --prefix sand-sim ci
+      - run: npm --prefix sand-sim test
+      - run: npm --prefix rock-sift ci
+      # rock-sift's suite is five real Havok runs and takes a couple of minutes,
+      # which is affordable now that nothing is waiting on it.
+      - run: npm --prefix rock-sift test
+
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # build-site.mjs picks the shipping assets with `git ls-files`, so the
+        # checkout has to be a real repository, not an export.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The labs' node_modules are installed by build-site.mjs itself, so this
+      # is the whole build.
+      - name: Build
+        run: |
+          npm ci
+          npm run build:site
+
+      - name: Publish
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name rockgame
