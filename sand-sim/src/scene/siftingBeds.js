@@ -262,11 +262,17 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
     // sight. Split per spot, each box is about 2 m across and the spots you
     // are not looking at cost nothing.
     const drawnMeshes = [];
+    // Kept per spot so the crouch can hide exactly one bed's scenery and put
+    // bodies in its place — the LOD swap, which needs to touch one spot and
+    // leave the other three alone.
+    const perSpotMeshes = new Map(SIFT_SPOTS.map((s) => [s.id, []]));
+    const bedForSpot = new Map();
     let stones = 0;
 
     for (const spot of SIFT_SPOTS) {
         const bed = loaded.beds[spot.variant % loaded.beds.length];
         const baseY = terrain.heightAt(spot.x, spot.z);
+        bedForSpot.set(spot.id, { bed, baseY });
         const buffers = bedInstanceMatrices(bed, spot, baseY, names);
 
         for (const [name, buf] of buffers) {
@@ -292,7 +298,9 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
             mesh.thinInstanceSetBuffer("matrix", buf, 16, true);
             mesh.thinInstanceRefreshBoundingInfo(true);
             mesh.freezeWorldMatrix();
+            mesh.metadata = { spotId: spot.id, archetype: name };
             drawnMeshes.push(mesh);
+            perSpotMeshes.get(spot.id).push(mesh);
             stones += buf.length / 16;
         }
     }
@@ -319,5 +327,14 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
         stones,
         archetypes: archetypes.length,
         meshes: drawnMeshes.length,
+
+        // The handles the crouch needs. Scenery and bodies are the same bed in
+        // two states, and only one spot is ever in the body state.
+        archetypeList: archetypes,
+        bedForSpot,
+        /** Show or hide one spot's scenery, leaving the other spots alone. */
+        setSceneryEnabled(spotId, on) {
+            for (const m of perSpotMeshes.get(spotId) ?? []) m.setEnabled(on);
+        },
     };
 }

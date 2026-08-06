@@ -65,7 +65,22 @@ Two costs that had to be measured rather than assumed:
 - **Scenery LOD.** rock-sift draws at icosphere level 3 (1280 tris) because the player is crouched over the bed. At standing distance level 2 is indistinguishable and four times cheaper. This is the rock-field LOD above, in its cheapest form — the detailed bed is what the crouch swaps in.
 - **One mesh per (archetype, spot).** Babylon frustum-tests a thin-instanced mesh by the bounds of *all* its instances, so merging the four spots per archetype means nothing ever culls. Measured: 2,764,800 triangles submitted from anywhere on the beach, against a 131k beach. Split per spot and dropped to scenery LOD: **172,800 with a bed in view, 0 with none.**
 
-### The crouch — built
+### The crouch — being rebuilt in place
+
+The scene-swap below is superseded. It failed three requirements: the transition was a load rather than a camera move, the bed stood on rock-sift's own ground instead of the beach, and nothing a stone did could reach the sand. All three come back if the bed simply wakes where it already is, in the beach's own scene.
+
+**1:1 metres works — measured.** rock-sift models at 4x to stay clear of Havok's collision margins, so this had to be tested. Running its own suite at `U = 1`: sweeping, carrying, bucket and winding all pass; only settling a *poured* bed regresses (6 stones creeping against ~0). The game never pours — it restores baked beds, and pouring is `npm run bake`, offline, still at 4x. So the 4x world is a bake-time convenience, not a runtime requirement.
+
+`sand-sim/src/scene/siftPhysics.js` holds the bed's two states and the swap between them, covered by `tools/sift-physics-check.mjs`. Measured: **482 ms to preload 40 convex hulls** (paid while the beach loads) and **93 ms to wake 540 bodies** — which is what lets the crouch be a camera move with nothing to hide behind a loading screen.
+
+The ground collider is a single static box with its top face exactly at the crown, and *exact* is the word: levelling the crown made it a true horizontal plane. rock-sift's note on why a trimesh is wrong here still applies — convex hulls catch on the internal edges between triangles and the bed never rests.
+
+**Two things designed for but not yet built:**
+
+- **Divots must persist.** The `DeformationField` is the wrong home for the same reason the piles were: it is player-centred over 80 m, toroidal, and it relaxes, so a hole fades and then vanishes when you walk away. Permanent stone divots — and the bed's own baked-in imprint on the sand it is resting in — want a separate world-anchored layer per spot, which never relaxes and never scrolls. At 3.9 cm texels the existing field is stone-scale, so resolution is not the obstacle; persistence is.
+- **Spots will not stay circular.** The intent is to spread the stones along the beach rather than sift in a disc. Nothing new should compute `distance < radius` inline; spot coverage belongs behind the spot itself, so a strip slots in where a disc is today.
+
+### The crouch — superseded scene swap
 
 Stand on a pile, press E, and you are sifting. Escape stands you back up on the beach where you left off.
 
