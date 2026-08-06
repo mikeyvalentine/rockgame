@@ -26,6 +26,7 @@ import {
     padCoverage, padLevel, spotAt, siftPadWGSL,
 } from "../../shared/siftPad.js";
 import { POOL_HALF_X, POOL_HALF_Z } from "../../rock-sift/src/config.js";
+import { shorePoint, shoreArc, shoreDistance } from "../../shared/worldBounds.js";
 import {
     shoreProfileJS, WORLD_SIZE, HEIGHT_RES, MICRO_AMP,
     PLAY_RECT, SPAWN, WATERLINE_Z, FORESHORE_SLOPE, SEABED_DEPTH, BERM_HEIGHT,
@@ -178,12 +179,16 @@ check("spotAt is silent out on the feather",
 // ---------------------------------------------------------------------------
 
 const spot = SIFT_SPOTS[0];
-const away = { x: spot.x + 12, z: spot.z };
+// 12 m along the shore, at the same distance from the water. NOT at the same
+// z: the shore is curved, so equal z is not equal depth, and 12 m of x at this
+// spot is 2.3 m of extra beach — 8 cm of ramp, which is most of the tolerance
+// below and read as the mound coming back.
+const away = shorePoint(shoreArc(spot.x, spot.z) + 12, shoreDistance(spot.x, spot.z));
 
 const hPad = groundedHeightAt(spot.x, spot.z);
 const hAway = groundedHeightAt(away.x, away.z);
 
-// Compared at equal z, so the foreshore ramp cancels and what is left would be
+// Compared at equal depth, so the foreshore ramp cancels and what is left would be
 // the pad, if the pad had any height. It does not: this is the check that the
 // mound is gone, and the tolerance is the micro relief the open beach carries
 // either way.

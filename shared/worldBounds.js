@@ -3,55 +3,87 @@
  *
  * Until now there was no world, only a beach that ran off in every direction: a
  * 512 m heightfield under a 3600 x 4000 m water quad that met the horizon. That
- * is a sea, and this game has a pond (CLAUDE.md). Nothing bounded the walkable
- * strip either except `PLAY_RECT`, a rectangle picked by eye.
+ * is a sea, and this game has a pond (CLAUDE.md).
  *
- * Two rectangles now, and everything else is derived from them:
+ *   POND    a disc, 200 m across, its near edge at the waterline.
+ *   SHORE   70 m along that edge, 25 m deep. Walkable, and the only ground
+ *           that carries rocks.
  *
- *   POND    200 x 200 m of water, its near edge at the waterline.
- *   SHORE    70 m along that near edge, 25 m deep. Walkable, and the only
- *            ground that carries rocks.
+ * The shore is a small bite out of the pond's rim, which is the shape docs/09
+ * asks for: "the walkable area is one small coastal stretch — at most 1/8 of
+ * the pond's shoreline". 70 m of a 628 m perimeter is about 1/9.
  *
- * The shore is a small bite out of one edge of the pond, which is the shape
- * docs/09 asks for: "the walkable area is one small coastal stretch — at most
- * 1/8 of the pond's shoreline". 70 m of a 200 m edge is a bit over that; the
- * pond's perimeter is 800 m, so it is closer to 1/11.
+ * Round, so the shore curves
+ * --------------------------
+ * The pond was a rectangle first, and a rectangle has a dead straight
+ * shoreline. A disc gives the strip 6.3 m of bow from its ends to its middle:
+ * the water is nearest straight ahead and falls back on both sides, so you
+ * stand in a shallow bay with the shore wrapping past you rather than on the
+ * edge of a swimming pool.
  *
- * Conventions, unchanged: metres, sea toward +Z, waterline at `WATERLINE_Z`.
+ * Two coordinates come with that, and most of this file is them:
  *
- * Why the profile has to know about the far edge
- * ----------------------------------------------
- * The shore ramp used to be `-(z - waterline) * slope` — monotonic, so the
- * ground fell away for ever seaward and the seabed clamp caught it at 2.5 m
- * down. Bound the water at 200 m and that becomes a hole: past the pond's far
- * edge the sand is still 2.5 m under the water level with no water on top of
- * it. So the ramp is expressed against the *nearest* water edge instead, which
- * gives a far bank rising out of the pond for free and leaves the near shore's
- * numbers untouched.
+ *   `shoreDistance(x, z)`   metres from the water's edge, positive on land
+ *   `shoreArc(x, z)`        metres along the shoreline, signed like x
+ *
+ * The strip is a rectangle in *those*, not in world x/z. That is what keeps it
+ * 70 x 25 m everywhere on the curve — an axis-aligned box would have run 25 m
+ * deep in the middle and 31 m at the ends.
+ *
+ * Why the profile is written against `shoreDistance`
+ * --------------------------------------------------
+ * The foreshore ramp used to be `-(z - waterline) * slope` — monotonic, so the
+ * ground fell away for ever seaward and the seabed clamp caught it 2.5 m down.
+ * Bound the water and that is a hole: past the pond's edge the sand is still
+ * 2.5 m under the water level with nothing on top of it. Written against the
+ * signed distance instead, one slope raises the beach, digs the basin and
+ * lifts the far bank, and the pond is closed on every side by construction.
+ *
+ * It is also what made curving the shore cheap. Height, walk bounds and rock
+ * density all read these two functions, so changing the pond's *shape* is a
+ * change to this file and nothing else has an opinion.
+ *
+ * Conventions, unchanged: metres, water toward +Z, waterline at `WATERLINE_Z`.
  */
 
 import { WATERLINE_Z, FORESHORE_SLOPE, SEABED_DEPTH } from "./shoreRamp.js";
 
-/** Pond extent, metres. Square, centred on x = 0, near edge at the waterline. */
-export const POND_SIZE = 200;
-export const POND_HALF_X = POND_SIZE / 2;
-/** z of the far bank's waterline. The near one is `WATERLINE_Z`. */
+/**
+ * Pond radius, metres. Round, so the shoreline curves away on both sides
+ * instead of running to a corner: the 70 m you walk is an arc of it, bowing
+ * 6.3 m from the ends to the middle.
+ */
+export const POND_RADIUS = 100;
+export const POND_SIZE = POND_RADIUS * 2;
+
+/**
+ * Pond centre. Placed a radius behind the waterline so the near edge touches
+ * `WATERLINE_Z` exactly at x = 0.
+ */
+export const POND_CENTER_X = 0;
+export const POND_CENTER_Z = WATERLINE_Z + POND_RADIUS;
+
+/** z of the far bank, on the pond's axis. */
 export const POND_FAR_Z = WATERLINE_Z + POND_SIZE;
 
-/** The walkable, rock-bearing strip. 70 m of shoreline, 25 m deep. */
+/**
+ * The walkable, rock-bearing strip: 70 m of shoreline, 25 m deep.
+ *
+ * "70 m of shoreline" is now measured along the water's edge rather than along
+ * x, and "25 m deep" straight out from it. Both bend with the pond, so the
+ * strip is the same size everywhere on it — which the old rectangle was not
+ * once the shore curved: it would have run 25 m deep in the middle and 31 m at
+ * the ends.
+ */
 export const SHORE_WIDTH = 70;
 export const SHORE_DEPTH = 25;
-export const SHORE_HALF_X = SHORE_WIDTH / 2;
-/** Landward limit of the strip. */
-export const SHORE_BACK_Z = WATERLINE_Z - SHORE_DEPTH;
+export const SHORE_HALF_ARC = SHORE_WIDTH / 2;
 
 /**
  * Metres of wading allowed past the waterline.
  *
  * Not part of the 25 m: the strip is measured from the water's edge landward,
- * and this is the bit you are allowed to stand *in*. Inherited from the old
- * `PLAY_RECT`, where it was the only thing that let you walk to the edge
- * without the clamp fighting you a step early.
+ * and this is the bit you are allowed to stand *in*.
  */
 export const WADE_DEPTH = 2;
 
@@ -63,57 +95,80 @@ export const WADE_DEPTH = 2;
  */
 export const ROCK_FREE_MARGIN = 5;
 
-/** Seaward limit of rock placement. */
-export const ROCK_EDGE_Z = WATERLINE_Z - ROCK_FREE_MARGIN;
-
-/** Centre of the pond in z. x is centred on 0. */
-export const POND_CENTER_Z = WATERLINE_Z + POND_SIZE / 2;
-
 /**
  * Signed distance from the water's edge, in metres, positive on land.
  *
- * The plain signed distance to the pond's rectangle. Inside it this is negative
- * and reaches its minimum at the middle, so the same ramp that raises the beach
- * digs the basin; outside it rises on all four sides, which is what gives the
- * far and side banks.
- *
- * It has to be the distance to a *rectangle* and not to the near waterline,
- * because the pond is bounded in x as well: measured against a line, the ground
- * beside the pond would still be 2.5 m under water level with no water on it —
- * a trench running away on both sides.
- *
- * On the playable strip (|x| <= 35, z <= 0) the nearest point of the rectangle
- * is straight ahead, so this returns exactly `WATERLINE_Z - z` and the beach is
- * the beach it always was.
+ * The pond is a disc, so this is a circle's signed distance: negative inside
+ * the water, reaching its minimum at the centre, so the same ramp that raises
+ * the beach digs the basin and lifts the far bank.
  *
  * @param {number} x @param {number} z world metres
  */
 export function shoreDistance(x, z) {
-    const qx = Math.abs(x) - POND_HALF_X;
-    const qz = Math.abs(z - POND_CENTER_Z) - POND_SIZE / 2;
-    const outside = Math.hypot(Math.max(qx, 0), Math.max(qz, 0));
-    const inside = Math.min(Math.max(qx, qz), 0);
-    return outside + inside;
+    return Math.hypot(x - POND_CENTER_X, z - POND_CENTER_Z) - POND_RADIUS;
+}
+
+/**
+ * Position along the shoreline, in metres of arc, zero straight out from the
+ * spawn and signed the same way as x.
+ *
+ * Measured at the waterline rather than at the walker's own radius, so a step
+ * sideways at the back of the strip and the same step at the water's edge are
+ * the same number — the strip is a rectangle in (arc, depth), which is what
+ * makes it 70 m wide everywhere.
+ *
+ * @param {number} x @param {number} z world metres
+ */
+export function shoreArc(x, z) {
+    return POND_RADIUS * Math.atan2(x - POND_CENTER_X, POND_CENTER_Z - z);
+}
+
+/** World position of the point `arc` along the shore and `depth` inland. */
+export function shorePoint(arc, depth, out = { x: 0, z: 0 }) {
+    const theta = arc / POND_RADIUS;
+    const r = POND_RADIUS + depth;
+    out.x = POND_CENTER_X + Math.sin(theta) * r;
+    out.z = POND_CENTER_Z - Math.cos(theta) * r;
+    return out;
 }
 
 /**
  * How far the ramp has to run before the seabed clamp takes over, metres.
  *
- * At the pond's half-width (100 m) a 0.035 slope would dig 3.5 m, past the
- * 2.5 m seabed — so the basin is flat-bottomed across its middle and the clamp
- * does the work, exactly as it did when the sea ran to the horizon. Stated
- * here so a change to either number is visibly a change to the pond's floor.
+ * At the pond's radius a 0.035 slope would dig 3.5 m, past the 2.5 m seabed —
+ * so the basin is flat-bottomed across its middle and the clamp does the work.
+ * Stated here so a change to either number is visibly a change to the floor.
  */
 export const RAMP_REACH = SEABED_DEPTH / FORESHORE_SLOPE;
 
 /** True if (x, z) is inside the walkable strip (wading included). */
 export function inShore(x, z) {
-    return x >= -SHORE_HALF_X && x <= SHORE_HALF_X
-        && z >= SHORE_BACK_Z && z <= WATERLINE_Z + WADE_DEPTH;
+    const d = shoreDistance(x, z);
+    if (d < -WADE_DEPTH || d > SHORE_DEPTH) return false;
+    return Math.abs(shoreArc(x, z)) <= SHORE_HALF_ARC;
 }
 
 /** True if (x, z) may carry a rock. */
 export function inRockField(x, z) {
-    return x >= -SHORE_HALF_X && x <= SHORE_HALF_X
-        && z >= SHORE_BACK_Z && z <= ROCK_EDGE_Z;
+    const d = shoreDistance(x, z);
+    if (d < ROCK_FREE_MARGIN || d > SHORE_DEPTH) return false;
+    return Math.abs(shoreArc(x, z)) <= SHORE_HALF_ARC;
+}
+
+/**
+ * Pull a point back into the walkable strip.
+ *
+ * In (arc, depth) rather than in x/z: clamping the two world axes would let
+ * you cut the corner of the curve, and past the ends of the strip it would
+ * slide you along a straight line the shore has left behind.
+ *
+ * @param {{x:number, z:number}} v mutated in place
+ */
+export function clampToShore(v) {
+    const d = shoreDistance(v.x, v.z);
+    const a = shoreArc(v.x, v.z);
+    const cd = Math.min(Math.max(d, -WADE_DEPTH), SHORE_DEPTH);
+    const ca = Math.min(Math.max(a, -SHORE_HALF_ARC), SHORE_HALF_ARC);
+    if (cd === d && ca === a) return;
+    shorePoint(ca, cd, v);
 }

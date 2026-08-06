@@ -24,7 +24,7 @@ import { Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { S } from "../core/settings.js";
 import { bakeOnce } from "../core/gpuUtil.js";
 import {
-    WORLD_SIZE, HEIGHT_RES, AUX_RES, POND_FAR_Z,
+    WORLD_SIZE, HEIGHT_RES, AUX_RES, POND_RADIUS,
     WATERLINE_Z, FORESHORE_SLOPE, SEABED_DEPTH, BERM_HEIGHT, BERM_RELAX,
     DUNE_START, DUNE_FADE, DUNE_AMP, DUNE_BASE, MICRO_AMP,
     PEBBLE_BAND_CENTER_Z, PEBBLE_BAND_WIDTH,
@@ -101,7 +101,7 @@ export class Heightfield {
         // The beach profile, from the shared params module — the WGSL bake and
         // the JS twin (`shoreProfileJS`) must describe the same shore.
         this.heightTex.setFloat("waterlineZ", WATERLINE_Z);
-        this.heightTex.setFloat("pondFarZ", POND_FAR_Z);
+        this.heightTex.setFloat("pondRadius", POND_RADIUS);
         this.heightTex.setFloat("foreshoreSlope", FORESHORE_SLOPE);
         this.heightTex.setFloat("seabedDepth", SEABED_DEPTH);
         this.heightTex.setFloat("bermHeight", BERM_HEIGHT);

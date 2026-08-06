@@ -35,9 +35,8 @@
 
 import { mulberry32 } from "../rock-forge/src/forge/rng.js";
 import {
-    SHORE_HALF_X, SHORE_BACK_Z, SHORE_DEPTH, ROCK_FREE_MARGIN, ROCK_EDGE_Z,
+    SHORE_HALF_ARC, SHORE_DEPTH, ROCK_FREE_MARGIN, POND_RADIUS, shorePoint,
 } from "./worldBounds.js";
-import { WATERLINE_Z } from "./shoreRamp.js";
 
 /** Default seed for the shore field. Distinct from the forge's `ROCK_SEED`. */
 export const SCATTER_SEED = 20260806;
@@ -71,14 +70,18 @@ export const PEAK_DENSITY = 54;
  * the back half carries most of the stones. Squared rather than linear because
  * a linear ramp still leaves an obvious line where the field starts.
  *
- * @param {number} z world metres
+ * Takes distance from the water, not z. The shore is curved, so those are not
+ * the same thing: at the ends of the strip the waterline has fallen back 6 m,
+ * and a density written against z would put the clear band in the wrong place
+ * there — a straight edge across a bay.
+ *
+ * @param {number} depth metres from the water's edge, positive inland
  * @returns {number} stones per square metre
  */
-export function densityAt(z) {
-    const d = WATERLINE_Z - z;               // metres landward of the water
-    if (d <= ROCK_FREE_MARGIN) return 0;
-    if (d >= SHORE_DEPTH) return PEAK_DENSITY;
-    const t = (d - ROCK_FREE_MARGIN) / (SHORE_DEPTH - ROCK_FREE_MARGIN);
+export function densityAt(depth) {
+    if (depth <= ROCK_FREE_MARGIN) return 0;
+    if (depth >= SHORE_DEPTH) return PEAK_DENSITY;
+    const t = (depth - ROCK_FREE_MARGIN) / (SHORE_DEPTH - ROCK_FREE_MARGIN);
     return PEAK_DENSITY * t * t;
 }
 
@@ -149,28 +152,37 @@ export function scatterShore(opts = {}) {
     const cell = maxRadius + MIN_GAP;
     const REACH = 2;
 
-    const minX = -SHORE_HALF_X;
-    const minZ = SHORE_BACK_Z;
-    const cols = Math.ceil((SHORE_HALF_X * 2) / cell);
-    const rows = Math.ceil((WATERLINE_Z - SHORE_BACK_Z) / cell);
+    // The grid is laid out in (arc, depth), not in x/z — the strip is a
+    // rectangle in those and a banana in world space. Every candidate is
+    // converted to world coordinates before anything geometric happens to it.
+    const cols = Math.ceil((SHORE_HALF_ARC * 2) / cell);
+    const rows = Math.ceil(SHORE_DEPTH / cell);
 
     const out = [];
     /** Accepted stones per cell — the grid IS the spatial index. */
     const grid = new Array(cols * rows);
+    const p = { x: 0, z: 0 };
 
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             // One candidate per cell. Its position is jittered inside the cell,
             // so the field has no grid in it even though it was built on one.
-            const x = minX + (c + rng()) * cell;
-            const z = minZ + (r + rng()) * cell;
+            const arc = -SHORE_HALF_ARC + (c + rng()) * cell;
+            const depth = (r + rng()) * cell;
             const pick = rng();
             const spin = rng();
             const lean = rng();
 
-            // Accept-or-not by density. `cell * cell` stones per cell would be
-            // one every cell; scale that by how many the density asks for.
-            const want = densityAt(z) * density * cell * cell;
+            // Accept-or-not by density. One stone per cell would be
+            // `1 / cellArea`; scale that by how many the density asks for.
+            //
+            // The (R + depth) / R factor is the curve's doing. A cell of fixed
+            // arc x depth covers MORE ground the further inland it is, because
+            // arc length grows with radius — so without it the back of the
+            // strip would come out a quarter thinner than asked for, in exactly
+            // the band where the density is meant to peak.
+            const stretch = (POND_RADIUS + depth) / POND_RADIUS;
+            const want = densityAt(depth) * density * cell * cell * stretch;
             if (pick >= want) continue;
 
             // Which stone. Uses the same draw so the archetype and the accept
@@ -180,14 +192,18 @@ export function scatterShore(opts = {}) {
             );
             const radius = radii[archetype];
 
-            // The grid is ceil()'d, so its last row and column overhang the
-            // strip. Reject on the stone's whole footprint rather than its
-            // centre — a stone half over the edge of the field is a stone
-            // sticking out of the world.
-            if (x - radius < minX || x + radius > SHORE_HALF_X) continue;
-            if (z - radius < minZ || z + radius > ROCK_EDGE_Z) continue;
+            // Reject on the stone's whole footprint rather than its centre — a
+            // stone half over the edge of the field is a stone sticking out of
+            // the world. In arc units, which is conservative: a metre of arc at
+            // the waterline is more than a metre of ground further in.
+            if (depth - radius < ROCK_FREE_MARGIN || depth + radius > SHORE_DEPTH) continue;
+            if (Math.abs(arc) + radius > SHORE_HALF_ARC) continue;
 
-            if (overlaps(grid, cols, rows, cell, minX, minZ, x, z, radius, REACH)) continue;
+            shorePoint(arc, depth, p);
+            const x = p.x;
+            const z = p.z;
+
+            if (overlaps(grid, cols, rows, cell, arc, depth, x, z, radius, REACH)) continue;
 
             const idx = r * cols + c;
             (grid[idx] ??= []).push({ x, z, radius });
@@ -199,6 +215,7 @@ export function scatterShore(opts = {}) {
                 // A few degrees of lean, so the field is not a carpet of stones
                 // all lying dead flat.
                 tilt: (lean - 0.5) * 0.35,
+                arc, depth,
                 archetype,
                 radius,
             });
@@ -208,9 +225,14 @@ export function scatterShore(opts = {}) {
 }
 
 /** True if a stone of `radius` at (x, z) would touch anything already placed. */
-function overlaps(grid, cols, rows, cell, minX, minZ, x, z, radius, reach) {
-    const c0 = Math.floor((x - minX) / cell);
-    const r0 = Math.floor((z - minZ) / cell);
+function overlaps(grid, cols, rows, cell, arc, depth, x, z, radius, reach) {
+    // Indexed in (arc, depth), compared in world metres.
+    //
+    // Safe because the mapping only ever STRETCHES: two points a given distance
+    // apart in the grid are at least that far apart on the ground, so a
+    // neighbourhood wide enough in grid units is wide enough in metres.
+    const c0 = Math.floor((arc + SHORE_HALF_ARC) / cell);
+    const r0 = Math.floor(depth / cell);
     for (let r = r0 - reach; r <= r0 + reach; r++) {
         if (r < 0 || r >= rows) continue;
         for (let c = c0 - reach; c <= c0 + reach; c++) {

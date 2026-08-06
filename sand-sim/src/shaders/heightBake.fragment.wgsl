@@ -28,7 +28,7 @@ uniform windAngle: f32;
 uniform heightAmp: f32;
 
 uniform waterlineZ: f32;
-uniform pondFarZ: f32;
+uniform pondRadius: f32;
 uniform foreshoreSlope: f32;
 uniform seabedDepth: f32;
 uniform bermHeight: f32;
@@ -45,13 +45,12 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     let z = p.y;
 
     // Foreshore ramp, from the water's edge — twin of `shoreDistance` in
-    // shared/worldBounds.js: the signed distance to the pond's rectangle,
-    // positive on land. On the playable strip it is exactly the old
-    // `-(z - waterlineZ)`; elsewhere it turns around inside the pond and raises
-    // the far and side banks, so the water has something to end against.
-    let pondHalf = (uniforms.pondFarZ - uniforms.waterlineZ) * 0.5;
-    let q = vec2f(abs(p.x), abs(z - (uniforms.waterlineZ + pondHalf))) - vec2f(pondHalf);
-    let d = length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0);
+    // shared/worldBounds.js: the signed distance to the pond's disc, positive
+    // on land. One slope raises the beach, digs the basin and lifts the far
+    // bank, so the water has something to end against on every side. The pond
+    // is round, which is what curves the shoreline.
+    let centre = vec2f(0.0, uniforms.waterlineZ + uniforms.pondRadius);
+    let d = length(p - centre) - uniforms.pondRadius;
     var h = d * uniforms.foreshoreSlope;
 
     // Soft clamp into the flat seabed.

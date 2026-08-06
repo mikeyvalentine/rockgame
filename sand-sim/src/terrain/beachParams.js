@@ -21,13 +21,15 @@
 
 import { padCoverage, padLevel } from "../../../shared/siftPad.js";
 import {
-    SHORE_HALF_X, SHORE_BACK_Z, WADE_DEPTH, shoreDistance,
+    SHORE_HALF_ARC, SHORE_DEPTH, WADE_DEPTH, POND_RADIUS,
+    shoreDistance, shorePoint, clampToShore,
 } from "../../../shared/worldBounds.js";
 
 export {
-    POND_SIZE, POND_HALF_X, POND_FAR_Z,
-    SHORE_WIDTH, SHORE_DEPTH, SHORE_HALF_X, SHORE_BACK_Z,
-    WADE_DEPTH, ROCK_FREE_MARGIN, ROCK_EDGE_Z,
+    POND_SIZE, POND_RADIUS, POND_CENTER_X, POND_CENTER_Z, POND_FAR_Z,
+    SHORE_WIDTH, SHORE_DEPTH, SHORE_HALF_ARC,
+    WADE_DEPTH, ROCK_FREE_MARGIN,
+    shoreDistance, shoreArc, shorePoint, clampToShore, inShore, inRockField,
 } from "../../../shared/worldBounds.js";
 
 // The deterministic shape constants live in shared/shoreRamp.js — siftPad needs
@@ -66,17 +68,26 @@ export const HEIGHT_RES = 2048;  // 0.25 m per texel
 export const AUX_RES = 1024;
 
 /**
- * The walkable zone (docs/09: bounded beach strip) — now derived from
- * `shared/worldBounds.js` rather than being four numbers picked by eye. 70 m of
- * shoreline, 25 m deep, plus the wading allowance past the water's edge.
+ * A world-space box around the walkable zone.
  *
- * It shrank: 90 x 42 became 70 x 27. The old rectangle ran 40 m landward, which
- * put its back edge in the flat nothing between the beach and the dunes.
+ * NOT the zone itself any more. The strip is 70 m of curved shoreline by 25 m
+ * deep, which is a rectangle in (arc, depth) and a banana in x/z — see
+ * `shared/worldBounds.js`. This is its bounding box, kept for the coarse users
+ * that only want "roughly where is the beach" (camera limits, bake extents).
+ * Anything that decides whether the player may stand somewhere must go through
+ * `inShore` or `clampToShore`.
  */
-export const PLAY_RECT = {
-    minX: -SHORE_HALF_X, maxX: SHORE_HALF_X,
-    minZ: SHORE_BACK_Z, maxZ: WATERLINE_Z + WADE_DEPTH,
-};
+export const PLAY_RECT = (() => {
+    // The strip is a rectangle in (arc, depth), not in x/z, so its world box is
+    // the box AROUND the curve — widest at the back, where the arc has swung
+    // furthest out, and deepest at the ends, where the shore has fallen back.
+    const end = shorePoint(SHORE_HALF_ARC, SHORE_DEPTH);
+    const lip = shorePoint(SHORE_HALF_ARC, -WADE_DEPTH);
+    return {
+        minX: -end.x, maxX: end.x,
+        minZ: end.z, maxZ: Math.max(lip.z, WATERLINE_Z + WADE_DEPTH),
+    };
+})();
 
 /** Where the walker spawns, and the initial view bearing (0 = facing the sea). */
 export const SPAWN = { x: 0, z: -15, yaw: 0 };
@@ -134,11 +145,10 @@ function smoothstepJS(a, b, t) {
  * @param {number} [amp] relief multiplier (the `macroHeightScale` setting)
  */
 export function shoreProfileJS(x, z, amp = 1) {
-    // Foreshore ramp, measured from the NEAREST water edge rather than from
-    // the near waterline — so the same slope that lifts the beach also lifts
-    // the pond's far bank, and the basin between them is dug once. Landward of
-    // the near waterline `shoreDistance` is exactly `WATERLINE_Z - z`, which is
-    // what this line used to say, so nothing on the playable side moved.
+    // Foreshore ramp, measured from the water's edge — the signed distance to
+    // the pond's disc, positive on land. One slope therefore raises the beach,
+    // digs the basin and lifts the far bank, and the pond is closed on every
+    // side by construction rather than by lining anything up.
     let h = shoreDistance(x, z) * FORESHORE_SLOPE;
 
     // Soft clamp into the flat seabed.
@@ -173,11 +183,11 @@ export function shoreProfileJS(x, z, amp = 1) {
     return h + relief * amp + padLevel(x, z);
 }
 
-/** Rectangular walkable-zone clamp, in place. */
+/** Pull the walker back into the strip, in place. */
 export function clampToPlayRect(v) {
-    const r = PLAY_RECT;
-    if (v.x < r.minX) v.x = r.minX;
-    else if (v.x > r.maxX) v.x = r.maxX;
-    if (v.z < r.minZ) v.z = r.minZ;
-    else if (v.z > r.maxZ) v.z = r.maxZ;
+    // Kept under its old name because half the app calls it, but it is not a
+    // rectangle clamp any more: clamping x and z independently would let you
+    // cut the corner of the curve, and past the ends of the strip it would
+    // slide you along a straight line the shore has left behind.
+    clampToShore(v);
 }

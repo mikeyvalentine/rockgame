@@ -3,10 +3,18 @@
 ## Pond — decided
 
 - Single static 3D scene. One pond, no other locations.
-- **~200m across** — pending feasibility check against the water sim.
+- **200 m across, round** — built. `shared/worldBounds.js`: a disc of radius
+  100 with its near rim on the waterline, its floor a bowl reaching the 2.5 m
+  seabed depth in the middle. Round rather than square so the shoreline curves:
+  the walkable strip bows 6.3 m from its ends to its middle, and the water is
+  nearest straight ahead and falls back on both sides.
 - Fully ringed by trees. The tree ring occludes the horizon (good for performance) and is the primary wind indicator.
 - The player never leaves the shore.
 - **Walkable zone: one small coastal stretch, at most 1/8 of the shoreline.** See `09-sand-sim.md`.
+  Built at **70 m of shoreline by 25 m deep** — about 1/9 of the pond's 628 m
+  perimeter. It is a rectangle in (arc, depth), not in x/z, so it is the same
+  size everywhere on the curve; an axis-aligned box would have run 25 m deep in
+  the middle and 31 m at the ends.
 - **Throw from anywhere on the walkable shore.** The earlier single-fixed-throwing-spot rule is cut.
 
 ## Environmental variables — decided
@@ -69,9 +77,7 @@ The skip camera is the hero moment and doubles as the scoring display.
 
 ## OPEN
 
-- Verify 200m is feasible with the water sim — **gates the whole scale decision**
-- Pond shape — simple bowl or irregular shoreline
-- Walkable zone location relative to the cairn arc, and its exact size/shape
+- Walkable zone location relative to the cairn arc
 - What the lights in the water are, if any
 - Travel time on HUD jumps — instant cut or animated
 - Do in-world clickable spots show a hover indicator

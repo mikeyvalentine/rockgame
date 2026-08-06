@@ -9,9 +9,9 @@ import {
     scatterShore, densityAt, PEAK_DENSITY, MIN_GAP, SINK_FRACTION, SCATTER_SEED,
 } from "../../shared/shoreScatter.js";
 import {
-    SHORE_HALF_X, SHORE_BACK_Z, ROCK_EDGE_Z, ROCK_FREE_MARGIN, SHORE_DEPTH,
+    SHORE_HALF_ARC, ROCK_FREE_MARGIN, SHORE_DEPTH,
+    shoreDistance, shoreArc, inRockField,
 } from "../../shared/worldBounds.js";
-import { WATERLINE_Z } from "../../shared/shoreRamp.js";
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -38,19 +38,32 @@ check("a different seed gives a different field",
     other.length !== field.length || other[0].x !== field[0].x);
 
 // ---- the water's edge is clear ---------------------------------------------
-let nearest = -Infinity;
-for (const s of field) nearest = Math.max(nearest, s.z);
-check(`no stone within ${ROCK_FREE_MARGIN} m of the water`, nearest <= ROCK_EDGE_Z,
-    "closest z " + nearest.toFixed(2) + " vs limit " + ROCK_EDGE_Z);
+//
+// Measured as distance from the water, not as z. The shore is curved, so a
+// straight line across the strip is not a constant distance from the pond —
+// checked in z, a clear band that followed the curve would look like a
+// violation and a straight one would pass.
+let nearest = Infinity;
+for (const s of field) {
+    nearest = Math.min(nearest, shoreDistance(s.x, s.z) - s.radius);
+}
+check(`no stone within ${ROCK_FREE_MARGIN} m of the water`,
+    nearest >= ROCK_FREE_MARGIN - 1e-9,
+    "closest " + nearest.toFixed(2) + " m vs limit " + ROCK_FREE_MARGIN);
 
 // ---- nothing leaves the strip ----------------------------------------------
 // The whole footprint, not the centre: a stone half over the edge of the field
-// is a stone sticking out of the world.
-const strayed = field.filter((s) =>
-    s.x - s.radius < -SHORE_HALF_X || s.x + s.radius > SHORE_HALF_X
-    || s.z - s.radius < SHORE_BACK_Z || s.z + s.radius > ROCK_EDGE_Z);
-check("every stone sits wholly inside the shore rect", strayed.length === 0,
+// is a stone sticking out of the world. In (arc, depth), which is where the
+// strip is actually a rectangle.
+const strayed = field.filter((s) => {
+    const d = shoreDistance(s.x, s.z);
+    const a = shoreArc(s.x, s.z);
+    return d - s.radius < ROCK_FREE_MARGIN || d + s.radius > SHORE_DEPTH
+        || Math.abs(a) + s.radius > SHORE_HALF_ARC;
+});
+check("every stone sits wholly inside the shore strip", strayed.length === 0,
     strayed.length + " outside");
+check("every stone is in the rock field", field.every((s) => inRockField(s.x, s.z)));
 
 // ---- and none of them interpenetrate ---------------------------------------
 //
@@ -88,10 +101,10 @@ check("every stone sits wholly inside the shore rect", strayed.length === 0,
 }
 
 // ---- the density actually ramps --------------------------------------------
-check("density is zero at the water", densityAt(WATERLINE_Z) === 0);
-check("density is zero at the margin", densityAt(WATERLINE_Z - ROCK_FREE_MARGIN) === 0);
+check("density is zero at the water", densityAt(0) === 0);
+check("density is zero at the margin", densityAt(ROCK_FREE_MARGIN) === 0);
 check("density peaks at the back",
-    Math.abs(densityAt(WATERLINE_Z - SHORE_DEPTH) - PEAK_DENSITY) < 1e-9);
+    Math.abs(densityAt(SHORE_DEPTH) - PEAK_DENSITY) < 1e-9);
 
 {
     // Measured off the field itself, not off `densityAt` — a ramp in the
@@ -104,7 +117,7 @@ check("density peaks at the back",
     const bandDepth = (SHORE_DEPTH - ROCK_FREE_MARGIN) / BANDS;
     const counts = new Array(BANDS).fill(0);
     for (const s of field) {
-        const d = WATERLINE_Z - s.z - ROCK_FREE_MARGIN;
+        const d = shoreDistance(s.x, s.z) - ROCK_FREE_MARGIN;
         counts[Math.max(0, Math.min(BANDS - 1, Math.floor(d / bandDepth)))]++;
     }
     let rising = true;

@@ -41,7 +41,7 @@ import { createBedArchetypes, castSequence, FIELD_LOD } from "./siftingBeds.js";
 import { createBedMaterials } from "./rockMaterials.js";
 import { scatterShore } from "../../../shared/shoreScatter.js";
 import {
-    SHORE_HALF_X, SHORE_BACK_Z, SHORE_WIDTH, SHORE_DEPTH,
+    SHORE_HALF_ARC, SHORE_WIDTH, SHORE_DEPTH, shorePoint,
 } from "../../../shared/worldBounds.js";
 
 /**
@@ -98,6 +98,9 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         heightAt: (x, z) => terrain.heightAt(x, z),
     });
 
+    // Tiled in (arc, depth), like the scatter itself. Tiling in x/z would cut
+    // the curved strip into wedges of wildly different population — and the
+    // distance gate below would then be measuring to the centre of a wedge.
     const cols = Math.ceil(SHORE_WIDTH / TILE);
     const rows = Math.ceil(SHORE_DEPTH / TILE);
 
@@ -105,8 +108,8 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     /** @type {Map<string, number[]>} */
     const groups = new Map();
     for (const s of field) {
-        const c = Math.min(cols - 1, Math.floor((s.x + SHORE_HALF_X) / TILE));
-        const r = Math.min(rows - 1, Math.floor((s.z - SHORE_BACK_Z) / TILE));
+        const c = Math.min(cols - 1, Math.floor((s.arc + SHORE_HALF_ARC) / TILE));
+        const r = Math.min(rows - 1, Math.floor(s.depth / TILE));
         const key = r * cols * archetypes.length + c * archetypes.length + s.archetype;
 
         let list = groups.get(key);
@@ -149,15 +152,17 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         stones += list.length / 16;
     }
 
-    // Tile centres, so the gate is 18 distance tests a frame rather than 480.
+    // Tile centres in WORLD space, so the gate is 18 distance tests a frame
+    // rather than 480. Mapped through `shorePoint` because a tile's middle in
+    // (arc, depth) is not its middle in x/z once the shore bends.
     const tileCenters = new Map();
     for (const tile of byTile.keys()) {
         const c = tile % cols;
         const r = (tile - c) / cols;
-        tileCenters.set(tile, {
-            x: -SHORE_HALF_X + (c + 0.5) * TILE,
-            z: SHORE_BACK_Z + (r + 0.5) * TILE,
-        });
+        tileCenters.set(tile, shorePoint(
+            -SHORE_HALF_ARC + (c + 0.5) * TILE,
+            (r + 0.5) * TILE
+        ));
     }
     /** Last state per tile, so `setEnabled` is only called on a change. */
     const shown = new Map([...byTile.keys()].map((t) => [t, true]));

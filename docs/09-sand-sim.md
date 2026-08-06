@@ -237,7 +237,7 @@ SNOWFLOW is someone else's project. **Check its licence or obtain permission bef
 
 - [ ] Leaderboard sand: displacement shader vs. particle sim
 - [ ] How much fidelity the WebGL fallback keeps
-- [ ] Exact walkable zone size and shape
+- [x] Exact walkable zone size and shape — 70 m of shoreline x 25 m deep, on a 200 m round pond (`shared/worldBounds.js`, `docs/01`)
 - [ ] Does the leaderboard stretch sit inside the walkable zone?
 - [ ] Particle → physics transition handling at the crouch
 - [ ] SNOWFLOW licensing
