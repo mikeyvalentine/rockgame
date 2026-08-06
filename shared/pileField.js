@@ -53,6 +53,8 @@
  * at which the pile the player walks up is recognisably the pile they see.
  * `tools/pile-field-check.mjs` asserts this against the real resampling.
  */
+import { FORESHORE_SLOPE } from "./shoreRamp.js";
+
 export const PILE_RADIUS = 2.4;
 
 /** Flat crown radius, metres. Comfortably clear of rock-sift's BED_RADIUS (0.42). */
@@ -102,27 +104,62 @@ function falloff(d) {
 }
 
 /**
- * Pile coverage at a world point, 0…1.
+ * The pile that wins at a world point, and by how much.
  *
  * Combined with `max` rather than a sum: overlapping piles must not stack into
  * a mound taller than either, and coverage doubles as the micro-relief damping
- * factor, which has to stay bounded.
+ * factor, which has to stay bounded. The winning spot comes back too, because
+ * the levelling term below needs to know which crown it is standing on.
  * @param {number} x @param {number} z world metres
  */
-export function pileCoverage(x, z) {
+function dominant(x, z) {
     let cov = 0;
+    let spot = null;
     for (const s of SIFT_SPOTS) {
         const dx = x - s.x;
         const dz = z - s.z;
         const d = Math.sqrt(dx * dx + dz * dz);
-        if (d < PILE_RADIUS) cov = Math.max(cov, falloff(d));
+        if (d >= PILE_RADIUS) continue;
+        const c = falloff(d);
+        if (c > cov) { cov = c; spot = s; }
     }
-    return cov;
+    return { cov, spot };
+}
+
+/** Pile coverage at a world point, 0…1. @param {number} x @param {number} z */
+export function pileCoverage(x, z) {
+    return dominant(x, z).cov;
+}
+
+/**
+ * Metres of pile above the bare shore profile — the mound, plus the levelling
+ * that makes its crown horizontal.
+ *
+ * The crown has to be *level*, not merely smooth. Flattening the micro relief
+ * was only half the job: the beach itself rises at `FORESHORE_SLOPE`, which
+ * across a 1.4 m bed is 48 mm of tilt — and rock-sift's stones are 40 to 100 mm
+ * across, so a bed poured on flat ground and laid on that slope floats its
+ * seaward edge by half a stone. Cancelling the ramp inside the pile makes the
+ * crown a true horizontal plateau at `bare(spot) + PILE_HEIGHT`.
+ *
+ * Levelling also keeps the crouch honest: when the player drops into a spot,
+ * rock-sift simulates that bed on flat ground under vertical gravity. A crown
+ * that is level is the one that does not pop at the transition.
+ *
+ * Exact rather than approximate, because at every spot the profile is still in
+ * its linear stretch — the seabed clamp and the berm relax are both inactive
+ * between z = -4 and z = -9, which `sand-sim/tools/pile-field-check.mjs`
+ * asserts rather than assumes.
+ */
+export function pileLift(x, z) {
+    const { cov, spot } = dominant(x, z);
+    if (!cov) return 0;
+    return cov * (PILE_HEIGHT + (z - spot.z) * FORESHORE_SLOPE);
 }
 
 /** Metres of pile above the bare shore profile. @param {number} x @param {number} z */
 export function pileHeightJS(x, z) {
-    return pileCoverage(x, z) * PILE_HEIGHT;
+    return pileLift(x, z);
 }
 
 /**
@@ -182,31 +219,39 @@ export function spotAt(x, z, reach = CROWN_RADIUS + 0.6) {
  */
 export function pileFieldWGSL() {
     const f = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
-    const terms = SIFT_SPOTS.map(
-        (s) => `    cov = max(cov, pileFalloff(distance(p, vec2f(${f(s.x)}, ${f(s.z)}))));`
-    ).join("\n");
+    const terms = SIFT_SPOTS.map((s) => `    {
+        let c = pileFalloff(distance(p, vec2f(${f(s.x)}, ${f(s.z)})));
+        if (c > best.x) { best = vec2f(c, c * (PILE_HEIGHT + (p.y - (${f(s.z)})) * FORESHORE_SLOPE)); }
+    }`).join("\n");
 
     return `// GENERATED from shared/pileField.js by pileFieldWGSL(). Do not edit.
 const PILE_RADIUS: f32 = ${f(PILE_RADIUS)};
 const CROWN_RADIUS: f32 = ${f(CROWN_RADIUS)};
 const PILE_HEIGHT: f32 = ${f(PILE_HEIGHT)};
+const FORESHORE_SLOPE: f32 = ${f(FORESHORE_SLOPE)};
 
 fn pileFalloff(d: f32) -> f32 {
     let t = clamp((d - CROWN_RADIUS) / (PILE_RADIUS - CROWN_RADIUS), 0.0, 1.0);
     return smoothstep(0.0, 1.0, 1.0 - t);
 }
 
-/// Pile coverage at a world point, 0..1. max, not sum: overlapping piles must
-/// not stack, and this doubles as the micro-relief damping factor.
-fn pileCoverage(p: vec2f) -> f32 {
-    var cov = 0.0;
+/// The pile that wins here: x = coverage 0..1, y = metres of lift.
+/// Winner-takes-all rather than a sum, so overlapping piles cannot stack; the
+/// lift carries the crown levelling, which needs the winning spot's own z.
+fn pileDominant(p: vec2f) -> vec2f {
+    var best = vec2f(0.0, 0.0);
 ${terms}
-    return cov;
+    return best;
 }
 
-/// Metres of pile above the bare shore profile.
+/// Coverage alone — also the micro-relief damping factor.
+fn pileCoverage(p: vec2f) -> f32 {
+    return pileDominant(p).x;
+}
+
+/// Metres of pile above the bare shore profile, crown levelled.
 fn pileHeight(p: vec2f) -> f32 {
-    return pileCoverage(p) * PILE_HEIGHT;
+    return pileDominant(p).y;
 }
 
 /// Shingle mask for the aux bake — stone all the way to the rim.

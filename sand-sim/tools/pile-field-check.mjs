@@ -16,11 +16,11 @@
 
 import {
     SIFT_SPOTS, PILE_RADIUS, CROWN_RADIUS, PILE_HEIGHT,
-    pileCoverage, pileHeightJS, pileMaskJS, spotAt, pileFieldWGSL,
+    pileCoverage, pileHeightJS, pileLift, pileMaskJS, spotAt, pileFieldWGSL,
 } from "../../shared/pileField.js";
 import {
     shoreProfileJS, WORLD_SIZE, HEIGHT_RES, MICRO_AMP,
-    PLAY_RECT, SPAWN, WATERLINE_Z,
+    PLAY_RECT, SPAWN, WATERLINE_Z, FORESHORE_SLOPE, SEABED_DEPTH, BERM_HEIGHT,
 } from "../src/terrain/beachParams.js";
 
 let failures = 0;
@@ -188,8 +188,58 @@ for (let dx = -CROWN_RADIUS; dx <= CROWN_RADIUS; dx += 0.1) {
         crownMax = Math.max(crownMax, h);
     }
 }
-check("the crown is flat under the bed", crownMax - crownMin < MICRO_AMP,
-    "relief " + ((crownMax - crownMin) * 1000).toFixed(0) + " mm across the crown");
+// Two different surfaces, two different promises, and conflating them is how
+// the ramp bug survived the first pass.
+//
+// The stones rest against the surface the terrain DRAWS — the bake, sampled
+// bicubically at 0.25 m by the clipmap, which is the analytic profile to well
+// under a millimetre. That one has to be dead level, because a bed poured flat
+// and laid on a slope floats its seaward edge by half a stone. Un-levelled it
+// measured 48 mm; rock-sift's smallest stone is 40 mm.
+let levelMin = Infinity;
+let levelMax = -Infinity;
+for (let dx = -CROWN_RADIUS; dx <= CROWN_RADIUS; dx += 0.05) {
+    for (let dz = -CROWN_RADIUS; dz <= CROWN_RADIUS; dz += 0.05) {
+        if (Math.hypot(dx, dz) > CROWN_RADIUS) continue;
+        const h = shoreProfileJS(spot.x + dx, spot.z + dz, 1);
+        levelMin = Math.min(levelMin, h);
+        levelMax = Math.max(levelMax, h);
+    }
+}
+check("the drawn crown is level under the bed", levelMax - levelMin < 0.001,
+    "relief " + ((levelMax - levelMin) * 1000).toFixed(3) + " mm across the crown");
+
+// The walker grounds on the 0.5 m CPU mirror instead, whose B-spline drags the
+// sloping face a little way into the crown. That residual is the character's
+// business, not the stones' — it only has to stay inside the micro relief the
+// open beach carries anyway, or the crown would read as a bump underfoot.
+check("grounding over the crown stays within micro relief",
+    crownMax - crownMin < MICRO_AMP,
+    "relief " + ((crownMax - crownMin) * 1000).toFixed(1) + " mm through the mirror");
+
+// The levelling is only exact while the profile is still in its linear
+// stretch. If a spot is ever moved deep enough for the seabed clamp or high
+// enough for the berm relax to bite, the ramp is no longer a straight line and
+// cancelling it with a constant slope silently stops working.
+for (const s of SIFT_SPOTS) {
+    const bare = -(s.z - WATERLINE_Z) * FORESHORE_SLOPE;
+    check("spot " + s.id + " sits in the profile's linear stretch",
+        bare > -SEABED_DEPTH + 1.0 && bare < BERM_HEIGHT - 0.5,
+        "bare height " + bare.toFixed(3) + " m");
+}
+
+// Levelling must never dig: the ramp correction is bounded by the mound.
+let minLift = Infinity;
+for (const s of SIFT_SPOTS) {
+    for (let dz = -PILE_RADIUS; dz <= PILE_RADIUS; dz += 0.05) {
+        for (let dx = -PILE_RADIUS; dx <= PILE_RADIUS; dx += 0.05) {
+            if (Math.hypot(dx, dz) >= PILE_RADIUS) continue;
+            minLift = Math.min(minLift, pileLift(s.x + dx, s.z + dz));
+        }
+    }
+}
+check("the pile never digs a hole", minLift >= 0,
+    "lowest lift " + (minLift * 1000).toFixed(1) + " mm");
 
 // The mound survives the mirror. A pile only a texel or two across would be
 // box-filtered and B-spline-smoothed into nothing, and the player would walk
@@ -217,7 +267,7 @@ check("the bank face is walkable", maxSlope < 0.45,
 // ---------------------------------------------------------------------------
 
 const wgsl = pileFieldWGSL();
-const terms = [...wgsl.matchAll(/cov = max\(cov, pileFalloff\(distance\(p, vec2f\(([-\d.]+), ([-\d.]+)\)\)\)\);/g)];
+const terms = [...wgsl.matchAll(/let c = pileFalloff\(distance\(p, vec2f\(([-\d.]+), ([-\d.]+)\)\)\);/g)];
 check("one WGSL term per spot", terms.length === SIFT_SPOTS.length,
     terms.length + " terms for " + SIFT_SPOTS.length + " spots");
 

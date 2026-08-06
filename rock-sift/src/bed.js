@@ -24,11 +24,12 @@
 
 import { Quaternion, Vector3 } from "@babylonjs/core";
 import { addRock } from "./field.js";
+import { MAGIC, VERSION, HEADER_BYTES, STONE_BYTES, decodeBed } from "../../shared/bedFormat.js";
 
-const MAGIC = 0x52534244; // "RSBD"
-const VERSION = 1;
-const HEADER_BYTES = 36;
-const STONE_BYTES = 15;
+// The format itself is canonical in shared/bedFormat.js — sand-sim reads beds
+// too, and it cannot import anything from here that drags Babylon 8 with it.
+// Re-exported so this module stays the one import site for rock-sift.
+export { decodeBed };
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -96,54 +97,6 @@ export function encodeBed(rocks, archetypes) {
     }
   }
   return buffer;
-}
-
-/** @returns { version, names, count, archIndex, positions, quaternions } */
-export function decodeBed(buffer) {
-  const view = new DataView(buffer);
-  if (view.getUint32(0) !== MAGIC) throw new Error("not a bed file");
-  const version = view.getUint16(4);
-  if (version !== VERSION) throw new Error(`bed format v${version}, expected v${VERSION}`);
-
-  const archCount = view.getUint16(6);
-  const count = view.getUint32(8);
-  const min = [view.getFloat32(12), view.getFloat32(16), view.getFloat32(20)];
-  const max = [view.getFloat32(24), view.getFloat32(28), view.getFloat32(32)];
-
-  const decoder = new TextDecoder();
-  const names = [];
-  let at = HEADER_BYTES;
-  for (let i = 0; i < archCount; i++) {
-    const len = view.getUint16(at);
-    at += 2;
-    names.push(decoder.decode(new Uint8Array(buffer, at, len)));
-    at += len;
-  }
-
-  const archIndex = new Uint8Array(count);
-  const positions = new Float32Array(count * 3);
-  const quaternions = new Float32Array(count * 4);
-
-  for (let i = 0; i < count; i++) {
-    archIndex[i] = view.getUint8(at);
-    at += 1;
-    for (let k = 0; k < 3; k++) {
-      positions[i * 3 + k] = min[k] + (view.getUint16(at) / 65535) * (max[k] - min[k]);
-      at += 2;
-    }
-    let qx = view.getInt16(at) / 32767, qy = view.getInt16(at + 2) / 32767;
-    let qz = view.getInt16(at + 4) / 32767, qw = view.getInt16(at + 6) / 32767;
-    at += 8;
-    // Renormalise: each component was rounded independently, so the quaternion
-    // comes back very slightly off unit length.
-    const len = Math.hypot(qx, qy, qz, qw) || 1;
-    quaternions[i * 4] = qx / len;
-    quaternions[i * 4 + 1] = qy / len;
-    quaternions[i * 4 + 2] = qz / len;
-    quaternions[i * 4 + 3] = qw / len;
-  }
-
-  return { version, names, count, archIndex, positions, quaternions };
 }
 
 /**

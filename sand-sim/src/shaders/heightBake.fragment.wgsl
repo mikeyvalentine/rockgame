@@ -65,20 +65,23 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     }
 
     // Shingle piles — the sifting spots (shared/pileField.js, generated into
-    // the snowPiles include). Applied before micro relief because the crown
-    // has to end up flat: rock-sift's bed is poured on flat ground, so the
-    // mound damps micro in the same proportion as it rises rather than sitting
-    // on top of it. Outside heightAmp on purpose — the piles are where the
-    // player sifts, so their geometry is level design, not a relief tunable.
-    let cov = pileCoverage(p);
+    // the snowPiles include). x is coverage, y is the levelled lift.
+    //
+    // Applied before micro relief because the crown has to end up flat AND
+    // level: rock-sift's bed is poured on flat ground under vertical gravity,
+    // so the mound both damps micro in the same proportion as it rises and
+    // cancels the foreshore ramp under itself. Outside heightAmp on purpose —
+    // the piles are where the player sifts, so their geometry is level design,
+    // not a relief tunable.
+    let pile = pileDominant(p);
 
     // Micro relief on the open beach (fades out under the dunes, and under
     // the piles).
     let m2 = windMat(uniforms.windAngle, 1.2, 1.0, 21.0);
     let micro = fbmDamped(m2 * p + vec2f(7.3, -4.1), 3, 2.07, 0.5, 1.2);
-    relief += micro.x * uniforms.microAmp * (1.0 - duneT * 0.7) * (1.0 - cov);
+    relief += micro.x * uniforms.microAmp * (1.0 - duneT * 0.7) * (1.0 - pile.x);
 
-    h += relief * uniforms.heightAmp + cov * PILE_HEIGHT;
+    h += relief * uniforms.heightAmp + pile.y;
 
     fragmentOutputs.color = vec4f(h, 0.0, 0.0, 1.0);
 }

@@ -19,20 +19,20 @@
  * player walks through.
  */
 
-import { pileCoverage, PILE_HEIGHT } from "../../../shared/pileField.js";
+import { pileCoverage, pileLift } from "../../../shared/pileField.js";
 
-export const WATERLINE_Z = 0;
-export const WATER_LEVEL_Y = 0;
+// The deterministic shape constants live in shared/shoreRamp.js — pileField
+// needs the foreshore slope to level a crown, and this module imports
+// pileField, so they cannot live here without a cycle. Re-exported, so every
+// existing import site is unchanged.
+export {
+    WATERLINE_Z, WATER_LEVEL_Y, FORESHORE_SLOPE,
+    SEABED_DEPTH, BERM_HEIGHT, BERM_RELAX,
+} from "../../../shared/shoreRamp.js";
 
-/** Foreshore gradient, metres of rise per metre landward. ~2° — a flat beach. */
-export const FORESHORE_SLOPE = 0.035;
-
-/** The submerged profile flattens out at this depth, metres. */
-export const SEABED_DEPTH = 2.5;
-
-/** Upper-beach berm: above this height the slope relaxes to a walkable flat. */
-export const BERM_HEIGHT = 1.2;
-export const BERM_RELAX = 0.35;
+import {
+    WATERLINE_Z, FORESHORE_SLOPE, SEABED_DEPTH, BERM_HEIGHT, BERM_RELAX,
+} from "../../../shared/shoreRamp.js";
 
 /** Dune backdrop: starts this far landward (z), fades in over DUNE_FADE m. */
 export const DUNE_START = -60;
@@ -150,7 +150,7 @@ export function shoreProfileJS(x, z, amp = 1) {
     relief += fbm2(x / 21 + 7.3, z / 21 - 4.1, 3) * MICRO_AMP *
         (1 - duneT * 0.7) * (1 - cov);
 
-    return h + relief * amp + cov * PILE_HEIGHT;
+    return h + relief * amp + pileLift(x, z);
 }
 
 /** Rectangular walkable-zone clamp, in place. */

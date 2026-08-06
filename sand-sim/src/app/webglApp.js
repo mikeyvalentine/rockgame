@@ -50,6 +50,7 @@ import {
     WORLD_SIZE, SPAWN, shoreProfileJS, clampToPlayRect,
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
+import { buildSiftingBeds } from "../scene/siftingBeds.js";
 import * as loading from "../core/loading.js";
 
 /** Grid density for the visible beach. 256² over 512 m = 2 m spacing. */
@@ -150,6 +151,15 @@ export async function run(canvas) {
 
     // ----------------------------------------------------------------- water
     const water = buildWater(scene);
+
+    // ------------------------------------------------------- sifting beds
+    // The stones on the piles. Renderer-agnostic — it wants nothing but
+    // `heightAt`, and the stones are ordinary meshes, so the fallback draws
+    // them as well as the WebGPU path does. (The mound they sit on is the part
+    // this renderer loses; see docs/09.)
+    await loading.phase("laying the beds", 0.68);
+    const beds = await buildSiftingBeds(scene, terrain);
+    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
 
     const character = new CharacterController(terrain);
     character.position.set(SPAWN.x, 0, SPAWN.z);
@@ -253,7 +263,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble,
+        deform, contact, scribble, beds,
         S, input, perfStats: stats,
     };
 }

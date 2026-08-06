@@ -41,6 +41,7 @@ import { MaskPaint } from "../terrain/maskPaint.js";
 import { initMaskBrush } from "../tools/maskBrush.js";
 import { DigTool } from "../tools/dig.js";
 import { buildWater } from "../scene/water.js";
+import { buildSiftingBeds } from "../scene/siftingBeds.js";
 import { DepthPass } from "../render/depthPass.js";
 import { PostChain } from "../post/postChain.js";
 import { createScribblePass } from "../post/scribblePass.js";
@@ -201,6 +202,13 @@ export async function run(canvas) {
 
     // ------------------------------------------------------------- warm-up
     // Everything that can compile, compiles here — behind the loading screen.
+    // ------------------------------------------------------- sifting beds
+    // The stones on the piles: baked beds from rock-sift, drawn as scenery on
+    // each crown. No physics — the bed only wakes when the player crouches.
+    await loading.phase("laying the beds", 0.72);
+    const beds = await buildSiftingBeds(scene, terrain);
+    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
+
     await loading.phase("compiling pipelines", 0.78);
     shadows.update(rig.camera, sky.sunDir);
     sky.render(rig, 0);
@@ -304,7 +312,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgpu",
         engine, scene, rig, character, contact, dig, spray, grains, water,
-        maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble,
+        maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble, beds,
         S, input, perfStats: stats,
     };
 }

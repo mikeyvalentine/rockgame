@@ -123,13 +123,11 @@ Piles follow the same twin pattern.
 ### Slices
 
 1. **Pile field.** ✅ Built. `shared/pileField.js` + the mound term in the height bake.
-2. **Rock instances.** Spawn each bed's stones at its pile, statically — `spawnBed`'s
-   `asleep: true`, which `bed-test.mjs` measures at 0.00 mm drift. Visual only; no
-   Havok bed until the player crouches.
+2. **Rock instances.** ✅ Built. `sand-sim/src/scene/siftingBeds.js` — 2160 stones
+   across four spots, drawn and culled, no physics.
 3. **Crouch transition.** Proximity prompt → camera move → hand off to rock-sift's
-   sift mode, which is where the physics bed wakes.
-
-Slices 2 and 3 need a live scene to judge.
+   sift mode, which is where the physics bed wakes. `spotAt()` is the proximity
+   test and is tested; nothing calls it yet.
 
 ### Slice 1, as built
 
@@ -147,8 +145,22 @@ stones floating on the high side and buried on the low one. So the falloff
 saturates over an inner `CROWN_RADIUS` (0.9 m, clear of rock-sift's 0.42 m
 `BED_RADIUS`) instead of peaking at a point, **and the mound damps micro relief
 under itself in the same proportion as it rises** — otherwise the crown carries
-the beach's own ±0.09 m of noise. Measured through the real resampling, the
-crown is flat to 3 mm.
+the beach's own ±0.09 m of noise.
+
+*Corrected while building slice 2:* flattening the noise was only half of it.
+The beach itself rises at `FORESHORE_SLOPE`, which across a 1.4 m bed is **48 mm
+of tilt** — and rock-sift's stones are 40 to 100 mm across, so the seaward edge
+of a bed poured flat floats by half a stone. The pile now cancels the ramp under
+itself (`pileLift`), making the crown a true horizontal plateau: the drawn
+surface measures **0.000 mm** across the bed footprint. The grounding mirror
+still reads 23 mm because its 0.5 m B-spline drags the bank face inward, which
+is the character's business and well inside the micro relief it walks on
+anyway — the two are now checked separately, because conflating them is exactly
+how the ramp survived the first pass.
+
+Levelling also keeps the crouch honest: rock-sift simulates the bed on flat
+ground under vertical gravity, so a level crown is the one that will not pop at
+the handoff.
 
 **A pile the size of the bed is invisible to the terrain.** The bake is 0.25
 m/texel and the CPU mirror the walker grounds on is 0.5 m/texel, then bicubic
@@ -208,6 +220,53 @@ while grounding stays exact, so the fallback walks you up a step that isn't
 there. Fixing it needs local dense patches *and* a GLSL port of the pebble
 shading, since the fallback has neither an aux texture nor the voronoi cobble
 path. Deliberately not done. See docs/09.
+
+### Slice 2, as built
+
+`siftingBeds.js` draws each spot's baked bed on its crown. The plan said "spawn
+each bed's stones — `spawnBed`'s `asleep: true`". That turned out to be the
+wrong route, for a reason the plan could not have known: `spawnBed` lives in
+rock-sift and would drag Babylon 8.56 into a Babylon 9.18 page. So the boundary
+was redrawn at things that carry no engine —
+
+- geometry from `rock-forge/src/forge/*`, pure JS, plain position/index arrays;
+- the bed file through `shared/bedFormat.js`, DataView and nothing else
+  (`rock-sift/src/bed.js` is now a shim over it, like `rocks.js` over
+  `shared/rockRating.js` — rock-sift's five Havok tests still pass);
+
+— and sand-sim builds meshes with its own Babylon. The cast matches because the
+forge is deterministic: same seed, same count, same RNG draw order. The bed's
+stored *names* are the proof, and `tools/bed-load-check.mjs` resolves all forty.
+
+**Three failures worth writing down, because all three are silent.**
+
+*Thin instances are an augmentation module.* `thinInstanceSetBuffer` is not on
+`Mesh` in the tree-shaken ES6 build — `@babylonjs/core/Meshes/thinInstanceMesh.js`
+has to be imported for its side effect, exactly like the `engine.dynamicTexture.js`
+imports already in both app modules. Without it every call is a no-op on
+`undefined`, nothing throws, and the beach just has no stones on it. There is now
+a post-condition that counts uploaded instances and says so.
+
+*Thin-instance buffers live on the Geometry, not the Mesh.* So `mesh.clone()`,
+which shares geometry, gives four spots one buffer and the last write wins. The
+symptom is vicious: every mesh reports the right instance count and the right
+bounding box, passes culling exactly where its stones should be, and draws some
+other spot's stones off screen. Three of the four beds were invisible with
+nothing anywhere reporting a problem. Each (archetype, spot) now gets its own
+geometry — 160 copies of a 320-triangle pebble, under a megabyte.
+
+*A frozen material cannot compile the instanced variant.* `material.freeze()`
+pins whatever effect was compiled first. Not frozen now; the world matrices are,
+which is where the per-frame cost was.
+
+**And one measurement that changed the design.** Built the obvious way — one
+mesh per archetype, rock-sift's own icosphere level 3 — the beds submitted
+**2,764,800 triangles from anywhere on the beach**, against a 131k beach mesh,
+because a thin-instanced mesh is culled by the bounds of all its instances and
+those spanned 55 m of shore. Split per spot and dropped to icosphere level 2
+(indistinguishable at standing distance, four times cheaper): **172,800
+triangles with a bed in view, 0 with none.** Measured both ways in the browser,
+not estimated.
 
 ### Before slice 3: the Babylon versions do not match
 
