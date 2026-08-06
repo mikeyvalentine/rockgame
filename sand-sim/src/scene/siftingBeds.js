@@ -9,10 +9,11 @@
  *
  * Nothing here imports rock-sift.
  * ------------------------------
- * rock-sift is on `@babylonjs/core` 8.56 and sand-sim on 9.18. Two Babylon
- * majors in one page means two Scene registries and two sets of class
- * identities, and the failures are the silent kind. So the boundary is drawn at
- * things that carry no engine:
+ * That began as a hard constraint — rock-sift was on `@babylonjs/core` 8.56
+ * against sand-sim's 9.18, and two Babylon majors in one page means two Scene
+ * registries and two sets of class identities, failing silently. Both are on
+ * 9.18 now, and the boundary is still worth keeping: it means drawing scenery
+ * pulls in no physics engine. So it stays drawn at things that carry no engine:
  *
  *   - the stone geometry comes from `rock-forge/src/forge/*`, which is pure JS
  *     and hands back plain position/index arrays;
@@ -87,33 +88,44 @@ export const U = 4;
 const SCENERY_LOD = 2;
 
 /**
- * Generate the archetype meshes, in metres.
+ * The cast, as a sequence — the single place the RNG is walked.
  *
- * The draw order matters and is not incidental: rock-sift advances its RNG
- * once per *accepted* shape, skipping any whose archetype params are missing,
- * and the size it draws decides the stone's scale. Reproducing the sequence
- * exactly is what makes these the same forty stones rather than forty stones
- * with the same names.
+ * The draw order matters and is not incidental: rock-sift advances its RNG once
+ * per *accepted* shape, skipping any whose archetype params are missing, and
+ * the size it draws decides the stone's scale. Reproducing that exactly is what
+ * makes these the same forty stones rather than forty stones with the same
+ * names.
+ *
+ * It is a function rather than two copies of the loop because the meshes and
+ * the collision hulls are both built from it, in different modules, and a cast
+ * that drifted between them would pair a stone's silhouette with another
+ * stone's collider — wrong in a way nothing would report.
  */
-export function createBedArchetypes(scene, { count = ARCHETYPE_COUNT, seed = ROCK_SEED } = {}) {
+export function castSequence({ count = ARCHETYPE_COUNT, seed = ROCK_SEED } = {}) {
     const lib = bakeLibrary({ count, seed });
     const rng = mulberry32(seed ^ 0x9e3779b9);
-    const archetypes = [];
-
+    const out = [];
     for (const shape of lib.shapes) {
         const params = ARCHETYPES[shape.archetype];
         if (!params) continue; // skip BEFORE drawing — rock-sift does the same
-
         const [lo, hi] = shape.sizeRange ?? [0.04, 0.09];
         const sizeMetres = lo + (hi - lo) * rng();
+        out.push({ name: `forge_${shape.archetype}_${shape.index}`, shape, params, sizeMetres });
+    }
+    return out;
+}
 
+/** Generate the archetype meshes, in metres. */
+export function createBedArchetypes(scene, opts = {}) {
+    const archetypes = [];
+
+    for (const { name, shape, params, sizeMetres } of castSequence(opts)) {
         const detail = buildDetailMesh(shape, params, SCENERY_LOD, sizeMetres);
         const positions = Float32Array.from(detail.positions);
         const indices = Array.from(detail.indices);
         const normals = [];
         VertexData.ComputeNormals(positions, indices, normals);
 
-        const name = `forge_${shape.archetype}_${shape.index}`;
         const vertexData = new VertexData();
         vertexData.positions = positions;
         vertexData.indices = indices;
@@ -270,7 +282,17 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
     let stones = 0;
 
     for (const spot of SIFT_SPOTS) {
-        const bed = loaded.beds[spot.variant % loaded.beds.length];
+        // A COPY of the variant, not the variant itself. Standing up writes the
+        // arrangement the player left back into this object, and `%` means two
+        // spots can land on the same variant — sharing it would have one spot's
+        // digging silently rewrite another's bed.
+        const src = loaded.beds[spot.variant % loaded.beds.length];
+        const bed = {
+            ...src,
+            archIndex: Uint8Array.from(src.archIndex),
+            positions: Float32Array.from(src.positions),
+            quaternions: Float32Array.from(src.quaternions),
+        };
         const baseY = terrain.heightAt(spot.x, spot.z);
         bedForSpot.set(spot.id, { bed, baseY });
         const buffers = bedInstanceMatrices(bed, spot, baseY, names);

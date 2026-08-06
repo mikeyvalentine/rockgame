@@ -60,10 +60,8 @@ import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlug
 import { PhysicsShapeBox, PhysicsShapeConvexHull } from "@babylonjs/core/Physics/v2/physicsShape.js";
 
 import { buildHullPoints } from "../../../rock-forge/src/forge/bake.js";
-import { bakeLibrary } from "../../../rock-forge/src/forge/bake.js";
-import { ARCHETYPES } from "../../../rock-forge/src/forge/archetypes.js";
-import { mulberry32 } from "../../../rock-forge/src/forge/rng.js";
-import { ROCK_SEED, ARCHETYPE_COUNT, U } from "./siftingBeds.js";
+import { detailedMetrics, SOLVER_LOD } from "../../../rock-forge/src/forge/solverParams.js";
+import { castSequence, U } from "./siftingBeds.js";
 
 /** Metres. 1:1 — see the header. */
 export const GRAVITY = -9.81;
@@ -78,9 +76,17 @@ export const GRAVITY = -9.81;
 export const PHYSICS_SUBSTEP_MS = 1000 / 60;
 export const MAX_FRAME_MS = 40;
 
-/** Solver-side clamps, in metres — rock-sift's values divided by its U. */
+/**
+ * Solver-side clamps.
+ *
+ * Speed is a length per second, so rock-sift's `5 * U` becomes 5 m/s here.
+ * Spin is NOT — rad/s is the same number at any world scale, so rock-sift's 30
+ * carries over untouched. Dividing it by U, as an earlier draft of this file
+ * did, would have quietly let stones spin a third faster in the beach's scene
+ * than in the lab the values were tuned in.
+ */
 export const MAX_SPEED = 5;
-export const MAX_SPIN = 40;
+export const MAX_SPIN = 30;
 
 /**
  * Points sampled for the collision hull. The forge's own note is worth heeding:
@@ -98,20 +104,15 @@ const HULL_LOD = 3;
  * scenery mesh is a coarser icosphere than rock-sift draws — the collider must
  * describe the stone, not the level of detail it happens to be drawn at.
  */
-export function createHulls(scene, { count = ARCHETYPE_COUNT, seed = ROCK_SEED } = {}) {
-    const lib = bakeLibrary({ count, seed });
-    const rng = mulberry32(seed ^ 0x9e3779b9);
+export function createHulls(scene, opts = {}) {
     const hulls = new Map();
 
-    for (const shape of lib.shapes) {
-        const params = ARCHETYPES[shape.archetype];
-        if (!params) continue; // skip BEFORE drawing — same order as the cast
-
-        const [lo, hi] = shape.sizeRange ?? [0.04, 0.09];
-        const sizeMetres = lo + (hi - lo) * rng();
-
+    // The same walk of the RNG the meshes are built from — see `castSequence`.
+    // Re-deriving it here is how a stone's silhouette ends up paired with a
+    // different stone's collider, so it is deliberately not re-derived.
+    for (const { name, shape, params, sizeMetres } of castSequence(opts)) {
         const points = buildHullPoints(shape, params, sizeMetres, HULL_LOD);
-        const hullMesh = new Mesh(`hull_${shape.archetype}_${shape.index}`, scene);
+        const hullMesh = new Mesh(`hull_${name}`, scene);
         // A point cloud has no faces; the hull builder only reads positions, but
         // Babylon wants a valid index buffer, so give it a degenerate one.
         hullMesh.setVerticesData("position", Float32Array.from(points), false);
@@ -122,7 +123,13 @@ export function createHulls(scene, { count = ARCHETYPE_COUNT, seed = ROCK_SEED }
         shapeBody.material = { friction: 0.62, restitution: 0.06 };
         hullMesh.dispose(false, false);
 
-        hulls.set(`forge_${shape.archetype}_${shape.index}`, shapeBody);
+        // Real mass, measured off the same geometry, rather than one number for
+        // every stone. rock-sift does this too (`arch.metrics.massKgWorld`), and
+        // it matters beyond realism: docs/02 puts the good band at 100-200 g and
+        // rates a rock on what it weighs, so a bed where every stone weighs the
+        // same is a bed where mass has stopped meaning anything.
+        const metrics = detailedMetrics(shape, params, sizeMetres, { level: SOLVER_LOD });
+        hulls.set(name, { shape: shapeBody, massKg: metrics.massKg, family: shape.archetype });
     }
     return hulls;
 }
@@ -215,10 +222,14 @@ export class SiftPhysics {
             const node = new Mesh(`stone_${spot.id}_${i}`, this.scene);
             node.position.copyFrom(pos);
             node.rotationQuaternion = rot.clone();
-            const body = new PhysicsBody(node, PhysicsMotionType.DYNAMIC, false, this.scene);
-            body.shape = hull;
-            body.setMassProperties({ mass: 0.17 });
-            body.disablePreStep = false;
+            // Third argument is startsAsleep, and it has to be true: the bed is
+            // already at rest, so waking it only invites the solver to resolve
+            // contacts that are already resolved. An earlier draft passed false
+            // while the comment above claimed otherwise, which is what put 99 mm
+            // of creep into a bed that should not have moved at all.
+            const body = new PhysicsBody(node, PhysicsMotionType.DYNAMIC, true, this.scene);
+            body.shape = hull.shape;
+            body.setMassProperties({ mass: hull.massKg });
             rocks.push({ node, body, archetype: name, index: i });
         }
 
