@@ -2079,11 +2079,11 @@ engine.runRenderLoop(() => scene.render());
 addEventListener("resize", () => engine.resize());
 </script>
 <script type="module">
-// The CPU twin of the ambient field (see ambient.js — drift-guarded by
+// The CPU twin of the ambient field (shared/ambientWater.js — drift-guarded by
 // tools/ambient-sync-check.mjs). Exposed for the skip solver and the console:
 //   waterAmbient(x, z)          — height/normal/flow at now, current wind
 //   waterAmbient(x, z, tSecs)   — at an explicit sim time
-import { sampleAmbient, makeAmbientWater } from "./ambient.js";
+import { sampleAmbient, makeAmbientWater } from "../shared/ambientWater.js";
 window.waterAmbient = (x, z, t) => sampleAmbient(
     x, z, t !== undefined ? t : performance.now() * 0.001,
     { windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale });

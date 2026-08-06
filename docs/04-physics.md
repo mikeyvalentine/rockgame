@@ -170,6 +170,44 @@ gradient**. A factorial over 4 rocks x 5 throw tiers (21 throws per cell) gives:
 That last point is a gap between this sim and `02-gathering.md`, which promises five
 rarity tiers a player can read. Today only "bad rock" vs "fine rock" reaches the water.
 
+### ⚠️ The ladder is a FLAT-WATER measurement, and the pond is not flat
+
+Every number above is measured against a flat plane at y = 0. The pond is not
+that. Measured through the real surface (`shared/ambientWater.js`, the CPU twin
+of babylon-water's `AMBIENT_GLSL`), on a champion throw, medians over four
+independent seeds:
+
+| windStrength | hops | vs glass |
+| --- | --- | --- |
+| 0 (glass) | 47–56 | — |
+| 0.15 | 43–58 | no real difference |
+| 0.35 | 42–48 | **−22%** |
+| **0.55** | 25–31 | **−49%** |
+
+**babylon-water's own default wind is 0.55.** So the pond as it stands today
+costs a champion throw about half its score, and the ladder above describes
+conditions the player will rarely see.
+
+An apparent "chop helps a little" at 0.15 (+13% in the first ensemble) did NOT
+survive re-seeding — it was sampling noise, and is recorded here so it is not
+rediscovered. From 0.35 the cost is real and monotone.
+
+`tools/water-coupling-check.mjs` measures this on every run of the root suite,
+and asserts the direction: rougher water must never score better, and a full
+gale must cost real distance. Waves are the daily's strategic layer
+(`05-scoring.md`), so a pond where chop helped would sort the leaderboard by
+luck.
+
+**Two things follow, and neither is decided:**
+
+1. **Which wind is the ladder tuned against?** Flat water is the wrong baseline
+   if the daily rolls real conditions. Either the ladder gets re-derived at the
+   daily's baseline wind, or the daily's wind range gets chosen to fit the
+   ladder. That is a design decision, not a tuning one.
+2. **The two labs disagree about the default by 55×.** The solver demo runs
+   `windStrength: 0.01` (near-glass); babylon-water defaults to `0.55`. The
+   solver has therefore been tuned on water the pond page never shows.
+
 ### Why the top two rungs are not reached — measured, not guessed
 
 Both causes are structural, and neither is fixable by turning the existing knobs

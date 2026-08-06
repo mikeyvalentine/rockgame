@@ -1,4 +1,4 @@
-// Does ambient.js still agree with AMBIENT_GLSL in index.html?
+// Does shared/ambientWater.js still agree with AMBIENT_GLSL in index.html?
 //
 // The CPU twin exists so the skip solver planes on the surface the player
 // sees; the moment the two drift, the stone skips on water that is not there.
@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { OCTAVES, sampleAmbient } from "../ambient.js";
+import { OCTAVES, sampleAmbient } from "../../shared/ambientWater.js";
 
 let failures = 0;
 const check = (name, ok, detail = "") => {

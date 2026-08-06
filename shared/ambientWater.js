@@ -1,4 +1,10 @@
-// The ambient wave field, CPU twin — audit item 8 / docs/01 feasibility.
+// The ambient wave field — the CANONICAL water surface, in plain JS.
+//
+// Lives in shared/ because three things need the same surface and none of them
+// should have to depend on a lab to get it: babylon-water renders it,
+// the skip solver planes on it, and the game will need to place the cairn and
+// read conditions against it. It has no imports and must keep none — that is
+// what lets the dependency-free solver package be tested against it.
 //
 // This is the SAME analytic function as AMBIENT_GLSL in index.html: four
 // directional octaves turned into the wind, deep-water dispersion per octave
@@ -6,7 +12,7 @@
 // so steepness holds under waveScale. It exists so the stone-skipping solver
 // can plane on the water the player actually sees:
 //
-//   import { sampleAmbient } from "/babylon-water/ambient.js";
+//   import { sampleAmbient } from "/shared/ambientWater.js";
 //   const sim = new StoneSkipSim({
 //     water: (x, z, t) => sampleAmbient(x, z, t, { windStrength, windDirDeg, waveScale }),
 //   });
@@ -15,9 +21,10 @@
 // in a GPU window around the stone and is visual detail; what the solver needs
 // is the metre-scale ambient surface, which is this, exactly.
 //
-// DRIFT GUARD: the octave table below must match AMBIENT_GLSL verbatim.
-// tools/ambient-sync-check.mjs parses index.html and fails the test run if the
-// two ever disagree — edit them together.
+// DRIFT GUARD: the octave table below must match AMBIENT_GLSL in
+// babylon-water/index.html verbatim. babylon-water/tools/ambient-sync-check.mjs
+// parses that GLSL and fails the test run if the two ever disagree — edit them
+// together. The guard stays in babylon-water because that is where the GLSL is.
 
 /** [wavelength x S, amplitude x A x S, direction (pre-wind-rotation)] */
 export const OCTAVES = [
