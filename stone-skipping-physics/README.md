@@ -180,63 +180,45 @@ where it previously had to stay near 6.
 
 ## Profiles: physics vs game
 
-The solver ships two tunings. **`documentary` is the default** and is the validated
-physics — nothing below changes it.
+The solver ships two game tunings. **`documentary` is the default** and is the validated
+physics — nothing in the assist section changes it.
 
 ```js
-new StoneSkipSim({ profile: 'game' })       // champion throws reach 40-80 skips
-new StoneSkipSim()                          // pure physics, ~13 clean hops
+new StoneSkipSim({ profile: 'game' })       // the tuned skill ladder
+new StoneSkipSim()                          // pure physics, ~10 clean hops
 ```
 
-Skips (competition count), run distance, and the dead time after the run:
-
-Median skips over jittered throws, with the tilt swing that makes wobble visible:
+Median **clean hops** (the daylight-counted score — see *How a skip is counted*) and run
+distance over 15 jittered throws per cell:
 
 | Preset | documentary | game | arcade |
 |---|---|---|---|
-| `casual` (11 m/s, 12 rev/s) | 4 sk, 9 m | 5 sk, 8 m | 6 sk, 9 m |
-| `decent` (14, 28) | 10 sk, 20 m | 11 sk, 18 m | 14 sk, 21 m |
-| `strong` (18, 45) | 12 sk, 30 m | 28 sk, 26 m | 32 sk, 30 m |
-| `steinerThrow` (19.2, 47) | 13 sk, 35 m | 30 sk, 31 m | 39 sk, 38 m |
-| `truscottLimit` (41.6, 48) | 15 sk, 75 m | 32 sk, 73 m | 39 sk, 86 m |
-| `noSpin` / `noseDown` | 0 | **0** | **0** |
+| `casual` (11 m/s, 12 rev/s) | 4 hops, 9 m | 6 hops, 8 m | 6 hops, 8 m |
+| `decent` (14, 28) | 7 hops, 20 m | 16 hops, 19 m | 16 hops, 19 m |
+| `strong` (18, 45) | 9 hops, 30 m | 59 hops, 54 m | 63 hops, 57 m |
+| `steinerThrow` (19.2, 47) | 10 hops, 34 m | 58 hops, 58 m | 52 hops, 59 m |
+| `truscottLimit` (41.6, 48) | 12 hops, 78 m | 55 hops, 96 m | 61 hops, 95 m |
 
-Preset names describe the THROW, never the outcome — `PRESET_LABELS` carries the
-human-readable version for a UI. `perfect` and `recordAttempt` were the old names and
-both misled: the latter holds the input parameters of the 88-skip record and the model
-produces 14 from them.
+`arcade` differs from `game` in `contactLossScale` alone — the run-length knob — so it is
+the same skill ladder stretched, not a different game.
 
-Note how steeply the model rewards spin: 28 → 55 rev/s takes `documentary` from 4 skips
-to 23. `perfect` used to be the 14 m/s / 28 rev/s throw and scored 4, which made the
-physics look far worse than it is; that throw is now `decent`.
+### The game profile is tuned against a skill ladder, not a preset
 
-Three assist knobs, all 0 in `documentary`, all live sliders in the viewer:
+`npm run test:ladder` scores six skill tiers as **ensembles of jittered throws**, because
+skip count is chaotic and a single release measures the jitter rather than the player.
+Each tier is a centre throw plus the execution error a player at that level still carries,
+on the axes the throw UI actually exposes. It asserts a regression band around today's
+numbers and reports the gap to the design ladder separately. Full results and the two
+measured reasons the top rungs are not yet reached are in `docs/04-physics.md`.
 
-| Knob | Controls |
+The four knobs it is tuned on, in order of how much they move the score:
+
+| Knob | What it sets |
 |---|---|
-| `env.hopSpeedFraction` | rebound height, as a fraction of remaining speed |
-| `env.attitudeAssist` | how hard the stone is held at its launch trim while wet. Acts on the **angular momentum vector**, not the instantaneous face normal, so nutation survives — see below |
-| `env.bounceSpeedTax` | **how long a run lasts** — extra speed removed per bounce |
-
-`bounceSpeedTax` is the one to reach for when runs feel overblown. `hopSpeedFraction`
-turns out to govern mid-range throws only: a champion throw saturates at 50–80 hops
-over ~110 m however it is set, because it always enters sustained skipping. Length is
-the thing that actually reads as "too much", and the tax is a purely subtractive knob
-that can only ever shorten a run.
-
-The two assist knobs are `env.hopSpeedFraction` and `env.attitudeAssist`, both 0 in
-`documentary`. Both are gated on `_assistAuthority` — derived from **launch** spin and
-scaled down by gyroscopic incoherence — so a badly thrown stone earns no help and the
-skill curve stays intact. That gate matters: an earlier version keyed off live spin,
-and a tumbling stone picked up enough face-normal rotation during contact to earn
-assist and skip twice with zero spin.
-
-Two failed designs are documented in the source so they don't get retried:
-a **multiplicative rebound gain** was unstable (past ~1.25x the stone gained more
-energy per bounce than it lost and the count leapt 12 → 230 across a hair's width),
-and an **energy-loss cap** was stable but did nothing, because total energy was never
-the limiter. Hop height was — hence `hopSpeedFraction`, which ties rebound speed to
-remaining forward speed so hops shrink smoothly as the stone slows.
+| `env.contactLossScale` | run length. Fraction of the water's per-contact speed loss the stone keeps paying, graded by how cleanly the contact was flown (`_contactQuality`) |
+| `env.hopSpeedTarget` | hop shape. Pins rebound speed from *both* sides, so hop time is constant and hop length shrinks with speed — the shape of a real record run |
+| `env.hopFlattenLimit` | how much of a natural rebound one bounce may flatten. Guards the attitude instability that made champion-speed throws bimodal |
+| `env.attitudeAssist` + `attitudeAssistRefSpeed` | attitude hold, per *contact* rather than per second — contacts shorten with speed, so an unscaled rate under-corrects exactly when the disturbance is largest |
 
 ### What the pure physics will NOT do: reach the record
 
@@ -369,11 +351,27 @@ Two things follow, and both are implemented:
   pitty-pats and plinkers". The death rattle scores.
 - **It is rings minus one.** The final plunk does not count.
 
-| Field | Meaning |
-|---|---|
-| `sim.ripples` | raw count of contacts that raised a visible ring |
-| `sim.skips` | `ripples - 1` — **the competition-comparable number** |
-| `sim.cleanHops` | subset that fully left the water. Not a rulebook concept; exposed only because it is the numerically stable metric |
+There is a second rulebook, and it disagrees. The **Mackinac Island** rule — the one
+Rock Game scores on (`docs/05-scoring.md`) — counts only hops with *clear daylight
+between the splashes*, and stops counting entirely once a stone begins to patter. Both
+are implemented, side by side, because they are genuinely different sports:
+
+| Field | Rule | Meaning |
+|---|---|---|
+| `sim.ripples` | — | raw count of contacts that raised a visible ring |
+| `sim.skips` | Guinness | `ripples - 1`. Ripple test; the tail scores |
+| `sim.cleanHops` | Mackinac | hops clearing `solver.minHopClearance` of daylight. **The game's score.** Also the metric that converges under substep refinement |
+
+The daylight threshold is **5 mm of apex clearance**, calibrated against the record
+rather than by eye: 88 skips over 76 m is a 0.86 m mean hop, ~45 ms aloft, an apex of
+about 2.5 mm. Record hops are millimetres, so a centimetre-scale threshold would exclude
+the runs it exists to measure. Apex comes from vertical speed at liftoff (`vy²/2g`),
+where the stone is exactly at the surface by definition.
+
+`solver.patterLimit` (3) is the other half of the same rule: three consecutive contacts
+without daylight and the scoring run ends. Without it a champion throw's score was ~80%
+terminal chatter, and since every skill tier grew the same tail, the score was mostly
+measuring it.
 
 `solver.minBounceSpeed` is the visible-ripple threshold. Every `bounce` event carries
 `impulse` (kg·m/s of vertical momentum delivered) and `energyToWater` (J) so a water
@@ -484,7 +482,11 @@ Read these before tuning.
 
 | Want | Change |
 |---|---|
-| More skips overall | lower `env.pitchMomentScale` (0.2 → 0.1) |
+| Longer runs / more skips | lower `env.contactLossScale` — the run-length knob |
+| Flatter, more numerous hops | lower `env.hopSpeedTarget` |
+| Champion throws blowing up on attitude | raise `env.hopFlattenLimit`, lower `env.attitudeAssistRefSpeed` |
+| A stricter / looser "skip" | `solver.minHopClearance`, `solver.patterLimit` |
+| More skips overall (physics side) | lower `env.pitchMomentScale` (0.2 → 0.1) |
 | Stone settles too slowly / jitters | raise `env.wobbleDampingCoefficient`, `env.spinDampingCoefficient` |
 | Longer / shorter sink animation | `solver.settleDepth`, `solver.settleTimeout` |
 | Skip the sink entirely | stop stepping on `sim.runEnded` instead of `sim.finished` |
