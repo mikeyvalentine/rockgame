@@ -28,10 +28,27 @@
 
 name: CI
 
+# ## Runner demand
+#
+# This workflow is five jobs. Before it existed the repo asked for two per push
+# (one test, one deploy); it now asks for six, and on 2026-08-06 the deploy sat
+# unrunnable for over an hour behind "All GitHub-hosted runners are busy". The
+# triggers below are therefore as narrow as they can be without losing coverage.
+#
+# NOT on push to main. Every merge is a PR, and the PR already ran this exact
+# matrix on this exact tree — a push-to-main run re-tests a commit that has just
+# been tested, for double the runners. If direct pushes to main ever become a
+# thing, put it back; until then `deploy.yml` still builds on every push, so a
+# merge that breaks the build is caught anyway.
+#
+# Not for documentation-only changes either. A markdown edit does not need five
+# Havok suites; rock-sift alone is four minutes of runner.
 on:
   pull_request:
-  push:
-    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 # Superseded PR runs are worth cancelling; superseded main runs are not, because a

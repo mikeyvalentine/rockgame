@@ -6,25 +6,49 @@ menu, results, leaderboard, profile — plus the database the stats live in, and
 
 | Folder | Lab | Dev URL |
 | --- | --- | --- |
-| `babylon-water/` | the water surface (static page, Babylon via CDN) | http://localhost:5180/babylon-water/index.html |
-| `stone-skipping-physics/` | 6-DOF flight/skip solver + 3D viewer (static page) | http://localhost:5180/stone-skipping-physics/demo/index.html |
+| `babylon-water/` | **the skip lab** — pond surface + the 6-DOF solver throwing at it, one page | http://localhost:5180/babylon-water/index.html |
+| `stone-skipping-physics/` | the solver itself: a dependency-free ES module, no page of its own | — |
 | `props/` | optimized GLB props preview (static page, model-viewer) | http://localhost:5180/props/preview.html |
 | `rock-forge/` | procedural rock geometry + texture set (Vite) | http://localhost:5184 |
 | `rock-sift/` | the shore, sifting, picking a stone (Vite) | http://localhost:5183 |
 | `sand-sim/` | first-person beach sand, WebGPU (Vite) | http://localhost:5185 |
 
-The two static pages are served by the hub's own dev server; the three Vite
-labs keep their own dependency trees (`sand-sim` is on Babylon 9, the rest on
-Babylon 8) and their own ports. The menu screen links to all five, and the
-scribble/pastel dial panel carries its settings across every page (a cookie —
-localhost cookies ignore ports).
+The two static pages are served by the hub's own dev server; the Vite labs have
+their own ports. The menu screen links to all four, and the scribble/pastel dial
+panel carries its settings across every page (a cookie — localhost cookies
+ignore ports).
+
+**The labs are npm workspaces.** One install at the ROOT covers every one of
+them, into one hoisted `node_modules` with exactly one copy of Babylon, pinned
+to an exact version. Running `npm install` inside a lab creates a nested tree
+and a second Babylon — which is not hypothetical: sand-sim imports rock-forge
+source, and for a while the two resolved different Babylon versions and their
+`Scene` classes failed `instanceof` against each other while every test passed.
+`tools/workspace-check.mjs` now fails the build if that comes back.
 
 ```
-npm run install:all   # root + the three Vite labs
+npm install           # ROOT only — covers all the labs
 npm run dev           # hub on 5180 + sift 5183 + forge 5184 + sand 5185
 npm run dev:hub       # just the app shell on 5180
-npm test              # store, loader, backend contract, schema drift
+npm test              # hub: store, loader, backend contract, schema, pinned
+                      # CDN, workspace invariants, the water twin and its
+                      # numerical scheme, and the solver/water coupling
+npm test --workspaces # every lab's own suite as well
 ```
+
+## Deploying
+
+**Cloudflare Pages builds this repo itself**, from GitHub, on every push to
+`main` — build command `npm run build:site`, output `dist`, Node 22. Nothing to
+run and no GitHub runner involved, which is the point: on 2026-08-06 the deploy
+sat unrunnable for over an hour behind *"All GitHub-hosted runners are busy"*.
+
+`.github/workflows/deploy.yml` is still there but is **manual only**
+(Actions → Deploy site → Run workflow). Two systems publishing to one Pages
+project would race, and the loser's output is what sticks. It exists as the
+fallback for when a Cloudflare build breaks.
+
+`npm run deploy` also still works from a machine with Wrangler authorised.
 
 The gameplay itself is **not** wired into the shell yet — the labs are the
 parts, and they get pulled in one at a time (the placeholder toy throw that

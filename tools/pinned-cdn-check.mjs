@@ -24,9 +24,10 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Pages that load Babylon from a CDN rather than through a bundler. */
+// Was two: the solver demo had its own copy of this script tag until the two
+// labs were collapsed into one page.
 const PAGES = [
   'babylon-water/index.html',
-  'stone-skipping-physics/demo/index.html',
 ];
 
 /** The version of record: whatever the workspace root declares. */

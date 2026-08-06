@@ -170,6 +170,68 @@ gradient**. A factorial over 4 rocks x 5 throw tiers (21 throws per cell) gives:
 That last point is a gap between this sim and `02-gathering.md`, which promises five
 rarity tiers a player can read. Today only "bad rock" vs "fine rock" reaches the water.
 
+### The pond's conditions, and what they cost — decided
+
+The pond's still-water baseline is **`POND_CONDITIONS`** in
+`shared/ambientWater.js`, one definition that babylon-water starts from and the
+solver is tuned against:
+
+```
+windStrength 0.01 · windDirDeg 93 · waveScale 8
+```
+
+Near-glass: the hero-calm morning `11-art-direction.md` names, with the swell
+stretched long (waveScale 8 puts the octaves at 7.2 m down to 1.2 m) so what
+little motion remains is a slow heavy roll rather than chop.
+
+**The ladder above is measured on a flat plane, and at these conditions that is
+a valid proxy** — a champion throw scores the same on both. It is only a proxy
+while the pond stays calm. Measured through the real surface, medians over four
+seeds:
+
+| windStrength | hops | vs glass |
+| --- | --- | --- |
+| **0.01 (the pond)** | 47–56 | **no difference** |
+| 0.15 | 43–58 | no real difference |
+| 0.35 | 42–48 | −22% |
+| 0.55 | 25–31 | −49% |
+
+So chop is a real and steep cost once it arrives, which is what makes wind a
+strategic layer for the daily (`05-scoring.md`) rather than decoration. An
+apparent "chop helps a little" at 0.15 did NOT survive re-seeding — it was
+sampling noise, recorded here so it is not rediscovered.
+
+`tools/water-coupling-check.mjs` asserts all of this on every run: that rougher
+water never scores better, that a gale costs real distance, and that the
+flat-water ladder still matches the pond. **If someone dials the pond choppier,
+that last check fails** — at which point every number in the ladder describes
+water the game no longer has, and it needs re-deriving.
+
+> The `good` tier is the one to watch. It sits on the bifurcation described
+> below, so tiny changes flip it between ~24 and ~48 hops. That is instability
+> in the tier, not in the water.
+
+### Ripples do not feed the physics — decided
+
+The water has two layers, and only one is scored against:
+
+- **The swell** — the analytic four-octave field. Deterministic, CPU-side,
+  metre-scale. **This is what the stone planes on.** It tilts the surface, which
+  changes the effective attack angle at every contact, which is the single
+  biggest thing deciding whether a stone skips.
+- **The interaction ripples** — the rings spreading from each impact. These live
+  in a GPU texture and are **deliberately not read back into the solver.**
+
+Three reasons, in order of weight:
+
+1. **Determinism.** A GPU readback is neither synchronous nor identical across
+   drivers. Level 1 determinism is required for the MVP (above), and anything
+   the score depends on has to stay on the CPU.
+2. They are the stone's own wake, behind a stone that is already leaving.
+3. At the scale that matters they are millimetres against a swell of centimetres.
+
+They remain fully visible on screen. They just do not vote.
+
 ### Why the top two rungs are not reached — measured, not guessed
 
 Both causes are structural, and neither is fixable by turning the existing knobs

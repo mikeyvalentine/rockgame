@@ -55,6 +55,19 @@
         border-radius: 5px;
     }
     #panel .btns button:hover { background: #27506e; }
+    #skiphud {
+        position: fixed; right: 10px; top: 10px; width: 208px; z-index: 5;
+        font: 11px/1.5 ui-monospace, Consolas, monospace; color: #cfe2f0;
+        background: rgba(6,17,28,.82); border: 1px solid #24455f;
+        border-radius: 6px; padding: 9px 10px;
+    }
+    #skiphud .big { font-size: 26px; line-height: 1.1; color: #6fc3ff; }
+    #skiphud .big small { font-size: 11px; color: #7d8fa3; }
+    #skiphud table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    #skiphud td { padding: 1px 0; }
+    #skiphud td:last-child { text-align: right; color: #eaf4ff; }
+    #skiphud #outcome { color: #ffd28a; min-height: 15px; }
+    #skiphud #phase { margin-top: 5px; color: #7d8fa3; }
     #copyOut {
         width: 100%; height: 78px; margin-top: 8px; display: none;
         font: 10px/1.35 ui-monospace, Consolas, monospace;
@@ -67,10 +80,33 @@
 <canvas id="c"></canvas>
 <div id="panel"></div>
 <div id="hud">
+    <button id="throwBtn">Throw</button>
     <button id="plungeBtn">Plunge</button>
-    <button id="skipBtn">Skip run</button>
-    <b>click / drag</b> the water &nbsp;·&nbsp;
+    <button id="followBtn">Camera: follow</button>
+    <button id="slowBtn">Slow motion: off</button>
+    <b>space</b> throw &nbsp;·&nbsp; <b>drag</b> to orbit &nbsp;·&nbsp;
     <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
+</div>
+
+<!-- Solver readout. The whole point of merging the two labs: these numbers and
+     the water they describe are now the same scene, so a knob that changes the
+     score is visible against the splash it actually made. -->
+<div id="skiphud">
+    <div class="big"><span id="hops">0</span> <small>skips</small></div>
+    <div id="outcome"></div>
+    <table>
+      <tr><td>run distance</td><td id="rdist">0.0 m</td></tr>
+      <tr><td>total distance</td><td id="dist">0.0 m</td></tr>
+      <tr><td>ripples / taps</td><td id="rings">0</td></tr>
+      <tr><td>speed</td><td id="spd">0.0 m/s</td></tr>
+      <tr><td>attack</td><td id="atk">0.0&deg;</td></tr>
+      <tr><td>bank</td><td id="bnk">0.0&deg;</td></tr>
+      <tr><td>spin</td><td id="spn">0.0 rev/s</td></tr>
+      <tr><td>Rossby</td><td id="ros">0.0</td></tr>
+      <tr><td>drift</td><td id="drf">0.00 m</td></tr>
+      <tr><td>checksum</td><td id="csum">-</td></tr>
+    </table>
+    <div id="phase">-</div>
 </div>
 
 <!-- Babylon is PINNED. It used to be cdn.babylonjs.com/babylon.js, which serves
@@ -117,13 +153,20 @@
 
 // Scaled up from his 2 m pool to pond size. RES, SIZE and STEPS are COUPLED and
 // cannot be changed independently: a wave crosses one cell per step, so
-//     waveSpeed = (SIZE / RES) * 0.694 * STEPS * 60
-// (the 0.694 cells-per-step is measured, not theoretical). Real ripples of the
+//     waveSpeed = (SIZE / RES) * 0.551 * STEPS * 60
+// (the cells-per-step figure is measured, not theoretical: 0.694 at Wallace's
+// WAVE_C 2.0, 0.551 at the 1.5 this now uses — see WAVE_C for why). Real ripples of the
 // size a stone makes travel 0.7-1.0 m/s by deep-water dispersion, and that pins
 // the cell size to roughly 25 mm. Everything below follows from that:
 //
-//   SIZE 24 m / RES 1024  ->  23.4 mm cells
-//   STEPS 1               ->  0.98 m/s waves, physically right
+//   SIZE 64 m / RES 1024  ->  62.5 mm cells
+//   STEPS 1, WAVE_C 0.09  ->  0.78 m/s waves, inside the physical 0.7-1.0 band
+//
+// SIZE went 24 -> 64 to hold a WHOLE RUN's ripples at once (see placeWindow).
+// That is free in memory and bandwidth — RES is unchanged, so it is the same
+// 1024^2 pair — and is paid for in cell size, which is bought back with WAVE_C.
+// The earlier note here that "48 m at this cell size needs 2048^2" was assuming
+// the cell size had to stay fixed. It does not; the wave speed does.
 //   damping rescaled      ->  0.995 was per-step at 2 steps/frame, so halving
 //                             the step count needs 0.995^2 to decay the same
 //                             amount per second
@@ -138,7 +181,7 @@
 // fades to zero at the window edge, and what remains is ambient, so there is
 // no join to hide. A skip run's ripples ride along with the stone.
 const RES     = 1024;    // simulation texture size
-const SIZE    = 24;      // interaction WINDOW span in metres (was the whole pond)
+const SIZE    = 64;      // interaction WINDOW span in metres (was the whole pond)
 const HALF    = SIZE / 2;
 // The pond the player sees. docs/01 asks for ~200 m "pending feasibility
 // check against the water sim" — the windowed sim IS that feasibility
@@ -152,7 +195,79 @@ const SUBDIV  = 192;     // surface tessellation. 256 gave 65k verts every frame
                          // anyway, so the geometry was carrying detail it could
                          // not resolve.
 const STEPS   = 1;       // stepSimulation() calls per frame
-const DAMPING = 0.990;   // per step, rescaled from his 0.995 for STEPS 1
+// RIPPLE PERSISTENCE. Wallace's 0.995 (0.990 rescaled for STEPS 1) was tuned
+// for a 2 m demo pool, where a ripple crossing the pool and dying inside a
+// second looks right. At 24 m with a stone skipping for five seconds it meant
+// every ripple was gone before the run was: 55% amplitude after 1 s, 16% after
+// 3 s, 2.7% after 6 s. The trail vanished behind the stone.
+//
+// This is NOT what the pausability gate did — that only freezes the field once
+// it is already flat, and the STEPS 2 -> 1 change was explicitly rescaled to
+// keep the per-second decay identical. The constant was simply inherited.
+//
+// At 0.9992 a ripple is still at 62% after 10 s and 24% after 30 s. Numerically
+// safe: a twin of the update shader stays bounded all the way to 1.0 (no
+// damping at all), so this is a look knob, not a stability one.
+const RIPPLE = window.RIPPLE = { damping: 0.9992 };
+
+/**
+ * THE SKIP LAB's parameters — the stone-skipping demo's controls, now living on
+ * this page.
+ *
+ * Plain numbers, declared in this CLASSIC script so the tuning panel below can
+ * bind to them the same way it binds to WIND and RIPPLE. The solver itself is an
+ * ES module and cannot be imported here, so it is loaded in a module block at
+ * the foot of the page and reads these values at throw time. That split is the
+ * whole trick: data here, physics there, one panel over both.
+ *
+ * `profile` and `preset` are names; the module resolves them against
+ * PHYSICS_PROFILES and THROW_PRESETS. `assist` starts empty and is filled from
+ * the chosen profile by the module, so a stale literal here can never silently
+ * override a profile — which is a bug this project has now shipped twice.
+ */
+const SKIP = window.SKIP = {
+    profile: "game",
+    preset: "steinerThrow",
+    throw: {
+        speed: 19.2, elevationDeg: -2, attackAngleDeg: 20, spinRPS: 47,
+        bankAngleDeg: 0, spinAxisTiltDeg: 0, releaseHeight: 0.12,
+    },
+    stone: { radius: 0.045, thickness: 0.010, aspect: 1.0 },
+    assist: {},
+    follow: true,
+    slow: false,
+    /** Installed by the module block once the solver has loaded. */
+    doThrow: null,
+};
+
+/**
+ * Wave coefficient in the update step: v += (average - h) * WAVE_C.
+ *
+ * Wallace's 2.0 sits exactly AT this scheme's CFL limit, and that is not a
+ * safety margin — it is the edge. For the checkerboard mode (alternating every
+ * texel) the 4-neighbour average is exactly -h, so the update becomes
+ * v' = damp*(v - 2*C*h); at C = 2 the eigenvalues are a DEFECTIVE double root at
+ * -1, which grows like n*lambda^n before it decays.
+ *
+ * It grows at EVERY damping value, including the original 0.990 — measured peak
+ * 13x over 600 steps. The old code got away with it because damping killed the
+ * amplitude long before the growth was visible. Raise the damping to make
+ * ripples last, and the same mode reaches 49x and shows up as a full-screen
+ * two-pixel hatch. That is a real regression this file shipped, and it is why
+ * this constant is now named and tested rather than inlined.
+ *
+ * Backing off it buys the margin: well below 2.0 the mode stays bounded at ~1x
+ * for any damping, so RIPPLE.damping is genuinely free to dial.
+ *
+ * The value is not chosen for stability alone — it is what holds the wave speed
+ * at 0.78 m/s now that SIZE is 64 m and a cell is 62.5 mm. Cell size and WAVE_C
+ * trade directly: a wider window means bigger cells, and a lower WAVE_C slows
+ * the wave back down to the physical 0.7-1.0 m/s band. Change one, re-derive
+ * the other; scheme-stability-check.mjs fails if the pair drifts out of band.
+ *
+ * tools/scheme-stability-check.mjs asserts both halves of that on every test run.
+ */
+const WAVE_C = 0.09;
 const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
 const DROP_S  = 0.01;    // his drop strength, in metres of displacement
 
@@ -188,12 +303,35 @@ varying vec2 vUV;
 uniform sampler2D prev;
 uniform float dropCount;
 uniform vec4 drops[${DROP_BATCH}];   /* center.xy in [-1,1], radius, strength */
+/* travel direction .xy (unit, window space), elongation .z, lateral skew .w */
+uniform vec4 dropAxis[${DROP_BATCH}];
 void main(void) {
     vec4 info = texture2D(prev, vUV);
     for (int i = 0; i < ${DROP_BATCH}; i++) {
         if (float(i) >= dropCount) break;
         vec4 d = drops[i];
-        float drop = max(0.0, 1.0 - length(d.xy * 0.5 + 0.5 - vUV) / d.z);
+        vec4 ax = dropAxis[i];
+        vec2 rel = (d.xy * 0.5 + 0.5) - vUV;
+
+        /* AN OBLIQUE IMPACT GOUGES A TRACK, NOT A CIRCLE.
+           A circular crater is what a stationary drop makes. A stone arriving
+           at an attack angle a contacts a patch roughly 1/sin(a) longer than it
+           is wide — about 3x at the 20 degree magic angle — laid along the
+           direction of travel. Measuring distance in a frame stretched along
+           that axis is the cheapest honest way to say so.
+
+           The skew term shears the ellipse sideways. A spinning stone throws
+           its spray and its gouge slightly to one side (the same asymmetry that
+           gives the run its lateral drift), so the sign of spin leans the
+           crater. Small, but it is the difference between a ripple that looks
+           stamped on and one that looks made by something moving. */
+        vec2 fwd = ax.xy;
+        vec2 side = vec2(-fwd.y, fwd.x);
+        float alongD = dot(rel, fwd);
+        float acrossD = dot(rel, side) + alongD * ax.w;
+        float r = length(vec2(alongD / max(ax.z, 0.001), acrossD));
+
+        float drop = max(0.0, 1.0 - r / d.z);
         drop = 0.5 - cos(drop * PI) * 0.5;
         info.r += drop * d.w;
     }
@@ -208,6 +346,10 @@ precision highp float;
 varying vec2 vUV;
 uniform sampler2D prev;
 uniform vec2 delta;
+// Live, so ripple lifetime is dialable from the panel. It used to be baked into
+// the shader string at load; a constant you have to edit and reload is a
+// constant nobody tunes.
+uniform float damp;
 void main(void) {
     vec4 info = texture2D(prev, vUV);
 
@@ -220,13 +362,30 @@ void main(void) {
         texture2D(prev, vUV + dy).r
     ) * 0.25;
 
-    info.g += (average - info.r) * 2.0;
-    info.g *= DAMP;
+    info.g += (average - info.r) * WAVE_C;
+
+    // ABSORBING EDGE, over the same outer 8% the renderer fades across.
+    //
+    // texture2D clamps at the border, and a clamped neighbour is a mirror: waves
+    // reach the window edge and bounce back in. That was invisible while damping
+    // killed everything in three seconds. With ripples that live for half a
+    // minute it would not be — you would see a wave return from nowhere.
+    //
+    // It is also a correctness fix independent of lifetime. winFade already
+    // makes the RENDERER treat deviation as zero at the edge, so without this
+    // the sim carries energy the player cannot see, and a window scroll drags
+    // that hidden energy back into view. Measured on a numerical twin of this
+    // shader: hidden edge amplitude drops 3-7x, and the peak stops ringing up
+    // from 1.00 to 1.31.
+    vec2 m = min(vUV, 1.0 - vUV);
+    float edge = smoothstep(0.0, 0.08, min(m.x, m.y));
+    info.g *= damp * mix(0.55, 1.0, edge);
+
     info.r += info.g;
 
     gl_FragColor = info;
 }
-`.replace(/DAMP/g, DAMPING.toFixed(4));
+`.replace(/WAVE_C/g, WAVE_C.toFixed(4));
 
 // Window recentre. Shifts the whole field (height, velocity, normals — every
 // channel) by a whole-texel offset so the window can follow the stone without
@@ -577,9 +736,30 @@ applyScaling();
 
 // AUDIT #6 — idle gate for the deviation sim (see the render loop). Any
 // disturbance (drop, ripple, impact, the opening seed) stamps this; the sim
-// integrates for SETTLE_MS past the last stamp, long enough for the damping
+// integrates for settleMs() past the last stamp, long enough for the damping
 // to flatten what the disturbance left, then freezes.
-const SETTLE_MS = 6000;
+/**
+ * How long the deviation sim keeps integrating after the last disturbance.
+ *
+ * DERIVED from the damping, not a constant, because the two are the same fact:
+ * the gate exists to stop stepping once there is nothing left to integrate, and
+ * how long that takes is exactly what `RIPPLE.damping` sets. Hard-coding 6 s was
+ * right for a field that flattened in three; with ripples that live for half a
+ * minute the same 6 s would FREEZE them mid-spread — the pond would stop dead
+ * with rings still on it.
+ *
+ * Time for amplitude to fall to VISIBLE of its initial value, at 60 steps/s.
+ * Capped: lingering ripples genuinely cost simulation time, and that is the
+ * trade being made here — the cap is where "still settling" stops being worth
+ * ~64 MB/frame of ping-pong traffic.
+ */
+const RIPPLE_VISIBLE = 0.02;
+const SETTLE_MS_MAX = 45000;
+function settleMs() {
+    const perStep = Math.min(RIPPLE.damping, 0.999999);
+    const secs = Math.log(RIPPLE_VISIBLE) / (60 * Math.log(perStep));
+    return Math.max(6000, Math.min(SETTLE_MS_MAX, secs * 1000));
+}
 let lastDisturb = performance.now();
 
 const scene = new BABYLON.Scene(engine);
@@ -671,8 +851,8 @@ function makePass(name, source, uniforms) {
     });
 }
 const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
-const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops"]);
-const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta"]);
+const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops", "dropAxis"]);
+const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta", "damp"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
 const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
 
@@ -682,11 +862,20 @@ const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
 // stay exact cell multiples.
 const windowCenter = new BABYLON.Vector2(0, 0);
 const windowTarget = { x: 0, z: 0 };
+/** Quiet time after which the next impact counts as a NEW run, and the window
+ *  is re-placed. Long enough to span a whole skip run (a champion throw is
+ *  ~8 s of contacts) plus the pause before the next throw. */
+const RUN_GAP_MS = 12000;
+let lastImpactAt = -Infinity;
 const passScroll = new BABYLON.Vector2(0, 0);
 
 const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
 let passSrc = null;
 const dropData = new Float32Array(DROP_BATCH * 4);
+/** Per-drop orientation: travel dir xy, elongation, lateral skew. Separate array
+ *  because a vec4 was already full and the shape of a crater is a different
+ *  fact from where and how hard it landed. */
+const dropAxisData = new Float32Array(DROP_BATCH * 4);
 let dropsInBatch = 0;
 
 // Uniforms go through onApply because EffectRenderer binds the effect itself.
@@ -694,6 +883,7 @@ dropPass.onApplyObservable.add(() => {
     const eff = dropPass.effect;
     eff.setFloat("dropCount", dropsInBatch);
     eff.setFloatArray4("drops", dropData);
+    eff.setFloatArray4("dropAxis", dropAxisData);
     if (passSrc) eff.setTexture("prev", passSrc);
 });
 scrollPass.onApplyObservable.add(() => {
@@ -719,6 +909,7 @@ function recenterWindow() {
 for (const p of [updatePass, normalPass]) {
     p.onApplyObservable.add(() => {
         p.effect.setVector2("delta", DELTA);
+        if (p === updatePass) p.effect.setFloat("damp", RIPPLE.damping);
         if (passSrc) p.effect.setTexture("prev", passSrc);
     });
 }
@@ -773,10 +964,15 @@ waterMat.setColor3("tint", waterTint);
 // The day's weather. strength 0 is dead glass, 1 is a choppy afternoon.
 // Live-tunable: WIND.set(0.6, 40) for a moderate breeze out of 40 degrees.
 const WIND = window.WIND = {
-    // The user's dialled look (2026-08-05 dump): near-glass water — strength
-    // 0.01 is the hero-calm morning docs/11 names, with the swell stretched
-    // long (waveScale 8 puts the octaves at 7.2 m down to 1.2 m) so what
-    // little motion remains is a slow heavy roll, not chop. Wind out of 93°.
+    // These three MUST equal POND_CONDITIONS in shared/ambientWater.js — the one
+    // definition of the pond's still-water look, which the skip solver is tuned
+    // against and the daily will roll around.
+    //
+    // Written as literals rather than imported because this is a classic script
+    // (no import), and because `POND` here already means the pond's SIZE. The
+    // agreement is enforced instead of expressed: ambient-sync-check.mjs parses
+    // these values out of this file and fails if they drift, the same way it
+    // already guards the octave table against AMBIENT_GLSL.
     strength: 0.01,
     dirDeg: 93,
     detail: 3.0,       // full detail, now that supersampling handles the aliasing
@@ -811,7 +1007,7 @@ const dropQueue = [];
 // then replay every one of them as its own full-screen render pass on the
 // first live frame.
 const DROP_QUEUE_MAX = 64;
-function queueDrop(worldX, worldZ, strength, radius) {
+function queueDrop(worldX, worldZ, strength, radius, shape) {
     if (dropQueue.length >= DROP_QUEUE_MAX) dropQueue.shift();
     lastDisturb = performance.now();   // AUDIT #6 — wakes the deviation sim
     // World metres, verbatim. The window may move between queue and drain, so
@@ -823,37 +1019,29 @@ function queueDrop(worldX, worldZ, strength, radius) {
         z: worldZ,
         strength,
         radius: radius === undefined ? DROP_R : radius,
+        // Shape, defaulted to the old circle so every existing caller — Plunge,
+        // auto-rain, landing droplets — behaves exactly as it did.
+        dirX: shape && shape.dirX !== undefined ? shape.dirX : 1,
+        dirZ: shape && shape.dirZ !== undefined ? shape.dirZ : 0,
+        elong: shape && shape.elong !== undefined ? shape.elong : 1,
+        skew: shape && shape.skew !== undefined ? shape.skew : 0,
     });
 }
 
-let pointerDown = false;
-scene.onPointerObservable.add((pi) => {
-    const t = pi.type;
-    if (t === BABYLON.PointerEventTypes.POINTERDOWN) pointerDown = true;
-    if (t === BABYLON.PointerEventTypes.POINTERUP)   pointerDown = false;
-    if (t !== BABYLON.PointerEventTypes.POINTERDOWN &&
-        !(t === BABYLON.PointerEventTypes.POINTERMOVE && pointerDown)) return;
+// Clicking the water no longer makes a ripple.
+//
+// It was the original way to poke the sim, from when this page was only a water
+// toy. On the skip lab it is now actively wrong: a click both stamped a drop AND
+// snapped the interaction window to wherever you clicked — and a window snap
+// clears the field, so an idle click in the middle of watching a run wiped the
+// trail it had just laid down. That is the exact behaviour the run-placement
+// work exists to prevent, reachable by accident with the mouse.
+//
+// The pointer belongs to the camera now: drag orbits, wheel zooms, and nothing
+// you do with it can destroy a run. Ripples come from the stone (Throw / space)
+// and from Plunge; auto-rain (D) still works for testing the sim on its own.
 
-    // Pick against the FLAT plane, not the displaced mesh: Babylon's picking
-    // uses the CPU-side geometry, which never moved, since the displacement
-    // lives entirely in the vertex shader. Intersecting y = 0 analytically is
-    // both cheaper and honest about that.
-    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), camera);
-    if (Math.abs(ray.direction.y) < 1e-4) return;
-    const dist = -ray.origin.y / ray.direction.y;
-    if (dist <= 0) return;
-    const p = ray.origin.add(ray.direction.scale(dist));
-
-    // Anywhere on the pond: the window snaps to the click (one scroll pass)
-    // and the ripple lands there. This is the same path a skip run drives.
-    if (Math.abs(p.x) < POND_HALF && Math.abs(p.z) < POND_HALF) {
-        windowTarget.x = p.x;
-        windowTarget.z = p.z;
-        queueDrop(p.x, p.z, DROP_S);
-    }
-});
-
-// --- controls ----------------------------------------------------------------
+// --- controls ------------// --- controls ----------------------------------------------------------------
 let paused = false, raining = false;
 addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
@@ -943,6 +1131,24 @@ const SPLASH = window.SPLASH = {
     maxLive:    6000,
     rippleGain: 0.0030,        // impact energy to Evan's drop strength
     rippleMax:  0.050,         // hard cap, keeps drops near his tuned scale
+
+    // --- crater SHAPE, from the impact geometry -------------------------
+    /** Cap on how long a gouge gets. Length goes as 1/sin(attack), so a very
+     *  shallow arrival would run away; 4 is about a 14 degree impact. */
+    elongMax: 4.0,
+    /** How far spin leans the crater sideways. Real — it is the same asymmetry
+     *  that gives a run its lateral drift — but subtle by design. */
+    spinSkew: 0.35,
+
+    // --- the stone PLOUGHING, not bouncing ------------------------------
+    /** Continuous displacement while the stone is in contact: ploughing,
+     *  wobbling, coasting, sinking. 0 disables it and the pond goes back to
+     *  reacting only to clean bounces. Small — this fires every frame of a
+     *  contact, where an impact fires once. */
+    ploughGain: 0.010,
+    /** A furrow is longer than a crater. This is what reads as "dragging
+     *  through" rather than "landing on". */
+    ploughElong: 6.0,
 
     // Converts the stone's real-world m/s into this pool's units. Without it,
     // emit power inherits metres-per-second directly while the whole pool is
@@ -1371,6 +1577,9 @@ sprayPS.onBeforeDrawParticlesObservable.add(() => {
 });
 
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+/** Two-sided clamp. `clamp` is a GLSL builtin, not a JS one — the shaders above
+ *  use it freely and it is easy to reach for on this side by mistake. */
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 
 /// The stone hook. Everything an impact does to the water goes through here, so
@@ -1390,11 +1599,35 @@ const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 ///                 The spray disc needs metres, so that one is converted at
 ///                 the burst assignment below.
 function stoneImpact(x, z, opts) {
-    // The window follows the stone: every impact drags the deviation field
-    // with it (whole-texel scroll, so the run's earlier ripples keep their
-    // world position for as long as they stay inside the span).
-    windowTarget.x = x;
-    windowTarget.z = z;
+    // THE WINDOW IS PLACED ONCE PER RUN, AND THEN NEVER MOVED.
+    //
+    // Every scroll destroys trail: content shifted past the edge is gone, and
+    // what scrolls in is zero. So the way to stop ripples being cleared is not
+    // to scroll less cleverly — lazy follow, hysteresis, all of it still cleared
+    // them, just later. It is to not scroll at all while a run is in progress.
+    //
+    // That is possible because a run is predictable. `opts.dirX/dirZ` is the
+    // travel direction, known at the FIRST impact, so the window can be dropped
+    // ahead of the stone to cover the whole lane before it gets there. 0.72 of
+    // a half-span downrange is what makes a 50 m run fit: measured against the
+    // USABLE window rather than the raw one, since winFade takes the outer 8%
+    // (5.1 m a side at 64 m), that leaves 49.9 m ahead of the first splash and
+    // 3.8 m behind it. One scroll for the whole run — the placement itself —
+    // against nine with a lazy follow and about fifty when it centred on every
+    // bounce. So every ripple a run makes is still there when it stops.
+    //
+    // A "run" ends when nothing has hit the water for RUN_GAP_MS. The next
+    // impact after that is a new run and gets a new placement — which does
+    // clear the field, correctly: you have thrown somewhere else.
+    const now = performance.now();
+    if (now - lastImpactAt > RUN_GAP_MS) {
+        const dl = Math.hypot(opts.dirX ?? 1, opts.dirZ ?? 0) || 1;
+        const lead = (SIZE / 2) * 0.72;
+        windowTarget.x = x + ((opts.dirX ?? 1) / dl) * lead;
+        windowTarget.z = z + ((opts.dirZ ?? 0) / dl) * lead;
+    }
+    lastImpactAt = now;
+
     const speed  = opts.speed  !== undefined ? opts.speed  : 6;
     const mass   = opts.mass   !== undefined ? opts.mass   : 0.15;
     const angle  = opts.angle  !== undefined ? opts.angle  : Math.PI / 4;
@@ -1447,7 +1680,20 @@ function stoneImpact(x, z, opts) {
         SPLASH.rippleGain * energy * (0.25 + 0.75 * sinA),
         SPLASH.rippleMax
     );
-    queueDrop(x, z, rippleStrength, Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)));
+    // THE CRATER'S SHAPE, from the impact geometry rather than assumed round.
+    //
+    // Contact patch length goes as 1/sin(attack): the shallower the arrival, the
+    // longer the gouge. ~2.9x at the 20 degree magic angle, 1x on a vertical
+    // plunge, which is the circle Plunge and rain still get. Capped, because
+    // sin -> 0 runs away and a stone that shallow is skimming, not gouging.
+    const elong = Math.min(SPLASH.elongMax, 1 / Math.max(0.12, sinA));
+    // Spin leans it. Same asymmetry that gives a run its lateral drift — the
+    // sign of spin decides which way. Deliberately small: it is a lean, not a
+    // banana.
+    const skew = clamp(-(opts.spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew;
+    queueDrop(x, z, rippleStrength,
+        Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)),
+        { dirX, dirZ, elong, skew });
 
     // --- spray --------------------------------------------------------------
     if (sprayCount > 0) {
@@ -1487,6 +1733,42 @@ function stoneImpact(x, z, opts) {
 }
 window.stoneImpact = stoneImpact;
 
+/**
+ * CONTINUOUS DISPLACEMENT — the water reacting to a stone that is not skipping.
+ *
+ * stoneImpact() fires on bounces. A run is far more than its bounces: the stone
+ * ploughs while it is in contact, wobbles, coasts, skims and finally sinks, and
+ * every one of those is water being pushed out of the way. None of it made a
+ * mark, so the pond went glassy the instant a run stopped scoring, with a stone
+ * still visibly dragging through it.
+ *
+ * Driven from the solver's own `getDisturbance()`: displaced volume, contact
+ * flag, bow-wave crest and speed, sampled per frame. Strength is volume x speed
+ * so a fast plough shoves more than a slow settle, and it is scaled by dt so the
+ * result does not depend on frame rate — this feeds a leaderboard's water.
+ *
+ * Deliberately much weaker than an impact, and skipped when the stone is barely
+ * moving: a stone at rest floats, it does not keep making waves.
+ */
+function stoneDisplace(d, dt, dirX, dirZ, spinRPS) {
+    if (!SPLASH.ploughGain || !d.contact || d.speed < 0.15) return 0;
+    const strength = Math.min(
+        SPLASH.ploughGain * d.displacedVolume * d.speed * dt * 60,
+        SPLASH.rippleMax * 0.5
+    );
+    if (strength < 1e-6) return 0;
+    // The wake of something moving THROUGH the surface is a long thin furrow,
+    // not a dimple — more elongated than an impact crater, and it is the shape
+    // that reads as "dragging" rather than "landing".
+    queueDrop(d.x, d.z, strength, Math.max(d.radius / SIZE, DROP_R * 0.5), {
+        dirX, dirZ,
+        elong: SPLASH.ploughElong,
+        skew: clamp(-(spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew,
+    });
+    return strength;
+}
+window.stoneDisplace = stoneDisplace;
+
 // Straight down into the middle of the pond: angle PI/2 is the pure vertical
 // case, so this is the plunge end of the skip/plunge axis — maximum wave,
 // minimum forward throw.
@@ -1504,22 +1786,22 @@ document.getElementById("plungeBtn").addEventListener("click", () => {
     });
 });
 
-// A canned skip run — the windowed sim's whole reason to exist. Impacts march
-// ~55 m across the pond the way a game-profile throw does: the interaction
-// window follows the stone, each ripple keeps its world position while it
-// stays in span, and the run ends far beyond where the pond's old 24 m edge
-// used to be. Decaying gap and speed, roughly the solver's shape.
-document.getElementById("skipBtn").addEventListener("click", () => {
-    let x = -28, gap = 7.5, speed = 16, i = 0;
-    const step = () => {
-        if (gap < 2.2 || speed < 5) return;
-        stoneImpact(x, Math.sin(i * 1.7) * 1.5, {
-            speed, mass: 0.15, angle: 0.35, dirX: 1, dirZ: 0,
-        });
-        x += gap; gap *= 0.88; speed *= 0.93; i++;
-        setTimeout(step, (gap / speed) * 1000);
-    };
-    step();
+// The skip run is REAL now. It used to be a canned march of impacts with a
+// decaying gap — a stand-in for the solver, written before the two labs shared
+// a page. The solver drives it from the module block at the foot of this file,
+// and each of its bounces comes back through stoneImpact() into the same spray,
+// foam and ripple path a click makes.
+document.getElementById("throwBtn").addEventListener("click", () => SKIP.doThrow?.());
+addEventListener("keydown", (e) => {
+    if (e.code === "Space" && e.target === document.body) { e.preventDefault(); SKIP.doThrow?.(); }
+});
+document.getElementById("followBtn").addEventListener("click", (e) => {
+    SKIP.follow = !SKIP.follow;
+    e.target.textContent = "Camera: " + (SKIP.follow ? "follow" : "free");
+});
+document.getElementById("slowBtn").addEventListener("click", (e) => {
+    SKIP.slow = !SKIP.slow;
+    e.target.textContent = "Slow motion: " + (SKIP.slow ? "on (1/6x)" : "off");
 });
 
 // =============================================================================
@@ -1851,6 +2133,43 @@ const CONTROLS = [
     ["detail range",    () => WIND.detail,          (v) => WIND.detail = v,          0.3, 4,  0.05],
     ["supersample",     () => RENDER.supersample,   (v) => { RENDER.supersample = v; applyScaling(); }, 1, 2.5, 0.25],
     ["reflection blur", () => WIND.blurGain,        (v) => WIND.blurGain = v,        0, 300, 5],
+    // How long an impact ring survives. 0.990 is Wallace's original (gone in
+    // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
+    // automatically, so a longer ripple keeps the sim awake longer to match.
+    ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
+    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
+    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
+    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
+    ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
+
+    ["Throw", null],
+    ["speed",           () => SKIP.throw.speed,           (v) => SKIP.throw.speed = v,           1,   45,  0.5],
+    ["launch elevation",() => SKIP.throw.elevationDeg,    (v) => SKIP.throw.elevationDeg = v,   -30,  10,  0.5],
+    ["attack angle",    () => SKIP.throw.attackAngleDeg,  (v) => SKIP.throw.attackAngleDeg = v, -15,  70,  1],
+    ["spin",            () => SKIP.throw.spinRPS,         (v) => SKIP.throw.spinRPS = v,         0,   80,  1],
+    ["bank (roll)",     () => SKIP.throw.bankAngleDeg,    (v) => SKIP.throw.bankAngleDeg = v,  -45,  45,  1],
+    ["spin-axis tilt",  () => SKIP.throw.spinAxisTiltDeg, (v) => SKIP.throw.spinAxisTiltDeg = v, 0,   30,  0.5],
+    ["release height",  () => SKIP.throw.releaseHeight,   (v) => SKIP.throw.releaseHeight = v,   0,   1.5, 0.02],
+
+    ["Stone", null],
+    ["radius",          () => SKIP.stone.radius,      (v) => SKIP.stone.radius = v,      0.02, 0.09, 0.001],
+    ["thickness",       () => SKIP.stone.thickness,   (v) => SKIP.stone.thickness = v,   0.003, 0.03, 0.001],
+    ["aspect (1=round)",() => SKIP.stone.aspect,      (v) => SKIP.stone.aspect = v,      0.4,  1,    0.05],
+
+    ["Assist (not physics)", null],
+    ["contact loss",    () => SKIP.assist.contactLossScale ?? 1, (v) => SKIP.assist.contactLossScale = v, 0.02, 1, 0.01],
+    ["hop height",      () => SKIP.assist.hopSpeedTarget ?? 0,   (v) => SKIP.assist.hopSpeedTarget = v,   0,    2, 0.05],
+    ["hop flatten cap", () => SKIP.assist.hopFlattenLimit ?? 0,  (v) => SKIP.assist.hopFlattenLimit = v,  0,    1, 0.05],
+    ["attitude hold",   () => SKIP.assist.attitudeAssist ?? 0,   (v) => SKIP.assist.attitudeAssist = v,   0, 2000, 25],
+    ["balance (rock)",  () => SKIP.assist.balanceRetention ?? 0, (v) => SKIP.assist.balanceRetention = v, 0,    1, 0.05],
+    // How long an impact ring survives. 0.990 is Wallace's original (gone in
+    // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
+    // automatically, so a longer ripple keeps the sim awake longer to match.
+    ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
+    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
+    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
+    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
+    ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
     ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
     ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
 
@@ -1948,6 +2267,11 @@ const CONTROLS = [
         row.appendChild(lab); row.appendChild(slider);
         panel.appendChild(row);
         show();
+        // Exposed so code that changes a value programmatically — the skip lab's
+        // profile and preset pickers — can push it back into the slider. Without
+        // this the panel keeps showing the old number after a preset change,
+        // which reads as the control being broken.
+        (window.__panelSync || (window.__panelSync = [])).push(show);
         live.push({ label, get });
     }
 
@@ -2051,6 +2375,11 @@ scene.registerBeforeRender(() => {
             const o = dropsInBatch * 4;
             dropData[o] = cx; dropData[o + 1] = cz;
             dropData[o + 2] = d.radius; dropData[o + 3] = d.strength;
+            // Direction is a world vector; the crater lives in window UV, whose
+            // axes are the same orientation, so it carries over unrotated.
+            const dl = Math.hypot(d.dirX, d.dirZ) || 1;
+            dropAxisData[o] = d.dirX / dl; dropAxisData[o + 1] = d.dirZ / dl;
+            dropAxisData[o + 2] = d.elong; dropAxisData[o + 3] = d.skew;
             dropsInBatch++;
         }
         // One pass applies the whole batch — bit-identical to the old
@@ -2064,10 +2393,10 @@ scene.registerBeforeRender(() => {
     // unconditionally — ~64 MB/frame of RGBA32F traffic with nothing moving.
     // The ambient waves are analytic in the water material, so the ping-pong
     // field only carries drops and ripples; once the last disturbance is
-    // SETTLE_MS old the damping has flattened it and there is nothing left to
+    // settleMs() old the damping has flattened it and there is nothing left to
     // integrate. Freeze the passes, keep the texture bound and rendered —
     // the same shape as sand-sim's deformation gate.
-    if (performance.now() - lastDisturb < SETTLE_MS) {
+    if (performance.now() - lastDisturb < settleMs()) {
         for (let i = 0; i < STEPS; i++) stepSimulation();
         updateNormals();
     }
@@ -2079,15 +2408,188 @@ engine.runRenderLoop(() => scene.render());
 addEventListener("resize", () => engine.resize());
 </script>
 <script type="module">
-// The CPU twin of the ambient field (see ambient.js — drift-guarded by
-// tools/ambient-sync-check.mjs). Exposed for the skip solver and the console:
-//   waterAmbient(x, z)          — height/normal/flow at now, current wind
-//   waterAmbient(x, z, tSecs)   — at an explicit sim time
-import { sampleAmbient, makeAmbientWater } from "./ambient.js";
+// =============================================================================
+// THE SKIP LAB. The stone-skipping solver, driving THIS water.
+//
+// These were two pages until 2026-08-06: a water sim whose "Skip run" button
+// marched a canned sequence of impacts across the pond, and a solver demo that
+// skipped a stone over a flat plane of its own with wireframe discs for
+// splashes. Neither showed the real thing. Now the solver's bounces come back
+// through stoneImpact() into this page's spray, foam and ripples, and the
+// readout describes the water you are looking at.
+//
+// A module, because the solver is one and this page's main script is a classic
+// script that cannot import. The parameters live over there on `window.SKIP`
+// (plain numbers the tuning panel binds to); the physics lives here and reads
+// them at throw time.
+// =============================================================================
+import {
+    StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, DEFAULT_ENV,
+} from "../stone-skipping-physics/src/stoneSkipping.js";
+// The CPU twin of this page's own AMBIENT_GLSL — drift-guarded against it by
+// babylon-water/tools/ambient-sync-check.mjs. The stone planes on exactly the
+// surface being drawn, which is the reason the twin exists.
+import { sampleAmbient, makeAmbientWater } from "../shared/ambientWater.js";
 window.waterAmbient = (x, z, t) => sampleAmbient(
     x, z, t !== undefined ? t : performance.now() * 0.001,
     { windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale });
 window.makeAmbientWater = makeAmbientWater;
+
+const $ = (id) => document.getElementById(id);
+
+/* ---- profile + preset pickers, prepended to the tuning panel ------------ */
+const picker = document.createElement("div");
+picker.style.cssText = "margin:0 0 8px";
+picker.innerHTML =
+    '<select id="skipProfile" style="width:100%;margin-bottom:5px"></select>' +
+    '<select id="skipPreset" style="width:100%"></select>';
+$("panel").prepend(picker);
+for (const name of Object.keys(PHYSICS_PROFILES)) {
+    $("skipProfile").add(new Option(name + " profile", name, false, name === SKIP.profile));
+}
+for (const name of Object.keys(THROW_PRESETS)) {
+    $("skipPreset").add(new Option(
+        (PRESET_LABELS && PRESET_LABELS[name]) || name, name, false, name === SKIP.preset));
+}
+
+/** Assist values come FROM the profile, never from a literal — a stale literal
+ *  silently overriding the profile is a bug this project has shipped twice. */
+function assistFromProfile(name) {
+    const merged = { ...DEFAULT_ENV, ...(PHYSICS_PROFILES[name] || {}) };
+    for (const k of ["contactLossScale", "hopSpeedTarget", "hopFlattenLimit",
+                     "attitudeAssist", "balanceRetention"]) SKIP.assist[k] = merged[k];
+}
+assistFromProfile(SKIP.profile);
+
+$("skipProfile").addEventListener("change", (e) => {
+    SKIP.profile = e.target.value; assistFromProfile(SKIP.profile);
+    syncPanel(); doThrow();
+});
+$("skipPreset").addEventListener("change", (e) => {
+    SKIP.preset = e.target.value;
+    Object.assign(SKIP.throw, THROW_PRESETS[SKIP.preset]);
+    syncPanel(); doThrow();
+});
+/** Push changed values back into the panel's inputs. The panel builds its own
+ *  refreshers; this reuses them rather than reaching into the DOM. */
+function syncPanel() { (window.__panelSync || []).forEach((f) => f()); }
+
+/* ---- the stone ---------------------------------------------------------- */
+const stoneMesh = BABYLON.MeshBuilder.CreateCylinder(
+    "stone", { diameter: 0.09, height: 0.01, tessellation: 24 }, scene);
+const stoneMat = new BABYLON.StandardMaterial("stoneMat", scene);
+stoneMat.diffuseColor = new BABYLON.Color3(0.30, 0.31, 0.33);
+stoneMat.specularColor = new BABYLON.Color3(0.12, 0.12, 0.12);
+stoneMesh.material = stoneMat;
+stoneMesh.rotationQuaternion = BABYLON.Quaternion.Identity();
+stoneMesh.isPickable = false;
+
+let sim = null, trail = null, trailPts = [];
+
+function doThrow() {
+    stoneMesh.scaling.set(
+        SKIP.stone.radius / 0.045, SKIP.stone.thickness / 0.01,
+        (SKIP.stone.radius / 0.045) * SKIP.stone.aspect);
+    sim = new StoneSkipSim({
+        profile: SKIP.profile,
+        stone: { ...SKIP.stone },
+        // THE POINT OF THE MERGE: the solver samples this page's own surface.
+        water: (x, z, t) => sampleAmbient(x, z, t, {
+            windStrength: WIND.strength, windDirDeg: WIND.dirDeg, waveScale: WIND.waveScale }),
+        env: { ...SKIP.assist },
+    });
+    // Thrown from the near shore, down the lane, so the run crosses the pond
+    // rather than starting in the middle of it.
+    sim.throwStone({ ...SKIP.throw, headingDeg: 0, origin: { x: -POND_HALF * 0.42, z: 0 } });
+    trailPts = [];
+    if (trail) { trail.dispose(); trail = null; }
+    $("outcome").textContent = "";
+}
+SKIP.doThrow = doThrow;
+
+/* ---- readout ------------------------------------------------------------ */
+function sync() {
+    const d = sim.getDiagnostics();
+    $("hops").textContent = sim.cleanHops;
+    $("rings").textContent = sim.ripples;
+    $("csum").textContent = sim.checksum();
+    $("dist").textContent = d.distance.toFixed(1) + " m";
+    $("rdist").textContent = (sim.runEnded ? sim.runDistance : d.distance).toFixed(1) + " m";
+    $("hops").style.color = sim.runEnded ? "#7d8fa3" : "#6fc3ff";
+    $("spd").textContent = d.speed.toFixed(1) + " m/s";
+    $("atk").textContent = d.attackAngleDeg.toFixed(1) + "\u00b0";
+    $("bnk").textContent = d.bankAngleDeg.toFixed(1) + "\u00b0";
+    $("spn").textContent = d.spinRPS.toFixed(1) + " rev/s";
+    $("ros").textContent = d.rossby.toFixed(1);
+    $("drf").textContent = (sim._lateralDrift ? sim._lateralDrift() : 0).toFixed(2) + " m";
+    $("phase").textContent = sim.finished
+        ? SKIP.profile + " \u2014 settled: " + (sim.settleReason || "")
+        : sim.runEnded ? SKIP.profile + " \u2014 coasting / sinking\u2026"
+        : SKIP.profile + " \u2014 skipping";
+}
+
+/* ---- the loop ----------------------------------------------------------- */
+doThrow();
+scene.onBeforeRenderObservable.add(() => {
+    if (!sim || sim.finished) return;
+    const raw = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    const dt = SKIP.slow ? raw / 6 : raw;
+    for (const e of sim.advance(dt)) {
+        if (e.type === "bounce") {
+            // Everything the solver measured about this strike, not a
+            // reconstruction of it. The first cut of this passed the OUTGOING
+            // velocity as the impact angle and no radius at all, so every
+            // bounce made the same round 20 cm dimple regardless of how hard it
+            // hit or how shallowly it arrived.
+            const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
+            const d = sim.getDiagnostics();
+            // Angle from the APPROACH — vertical momentum is what lifts water,
+            // and `e.approachSpeed` is the number the solver used to decide the
+            // bounce counted at all.
+            const angle = Math.atan2(Math.max(0, e.approachSpeed), h);
+            stoneImpact(e.position.x, e.position.z, {
+                speed: e.speed,
+                mass: sim.mass,
+                angle,
+                dirX: v.x / h, dirZ: v.z / h,
+                // The real wetted footprint: how deep it actually went, in the
+                // pond-span units the drop shader wants.
+                radius: Math.max(sim.effRadius, e.penetration * 3) / SIZE,
+                spinRPS: d.spinRPS,
+            });
+        }
+        if (e.type === "outcome") {
+            $("outcome").textContent = e.outcome.replace(/-/g, " ") +
+                " \u2014 " + e.cleanHops + " skips, " + e.distance.toFixed(1) + " m";
+        }
+    }
+    // EVERY frame the stone is touching water, not just the bounces: ploughing
+    // through a contact, wobbling, coasting after the score has stopped, and
+    // sinking. The pond used to go glassy the moment a run stopped scoring,
+    // with the stone still visibly dragging through it.
+    {
+        const g = sim.getDisturbance();
+        const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
+        stoneDisplace(g, dt, v.x / h, v.z / h, sim.getDiagnostics().spinRPS);
+    }
+
+    const p = sim.state.position, q = sim.state.orientation;
+    stoneMesh.position.set(p.x, p.y, p.z);
+    stoneMesh.rotationQuaternion.set(q.x, q.y, q.z, q.w);
+
+    if (!sim.runEnded) trailPts.push(new BABYLON.Vector3(p.x, p.y, p.z));
+    if (trailPts.length > 1) {
+        trail = BABYLON.MeshBuilder.CreateLines(
+            "tr", { points: trailPts, instance: trail, updatable: true }, scene);
+        trail.color = new BABYLON.Color3(0.42, 0.76, 1);
+        trail.isPickable = false;
+    }
+    if (SKIP.follow) {
+        camera.target.x += (p.x - camera.target.x) * 0.06;
+        camera.target.z += (p.z - camera.target.z) * 0.06;
+    }
+    sync();
+});
 </script>
 </body>
 </html>

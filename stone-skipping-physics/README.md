@@ -247,7 +247,7 @@ Measured by random search, 1500 throws per profile. `lateral` is drift perpendic
 the aim line, which is what the spin curve produces — size the water for it or a good
 throw will sail off the side.
 
-**Within the demo's slider ranges** (speed 1–25 m/s, spin ±70 rev/s):
+**Within the skip lab's slider ranges** (speed 1–45 m/s, spin 0–80 rev/s):
 
 | Profile | Run distance | Total incl. sink | Lateral drift | Flight time |
 |---|---|---|---|---|
@@ -498,17 +498,22 @@ Read these before tuning.
 | Stones that catch edges | `stone.edgeRoundness` → 0 |
 | Cheaper CPU | lower `solver.radialSamples` / `angularSamples`, raise `contactSubstep` |
 
-There is also a browser viewer: `demo/index.html`. Serve the project root — ES modules
-need HTTP, not `file://`:
+### Seeing it run
+
+This package has **no page of its own**. It used to ship `demo/index.html`, a viewer
+with its own Babylon scene that skipped the stone over a flat plane of its own and drew
+wireframe discs for splashes — so the one thing it could not show you was the stone on
+the water the game actually has.
+
+It now drives **the skip lab**, `babylon-water/index.html`, from the repo root:
 
 ```bash
-cd ~/Documents/stone-skipping-physics; npm run serve
+npm run dev:hub        # then open /babylon-water/index.html
 ```
 
-Use that rather than `python -m http.server`. Browsers cache ES modules hard, and with
-no cache headers an edit to `src/stoneSkipping.js` keeps running the old module on
-reload — which surfaces as errors like `sim.checksum is not a function` against source
-that plainly has the method. `tools/dev-server.mjs` sends `no-store` on everything.
+Same solver, same controls, but the surface it planes on is that page's real ambient
+field (via the drift-guarded CPU twin in `shared/ambientWater.js`) and every bounce
+comes back through `stoneImpact()` into real spray, foam and ripples.
 
 Cost is ~132 panels × ~4000 substeps/s while wet. Sub-millisecond per frame for one
 stone; profile before throwing a hundred.

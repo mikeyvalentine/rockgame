@@ -26,10 +26,20 @@
 
 name: Deploy site
 
+# MANUAL ONLY. Cloudflare Pages now builds this repo itself, straight from
+# GitHub, on every push to main — so the automatic trigger that used to live
+# here would mean TWO systems publishing to one Pages project on every merge.
+# They race, and the loser's output is what sticks.
+#
+# Kept rather than deleted, because it is the fallback: if the Cloudflare build
+# ever breaks, this still works from the Actions tab (Deploy site -> Run
+# workflow) using the repo's own secrets.
+#
+# Note the trade that came with the move. This path was blocked all evening on
+# 2026-08-06 behind "All GitHub-hosted runners with label [ubuntu-latest] are
+# busy" — a queue nobody could jump. Cloudflare building directly takes GitHub's
+# runner pool out of the release path entirely, which is the whole point.
 on:
-  push:
-    branches: [main]
-  # Deploy on demand too, so a failed run can be retried without an empty commit.
   workflow_dispatch:
 
 # One deploy at a time. Two overlapping runs would race to publish and the
