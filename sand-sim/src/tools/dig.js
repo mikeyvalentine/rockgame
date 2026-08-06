@@ -16,7 +16,7 @@
 // keeps ray support out of the core camera until this is pulled in).
 import "@babylonjs/core/Culling/ray.js";
 
-import { input } from "../core/input.js";
+import { input, worldToolsAllowed } from "../core/input.js";
 import { marchHeightfield } from "./raymarch.js";
 
 const STROKE_MS = 60;
@@ -44,7 +44,11 @@ export class DigTool {
     }
 
     update() {
-        if (!input.locked || !input.dig) return;
+        // Three conditions, and the third is not redundant with the app's
+        // `if (!knelt)`: this says WHY the tool is off while sifting, where the
+        // call site only says when. `input.dig` cannot be set while sifting
+        // either — see `allowWorldTools` — so this is the belt to that braces.
+        if (!input.locked || !input.dig || !worldToolsAllowed()) return;
         const now = performance.now();
         if (now - this._last < STROKE_MS) return;
         this._last = now;

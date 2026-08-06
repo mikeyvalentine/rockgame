@@ -38,7 +38,7 @@ import { S, onChange } from "../core/settings.js";
 import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "../core/perf.js";
-import { initInput, pollInput, endFrame, input, allowPointerLock } from "../core/input.js";
+import { initInput, pollInput, endFrame, input, allowPointerLock, allowWorldTools } from "../core/input.js";
 import { FpsRig } from "../core/camera.js";
 import { CharacterController } from "../character/controller.js";
 import { SnowContact } from "../character/snowContact.js";
@@ -260,10 +260,14 @@ export async function run(canvas) {
             pointer: {
                 release() {
                     allowPointerLock(false);
+                    // The world's cursor tools go with it: while sifting, the
+                    // only thing allowed to disturb the sand is the stones.
+                    allowWorldTools(false);
                     document.exitPointerLock?.();
                 },
                 restore() {
                     allowPointerLock(true);
+                    allowWorldTools(true);
                 },
             },
         })
