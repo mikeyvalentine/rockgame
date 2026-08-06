@@ -152,7 +152,20 @@ const SUBDIV  = 192;     // surface tessellation. 256 gave 65k verts every frame
                          // anyway, so the geometry was carrying detail it could
                          // not resolve.
 const STEPS   = 1;       // stepSimulation() calls per frame
-const DAMPING = 0.990;   // per step, rescaled from his 0.995 for STEPS 1
+// RIPPLE PERSISTENCE. Wallace's 0.995 (0.990 rescaled for STEPS 1) was tuned
+// for a 2 m demo pool, where a ripple crossing the pool and dying inside a
+// second looks right. At 24 m with a stone skipping for five seconds it meant
+// every ripple was gone before the run was: 55% amplitude after 1 s, 16% after
+// 3 s, 2.7% after 6 s. The trail vanished behind the stone.
+//
+// This is NOT what the pausability gate did — that only freezes the field once
+// it is already flat, and the STEPS 2 -> 1 change was explicitly rescaled to
+// keep the per-second decay identical. The constant was simply inherited.
+//
+// At 0.9992 a ripple is still at 62% after 10 s and 24% after 30 s. Numerically
+// safe: a twin of the update shader stays bounded all the way to 1.0 (no
+// damping at all), so this is a look knob, not a stability one.
+const RIPPLE = window.RIPPLE = { damping: 0.9992 };
 const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
 const DROP_S  = 0.01;    // his drop strength, in metres of displacement
 
@@ -208,6 +221,10 @@ precision highp float;
 varying vec2 vUV;
 uniform sampler2D prev;
 uniform vec2 delta;
+// Live, so ripple lifetime is dialable from the panel. It used to be baked into
+// the shader string at load; a constant you have to edit and reload is a
+// constant nobody tunes.
+uniform float damp;
 void main(void) {
     vec4 info = texture2D(prev, vUV);
 
@@ -221,12 +238,29 @@ void main(void) {
     ) * 0.25;
 
     info.g += (average - info.r) * 2.0;
-    info.g *= DAMP;
+
+    // ABSORBING EDGE, over the same outer 8% the renderer fades across.
+    //
+    // texture2D clamps at the border, and a clamped neighbour is a mirror: waves
+    // reach the window edge and bounce back in. That was invisible while damping
+    // killed everything in three seconds. With ripples that live for half a
+    // minute it would not be — you would see a wave return from nowhere.
+    //
+    // It is also a correctness fix independent of lifetime. winFade already
+    // makes the RENDERER treat deviation as zero at the edge, so without this
+    // the sim carries energy the player cannot see, and a window scroll drags
+    // that hidden energy back into view. Measured on a numerical twin of this
+    // shader: hidden edge amplitude drops 3-7x, and the peak stops ringing up
+    // from 1.00 to 1.31.
+    vec2 m = min(vUV, 1.0 - vUV);
+    float edge = smoothstep(0.0, 0.08, min(m.x, m.y));
+    info.g *= damp * mix(0.55, 1.0, edge);
+
     info.r += info.g;
 
     gl_FragColor = info;
 }
-`.replace(/DAMP/g, DAMPING.toFixed(4));
+`;
 
 // Window recentre. Shifts the whole field (height, velocity, normals — every
 // channel) by a whole-texel offset so the window can follow the stone without
@@ -577,9 +611,30 @@ applyScaling();
 
 // AUDIT #6 — idle gate for the deviation sim (see the render loop). Any
 // disturbance (drop, ripple, impact, the opening seed) stamps this; the sim
-// integrates for SETTLE_MS past the last stamp, long enough for the damping
+// integrates for settleMs() past the last stamp, long enough for the damping
 // to flatten what the disturbance left, then freezes.
-const SETTLE_MS = 6000;
+/**
+ * How long the deviation sim keeps integrating after the last disturbance.
+ *
+ * DERIVED from the damping, not a constant, because the two are the same fact:
+ * the gate exists to stop stepping once there is nothing left to integrate, and
+ * how long that takes is exactly what `RIPPLE.damping` sets. Hard-coding 6 s was
+ * right for a field that flattened in three; with ripples that live for half a
+ * minute the same 6 s would FREEZE them mid-spread — the pond would stop dead
+ * with rings still on it.
+ *
+ * Time for amplitude to fall to VISIBLE of its initial value, at 60 steps/s.
+ * Capped: lingering ripples genuinely cost simulation time, and that is the
+ * trade being made here — the cap is where "still settling" stops being worth
+ * ~64 MB/frame of ping-pong traffic.
+ */
+const RIPPLE_VISIBLE = 0.02;
+const SETTLE_MS_MAX = 45000;
+function settleMs() {
+    const perStep = Math.min(RIPPLE.damping, 0.999999);
+    const secs = Math.log(RIPPLE_VISIBLE) / (60 * Math.log(perStep));
+    return Math.max(6000, Math.min(SETTLE_MS_MAX, secs * 1000));
+}
 let lastDisturb = performance.now();
 
 const scene = new BABYLON.Scene(engine);
@@ -672,7 +727,7 @@ function makePass(name, source, uniforms) {
 }
 const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
 const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops"]);
-const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta"]);
+const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta", "damp"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
 const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
 
@@ -719,6 +774,7 @@ function recenterWindow() {
 for (const p of [updatePass, normalPass]) {
     p.onApplyObservable.add(() => {
         p.effect.setVector2("delta", DELTA);
+        if (p === updatePass) p.effect.setFloat("damp", RIPPLE.damping);
         if (passSrc) p.effect.setTexture("prev", passSrc);
     });
 }
@@ -1395,11 +1451,30 @@ const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 ///                 The spray disc needs metres, so that one is converted at
 ///                 the burst assignment below.
 function stoneImpact(x, z, opts) {
-    // The window follows the stone: every impact drags the deviation field
-    // with it (whole-texel scroll, so the run's earlier ripples keep their
-    // world position for as long as they stay inside the span).
-    windowTarget.x = x;
-    windowTarget.z = z;
+    // LAZY FOLLOW, not centre-on-impact.
+    //
+    // The window is 24 m and a skip run is fifty or more, so some of the trail
+    // must fall off the back — that span is not a free parameter (SIZE/RES sets
+    // the wave speed, and 48 m at this cell size needs a 2048^2 pair). What IS
+    // free is which 24 m we keep. Centring the window on each new impact spends
+    // half of it on empty water AHEAD of the stone and throws away trail to
+    // keep it, which is what made the run's earlier rings vanish.
+    //
+    // So: leave the window alone until the stone nears the leading edge, then
+    // shift only far enough to sit it back at LEAD from centre. The trail keeps
+    // the rest — about 20 m of the 24 instead of 12, and fewer scroll passes.
+    // Hysteresis on top: when the stone does cross LEAD, pull the window to
+    // SETTLE rather than to LEAD, so it does not re-trigger on the very next
+    // impact. Without it a run scrolls roughly once per bounce — and a scroll
+    // is a full 1024^2 pass, ~32 MB, landing inside the 60fps-hard throw window
+    // (docs/10). With it, a 50 m run scrolls about a dozen times instead of
+    // fifty, and the trail behind still averages ~18 m against the old 12.
+    const half = SIZE / 2;
+    const LEAD   = half * 0.70;   // clear of the 8% winFade band and a ring's radius
+    const SETTLE = half * 0.35;
+    const dx = x - windowTarget.x, dz = z - windowTarget.z;
+    if (Math.abs(dx) > LEAD) windowTarget.x = x - Math.sign(dx) * SETTLE;
+    if (Math.abs(dz) > LEAD) windowTarget.z = z - Math.sign(dz) * SETTLE;
     const speed  = opts.speed  !== undefined ? opts.speed  : 6;
     const mass   = opts.mass   !== undefined ? opts.mass   : 0.15;
     const angle  = opts.angle  !== undefined ? opts.angle  : Math.PI / 4;
@@ -1856,6 +1931,10 @@ const CONTROLS = [
     ["detail range",    () => WIND.detail,          (v) => WIND.detail = v,          0.3, 4,  0.05],
     ["supersample",     () => RENDER.supersample,   (v) => { RENDER.supersample = v; applyScaling(); }, 1, 2.5, 0.25],
     ["reflection blur", () => WIND.blurGain,        (v) => WIND.blurGain = v,        0, 300, 5],
+    // How long an impact ring survives. 0.990 is Wallace's original (gone in
+    // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
+    // automatically, so a longer ripple keeps the sim awake longer to match.
+    ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
     ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
     ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
 
@@ -2069,10 +2148,10 @@ scene.registerBeforeRender(() => {
     // unconditionally — ~64 MB/frame of RGBA32F traffic with nothing moving.
     // The ambient waves are analytic in the water material, so the ping-pong
     // field only carries drops and ripples; once the last disturbance is
-    // SETTLE_MS old the damping has flattened it and there is nothing left to
+    // settleMs() old the damping has flattened it and there is nothing left to
     // integrate. Freeze the passes, keep the texture bound and rendered —
     // the same shape as sand-sim's deformation gate.
-    if (performance.now() - lastDisturb < SETTLE_MS) {
+    if (performance.now() - lastDisturb < settleMs()) {
         for (let i = 0; i < STEPS; i++) stepSimulation();
         updateNormals();
     }
