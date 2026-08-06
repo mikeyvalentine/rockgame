@@ -156,7 +156,19 @@ Medians on the `game` profile, 25 throws per tier:
 | expert | 60 | 58 m | 50–80 ✅ |
 | master | 58 | 65 m | 80–130 — **short** |
 
-Rock choice is worth 30 hops at identical execution, which is what makes a find matter.
+Rock choice is worth 30 hops at identical execution — but it is a **step, not a
+gradient**. A factorial over 4 rocks x 5 throw tiers (21 throws per cell) gives:
+
+- **Throw 82% · rock 10% · interaction 8%** of the variance.
+- Below a decent throw the rock does *nothing*: the casual and decent tiers vary by
+  one hop from a lopsided pebble to a perfect disc. Above it, the rock is worth 25-33
+  hops. The throw is a gate; the rock is a multiplier that only applies past it.
+- Among *good* rocks the solver cannot currently tell one from another. Scored with
+  `shared/rockRating.js`, a Rare, an Epic and another Epic sit at 49-66 hops across
+  five seeds with fully overlapping ranges. Only the Common stone separates.
+
+That last point is a gap between this sim and `02-gathering.md`, which promises five
+rarity tiers a player can read. Today only "bad rock" vs "fine rock" reaches the water.
 
 ### Why the top two rungs are not reached — measured, not guessed
 

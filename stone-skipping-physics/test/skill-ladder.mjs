@@ -58,14 +58,33 @@ const jitter = (w) => (u01() + u01() - 1) * w
 /* ------------------------------------------------------------------ *
  * Rocks. Real geometry, not knobs — the stat comes from the stone.
  * ------------------------------------------------------------------ */
+/**
+ * The names are historical and OVERSTATE the spread. Scored with the game's own
+ * `shared/rockRating.js`, the set is really one bad rock and three good ones:
+ *
+ *   poor      108 g, 6.4 cm, t/D 0.250  -> 0.237  Common
+ *   average   148 g, 8.4 cm, t/D 0.131  -> 0.753  Rare
+ *   good      156 g, 8.5 cm, t/D 0.124  -> 0.838  Epic
+ *   ideal     172 g, 9.0 cm, t/D 0.111  -> 0.811  Epic
+ *
+ * That matters when reading the rock-sensitivity check below. It measures the step
+ * from a bad rock to a good one, which is large and real. It does NOT measure
+ * Rare vs Epic vs Legendary, because across five seeds those three sit at 49-66
+ * hops with fully overlapping ranges — the solver does not currently distinguish
+ * them, and any ordering between them in a single run is sampling noise.
+ *
+ * If the sift's five rarity tiers are meant to read differently at the water, this
+ * set needs rocks that actually span Common to Legendary, and the physics needs to
+ * separate them. Neither is true today.
+ */
 const ROCKS = {
-  /** What the pond mostly hands you: small, chunky, a bit lopsided. */
+  /** What the pond mostly hands you: small, chunky, a bit lopsided. Common. */
   poor: { radius: 0.032, thickness: 0.016, aspect: 0.78, comOffset: { x: 0.05, z: 0.03 } },
-  /** A rock you'd stop and pick up. */
+  /** Rare, despite the name — very close to docs/02's 165 g / 8.5 cm / 0.129 ideal. */
   average: { radius: 0.042, thickness: 0.011, aspect: 0.9, comOffset: { x: 0.02, z: 0.0 } },
-  /** A find. Close to the 165 g / 8.5 cm ideal in docs/02-gathering.md. */
+  /** Epic. The highest-rated stone in this set. */
   good: { radius: 0.0425, thickness: 0.0105, aspect: 0.97, comOffset: { x: 0.006, z: 0 } },
-  /** The daily's universal rock at its best: round, flat, true. */
+  /** The solver's validated default: round, flat, true. Epic. */
   ideal: { radius: 0.045, thickness: 0.010, aspect: 1.0, comOffset: { x: 0, z: 0 } },
 }
 
