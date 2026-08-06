@@ -20,12 +20,13 @@
 //   The labs' runtime fetches ("/assets/...") are origin-absolute on purpose:
 //   under one origin every lab resolves them to the same shared folder, which
 //   is the whole point of the layout. Their --base only affects their own
-//   bundled module/asset URLs.
+//   bundled module/asset URLs — except in index.html, where it does NOT, and
+//   `unbaseSharedAssets` below is the repair. See its comment.
 //
 //   node tools/build-site.mjs        (or: npm run build:site)
 
 import { execSync } from "node:child_process";
-import { cpSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,6 +64,46 @@ for (const lab of LABS) {
   cpSync(join(ROOT, lab, "dist"), join(DIST, lab), { recursive: true });
 }
 
+/**
+ * Point a lab's index.html back at the SHARED assets folder.
+ *
+ * The note above about --base only touching a lab's own bundle is true of
+ * runtime `fetch("/assets/...")` calls, which are strings Vite never sees, and
+ * false of index.html, which Vite rewrites: `<link href="/assets/fonts/...">`
+ * becomes `/sand-sim/assets/fonts/...`, which does not exist. Cloudflare Pages
+ * then serves the SPA fallback, and the browser refuses an HTML file offered as
+ * a stylesheet —
+ *
+ *   Refused to apply style from '.../sand-sim/assets/fonts/stefan.css' because
+ *   its MIME type ('text/html') is not a supported stylesheet MIME type
+ *
+ * — so every lab has been loading without its font.
+ *
+ * The rewrite is narrow on purpose. A lab's OWN bundle also lives under
+ * `assets/` (`/sand-sim/assets/index-W2cTEBzz.js`) and must keep its base, so
+ * only the shared tree's top-level directory names are un-based. Those are read
+ * from what is actually being shipped rather than hardcoded, so a new shared
+ * folder is covered the day it is added.
+ */
+function unbaseSharedAssets(html, lab) {
+  if (!existsSync(html)) return;
+  const shared = new Set(
+    tracked
+      .map((f) => f.split("/")[2])
+      .filter((name) => name && !name.includes("."))
+  );
+  let src = readFileSync(html, "utf8");
+  let fixed = 0;
+  for (const dir of shared) {
+    const from = `/${lab}/assets/${dir}/`;
+    if (src.includes(from)) {
+      src = src.split(from).join(`/assets/${dir}/`);
+      fixed++;
+    }
+  }
+  if (fixed) writeFileSync(html, src);
+}
+
 // ------------------------------------------------- static pages + shared code
 cpSync(join(ROOT, "babylon-water"), join(DIST, "babylon-water"), { recursive: true });
 for (const dir of ["demo", "src"]) {
@@ -81,6 +122,10 @@ for (const rel of tracked) {
   mkdirSync(dirname(to), { recursive: true });
   cpSync(join(ROOT, rel), to);
 }
+
+// Run AFTER the assets are enumerated, not inside the build loop: `tracked` is
+// a const declared above and reading it earlier is a temporal-dead-zone error.
+for (const lab of LABS) unbaseSharedAssets(join(DIST, lab, "index.html"), lab);
 
 // ------------------------------------------------------------------- report
 function mb(path) {
