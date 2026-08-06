@@ -303,12 +303,35 @@ varying vec2 vUV;
 uniform sampler2D prev;
 uniform float dropCount;
 uniform vec4 drops[${DROP_BATCH}];   /* center.xy in [-1,1], radius, strength */
+/* travel direction .xy (unit, window space), elongation .z, lateral skew .w */
+uniform vec4 dropAxis[${DROP_BATCH}];
 void main(void) {
     vec4 info = texture2D(prev, vUV);
     for (int i = 0; i < ${DROP_BATCH}; i++) {
         if (float(i) >= dropCount) break;
         vec4 d = drops[i];
-        float drop = max(0.0, 1.0 - length(d.xy * 0.5 + 0.5 - vUV) / d.z);
+        vec4 ax = dropAxis[i];
+        vec2 rel = (d.xy * 0.5 + 0.5) - vUV;
+
+        /* AN OBLIQUE IMPACT GOUGES A TRACK, NOT A CIRCLE.
+           A circular crater is what a stationary drop makes. A stone arriving
+           at an attack angle a contacts a patch roughly 1/sin(a) longer than it
+           is wide — about 3x at the 20 degree magic angle — laid along the
+           direction of travel. Measuring distance in a frame stretched along
+           that axis is the cheapest honest way to say so.
+
+           The skew term shears the ellipse sideways. A spinning stone throws
+           its spray and its gouge slightly to one side (the same asymmetry that
+           gives the run its lateral drift), so the sign of spin leans the
+           crater. Small, but it is the difference between a ripple that looks
+           stamped on and one that looks made by something moving. */
+        vec2 fwd = ax.xy;
+        vec2 side = vec2(-fwd.y, fwd.x);
+        float alongD = dot(rel, fwd);
+        float acrossD = dot(rel, side) + alongD * ax.w;
+        float r = length(vec2(alongD / max(ax.z, 0.001), acrossD));
+
+        float drop = max(0.0, 1.0 - r / d.z);
         drop = 0.5 - cos(drop * PI) * 0.5;
         info.r += drop * d.w;
     }
@@ -828,7 +851,7 @@ function makePass(name, source, uniforms) {
     });
 }
 const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
-const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops"]);
+const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops", "dropAxis"]);
 const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta", "damp"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
 const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
@@ -849,6 +872,10 @@ const passScroll = new BABYLON.Vector2(0, 0);
 const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
 let passSrc = null;
 const dropData = new Float32Array(DROP_BATCH * 4);
+/** Per-drop orientation: travel dir xy, elongation, lateral skew. Separate array
+ *  because a vec4 was already full and the shape of a crater is a different
+ *  fact from where and how hard it landed. */
+const dropAxisData = new Float32Array(DROP_BATCH * 4);
 let dropsInBatch = 0;
 
 // Uniforms go through onApply because EffectRenderer binds the effect itself.
@@ -856,6 +883,7 @@ dropPass.onApplyObservable.add(() => {
     const eff = dropPass.effect;
     eff.setFloat("dropCount", dropsInBatch);
     eff.setFloatArray4("drops", dropData);
+    eff.setFloatArray4("dropAxis", dropAxisData);
     if (passSrc) eff.setTexture("prev", passSrc);
 });
 scrollPass.onApplyObservable.add(() => {
@@ -979,7 +1007,7 @@ const dropQueue = [];
 // then replay every one of them as its own full-screen render pass on the
 // first live frame.
 const DROP_QUEUE_MAX = 64;
-function queueDrop(worldX, worldZ, strength, radius) {
+function queueDrop(worldX, worldZ, strength, radius, shape) {
     if (dropQueue.length >= DROP_QUEUE_MAX) dropQueue.shift();
     lastDisturb = performance.now();   // AUDIT #6 — wakes the deviation sim
     // World metres, verbatim. The window may move between queue and drain, so
@@ -991,6 +1019,12 @@ function queueDrop(worldX, worldZ, strength, radius) {
         z: worldZ,
         strength,
         radius: radius === undefined ? DROP_R : radius,
+        // Shape, defaulted to the old circle so every existing caller — Plunge,
+        // auto-rain, landing droplets — behaves exactly as it did.
+        dirX: shape && shape.dirX !== undefined ? shape.dirX : 1,
+        dirZ: shape && shape.dirZ !== undefined ? shape.dirZ : 0,
+        elong: shape && shape.elong !== undefined ? shape.elong : 1,
+        skew: shape && shape.skew !== undefined ? shape.skew : 0,
     });
 }
 
@@ -1097,6 +1131,24 @@ const SPLASH = window.SPLASH = {
     maxLive:    6000,
     rippleGain: 0.0030,        // impact energy to Evan's drop strength
     rippleMax:  0.050,         // hard cap, keeps drops near his tuned scale
+
+    // --- crater SHAPE, from the impact geometry -------------------------
+    /** Cap on how long a gouge gets. Length goes as 1/sin(attack), so a very
+     *  shallow arrival would run away; 4 is about a 14 degree impact. */
+    elongMax: 4.0,
+    /** How far spin leans the crater sideways. Real — it is the same asymmetry
+     *  that gives a run its lateral drift — but subtle by design. */
+    spinSkew: 0.35,
+
+    // --- the stone PLOUGHING, not bouncing ------------------------------
+    /** Continuous displacement while the stone is in contact: ploughing,
+     *  wobbling, coasting, sinking. 0 disables it and the pond goes back to
+     *  reacting only to clean bounces. Small — this fires every frame of a
+     *  contact, where an impact fires once. */
+    ploughGain: 0.010,
+    /** A furrow is longer than a crater. This is what reads as "dragging
+     *  through" rather than "landing on". */
+    ploughElong: 6.0,
 
     // Converts the stone's real-world m/s into this pool's units. Without it,
     // emit power inherits metres-per-second directly while the whole pool is
@@ -1525,6 +1577,9 @@ sprayPS.onBeforeDrawParticlesObservable.add(() => {
 });
 
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+/** Two-sided clamp. `clamp` is a GLSL builtin, not a JS one — the shaders above
+ *  use it freely and it is easy to reach for on this side by mistake. */
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 
 /// The stone hook. Everything an impact does to the water goes through here, so
@@ -1625,7 +1680,20 @@ function stoneImpact(x, z, opts) {
         SPLASH.rippleGain * energy * (0.25 + 0.75 * sinA),
         SPLASH.rippleMax
     );
-    queueDrop(x, z, rippleStrength, Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)));
+    // THE CRATER'S SHAPE, from the impact geometry rather than assumed round.
+    //
+    // Contact patch length goes as 1/sin(attack): the shallower the arrival, the
+    // longer the gouge. ~2.9x at the 20 degree magic angle, 1x on a vertical
+    // plunge, which is the circle Plunge and rain still get. Capped, because
+    // sin -> 0 runs away and a stone that shallow is skimming, not gouging.
+    const elong = Math.min(SPLASH.elongMax, 1 / Math.max(0.12, sinA));
+    // Spin leans it. Same asymmetry that gives a run its lateral drift — the
+    // sign of spin decides which way. Deliberately small: it is a lean, not a
+    // banana.
+    const skew = clamp(-(opts.spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew;
+    queueDrop(x, z, rippleStrength,
+        Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)),
+        { dirX, dirZ, elong, skew });
 
     // --- spray --------------------------------------------------------------
     if (sprayCount > 0) {
@@ -1664,6 +1732,42 @@ function stoneImpact(x, z, opts) {
     return { energy, iKE, iTA, sprayCount, foamCount, rippleStrength };
 }
 window.stoneImpact = stoneImpact;
+
+/**
+ * CONTINUOUS DISPLACEMENT — the water reacting to a stone that is not skipping.
+ *
+ * stoneImpact() fires on bounces. A run is far more than its bounces: the stone
+ * ploughs while it is in contact, wobbles, coasts, skims and finally sinks, and
+ * every one of those is water being pushed out of the way. None of it made a
+ * mark, so the pond went glassy the instant a run stopped scoring, with a stone
+ * still visibly dragging through it.
+ *
+ * Driven from the solver's own `getDisturbance()`: displaced volume, contact
+ * flag, bow-wave crest and speed, sampled per frame. Strength is volume x speed
+ * so a fast plough shoves more than a slow settle, and it is scaled by dt so the
+ * result does not depend on frame rate — this feeds a leaderboard's water.
+ *
+ * Deliberately much weaker than an impact, and skipped when the stone is barely
+ * moving: a stone at rest floats, it does not keep making waves.
+ */
+function stoneDisplace(d, dt, dirX, dirZ, spinRPS) {
+    if (!SPLASH.ploughGain || !d.contact || d.speed < 0.15) return 0;
+    const strength = Math.min(
+        SPLASH.ploughGain * d.displacedVolume * d.speed * dt * 60,
+        SPLASH.rippleMax * 0.5
+    );
+    if (strength < 1e-6) return 0;
+    // The wake of something moving THROUGH the surface is a long thin furrow,
+    // not a dimple — more elongated than an impact crater, and it is the shape
+    // that reads as "dragging" rather than "landing".
+    queueDrop(d.x, d.z, strength, Math.max(d.radius / SIZE, DROP_R * 0.5), {
+        dirX, dirZ,
+        elong: SPLASH.ploughElong,
+        skew: clamp(-(spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew,
+    });
+    return strength;
+}
+window.stoneDisplace = stoneDisplace;
 
 // Straight down into the middle of the pond: angle PI/2 is the pure vertical
 // case, so this is the plunge end of the skip/plunge axis — maximum wave,
@@ -2033,6 +2137,10 @@ const CONTROLS = [
     // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
     // automatically, so a longer ripple keeps the sim awake longer to match.
     ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
+    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
+    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
+    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
+    ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
 
     ["Throw", null],
     ["speed",           () => SKIP.throw.speed,           (v) => SKIP.throw.speed = v,           1,   45,  0.5],
@@ -2058,6 +2166,10 @@ const CONTROLS = [
     // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
     // automatically, so a longer ripple keeps the sim awake longer to match.
     ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
+    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
+    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
+    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
+    ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
     ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
     ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
 
@@ -2263,6 +2375,11 @@ scene.registerBeforeRender(() => {
             const o = dropsInBatch * 4;
             dropData[o] = cx; dropData[o + 1] = cz;
             dropData[o + 2] = d.radius; dropData[o + 3] = d.strength;
+            // Direction is a world vector; the crater lives in window UV, whose
+            // axes are the same orientation, so it carries over unrotated.
+            const dl = Math.hypot(d.dirX, d.dirZ) || 1;
+            dropAxisData[o] = d.dirX / dl; dropAxisData[o + 1] = d.dirZ / dl;
+            dropAxisData[o + 2] = d.elong; dropAxisData[o + 3] = d.skew;
             dropsInBatch++;
         }
         // One pass applies the whole batch — bit-identical to the old
@@ -2416,14 +2533,29 @@ doThrow();
 scene.onBeforeRenderObservable.add(() => {
     if (!sim || sim.finished) return;
     const raw = Math.min(engine.getDeltaTime() / 1000, 0.05);
-    for (const e of sim.advance(SKIP.slow ? raw / 6 : raw)) {
+    const dt = SKIP.slow ? raw / 6 : raw;
+    for (const e of sim.advance(dt)) {
         if (e.type === "bounce") {
-            // Into the REAL water: spray, foam, aeration and a ripple whose size
-            // comes from the momentum the solver actually delivered.
+            // Everything the solver measured about this strike, not a
+            // reconstruction of it. The first cut of this passed the OUTGOING
+            // velocity as the impact angle and no radius at all, so every
+            // bounce made the same round 20 cm dimple regardless of how hard it
+            // hit or how shallowly it arrived.
             const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
+            const d = sim.getDiagnostics();
+            // Angle from the APPROACH — vertical momentum is what lifts water,
+            // and `e.approachSpeed` is the number the solver used to decide the
+            // bounce counted at all.
+            const angle = Math.atan2(Math.max(0, e.approachSpeed), h);
             stoneImpact(e.position.x, e.position.z, {
-                speed: e.speed, mass: sim.mass, angle: Math.abs(Math.atan2(v.y, h)),
+                speed: e.speed,
+                mass: sim.mass,
+                angle,
                 dirX: v.x / h, dirZ: v.z / h,
+                // The real wetted footprint: how deep it actually went, in the
+                // pond-span units the drop shader wants.
+                radius: Math.max(sim.effRadius, e.penetration * 3) / SIZE,
+                spinRPS: d.spinRPS,
             });
         }
         if (e.type === "outcome") {
@@ -2431,6 +2563,16 @@ scene.onBeforeRenderObservable.add(() => {
                 " \u2014 " + e.cleanHops + " skips, " + e.distance.toFixed(1) + " m";
         }
     }
+    // EVERY frame the stone is touching water, not just the bounces: ploughing
+    // through a contact, wobbling, coasting after the score has stopped, and
+    // sinking. The pond used to go glassy the moment a run stopped scoring,
+    // with the stone still visibly dragging through it.
+    {
+        const g = sim.getDisturbance();
+        const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
+        stoneDisplace(g, dt, v.x / h, v.z / h, sim.getDiagnostics().spinRPS);
+    }
+
     const p = sim.state.position, q = sim.state.orientation;
     stoneMesh.position.set(p.x, p.y, p.z);
     stoneMesh.rotationQuaternion.set(q.x, q.y, q.z, q.w);

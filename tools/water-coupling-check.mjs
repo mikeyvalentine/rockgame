@@ -232,4 +232,60 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
   );
 });
 
+/* ------------------------------------------------------------------ *
+ * 6. The fields the skip lab reads off the solver
+ * ------------------------------------------------------------------ */
+
+// babylon-water drives its ripples, spray and foam from these. They are a
+// contract, and an unusually quiet one to break: the solver's water callback is
+// guarded, so a missing field arrives as `undefined`, becomes NaN in a shader
+// uniform, and the drop silently does nothing. No error, no splash, and nothing
+// in any test to say so — which is exactly how the lab spent its first version
+// making an identical round dimple for every bounce regardless of the impact.
+{
+  const sim = new StoneSkipSim({ profile: 'game', water: makeAmbientWater() });
+  sim.throwStone(THROW_PRESETS.steinerThrow);
+  let bounce = null, contactFrames = 0, afterRunEnded = 0;
+  while (!sim.finished && sim.state.time < 40) {
+    for (const e of sim.advance(1 / 60)) if (e.type === 'bounce' && !bounce) bounce = e;
+    if (sim.getDisturbance().contact) {
+      contactFrames++;
+      if (sim.runEnded) afterRunEnded++;
+    }
+  }
+
+  test('the sim exposes mass and effRadius', () => {
+    assert.ok(sim.mass > 0, 'sim.mass');
+    assert.ok(sim.effRadius > 0, 'sim.effRadius');
+  });
+
+  test('a bounce event carries what the splash needs', () => {
+    assert.ok(bounce, 'no bounce event at all');
+    for (const k of ['position', 'speed', 'approachSpeed', 'penetration', 'impulse', 'energyToWater']) {
+      const v = bounce[k];
+      assert.ok(v !== undefined, `bounce.${k} is missing — the lab reads it`);
+      if (k !== 'position') assert.ok(Number.isFinite(v), `bounce.${k} is not finite`);
+    }
+  });
+
+  test('getDisturbance() carries what the plough needs', () => {
+    const g = sim.getDisturbance();
+    for (const k of ['x', 'z', 'displacedVolume', 'radius', 'speed']) {
+      assert.ok(Number.isFinite(g[k]), `getDisturbance().${k} is not finite`);
+    }
+    assert.equal(typeof g.contact, 'boolean', 'getDisturbance().contact');
+  });
+
+  // The reason continuous displacement exists. If this ever goes to zero the
+  // feature is dead weight and the pond is glassy again the moment scoring stops.
+  test('most of a stone\'s time in the water is NOT a scoring bounce', () => {
+    assert.ok(
+      afterRunEnded > 10,
+      `only ${afterRunEnded} contact frames after the run ended, of ${contactFrames} — ` +
+      `continuous displacement has nothing left to draw`
+    );
+    console.log(`      (${contactFrames} contact frames, ${afterRunEnded} of them after scoring stopped)`);
+  });
+}
+
 console.log(`\nwater-coupling: ${passed} passed\n`);
