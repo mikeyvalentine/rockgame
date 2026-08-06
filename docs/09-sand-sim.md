@@ -133,6 +133,10 @@ Not wired yet: the bucket and a sift HUD. Sweeping, carrying and examining are w
 
 So a dent is written to both, and re-stamped into the field when the player comes back — on crouching, and on a slow tick while walking within 14 m, because the field relaxes and a bed you are walking towards would otherwise be flat sand until you knelt.
 
+**One brush per rock**, not a resampling. The first version sampled the imprint grid at 25 cm and drew ~35 brushes 37 cm across, which draws the *shape of the excavation* — a soft bed-sized dip — rather than the rocks that made it. Every rock displaces the sand it sits in, the way a boot does, so every rock gets its own brush: 605 of them, spent 56 a frame (the field takes 96, shared with footfalls) so a bed lands in eleven frames.
+
+**How far down that actually reads is renderer-dependent, and unverified.** A resting stone presses `0.34 × radius`, about 10 mm. On WebGPU that is real geometry — the clipmap displaces by the field — but the innermost lattice is 5 cm and `deformHeight` filters at its Nyquist by design, so an 11 cm-wide dent passes at reduced amplitude. On the WebGL fallback the field is albedo only, with a gain tuned for 8–15 cm footfalls, so 10 mm works out at well under 1% darkening. Neither could be seen in the dev container: SwiftShader draws **nothing** from the deformation field there — a deliberate 30 cm trench in front of the camera is invisible, so footprints do not render either. The depths and brush sizes are asserted headlessly; how they look wants real hardware.
+
 The bed's own imprint falls out of the same layer: every stone's resting position is in the bed file, so the sand it has been sitting in is *derived* rather than authored, and deterministic for a given bed. Measured on `shore-0`: **608 of 620 stones** touch the sand, pressing it 16.4 mm at the deepest over 13.7% of the layer. Nearly all of them, because the bed is one layer — the old four-deep heap pressed 308 of 540. Presses combine with `max` and not `+=`, so two stones in one dip make one dip and the bake is order-independent.
 
 **One thing designed for but not yet built:**

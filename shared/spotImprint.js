@@ -153,7 +153,13 @@ export class SpotImprint {
  */
 export function bakeBedImprint(imprint, bed, radiusOf, { unitScale = 4, baseY = 0, spot } = {}) {
     const at = spot ?? imprint.spot;
-    let pressed = 0;
+    // The presses themselves, not just how many. The layer REMEMBERS a dent and
+    // deliberately does not draw it, so something else has to draw it — and
+    // that something wants the stones, one brush each, rather than a resampling
+    // of the grid they made. Returning them here is what lets the drawing side
+    // be per stone without walking the bed a second time and getting a
+    // different answer about which stones count.
+    const pressed = [];
 
     for (let i = 0; i < bed.count; i++) {
         const name = bed.names[bed.archIndex[i]];
@@ -169,8 +175,9 @@ export function bakeBedImprint(imprint, bed, radiusOf, { unitScale = 4, baseY = 
         // beach, and pressing for all 540 would flatten the whole crown.
         if (y - baseY > radius * 1.6) continue;
 
-        imprint.press(x, z, radius, radius * BED_PRESS);
-        pressed++;
+        const depth = radius * BED_PRESS;
+        imprint.press(x, z, radius, depth);
+        pressed.push({ x, z, radius, depth });
     }
     return pressed;
 }
