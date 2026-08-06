@@ -87,13 +87,41 @@ This preserves what makes fixed quality desirable (runs are reproducible, nothin
 
 ## The concrete next action
 
-**Measure the existing water sim on the floor machine, in milliseconds per frame.**
+**Measure on the floor machine, in milliseconds per frame.**
 
-Everything else is speculation until that number exists — it determines how much budget remains for sand, trees, rocks and UI.
+Everything else is speculation until that number exists — it determines how much budget remains for sand, trees, rocks and UI. As of 2026-08-06 this is the *only* thing blocking the remaining performance work: every item in the 2026-08-05 audit's priority queue has landed (see `audit-2026-08-05.md`, B-STATUS), and what is left cannot be judged from a dev box.
+
+### Measuring on the floor machine
+
+Nothing needs building — the harnesses already exist. On the 2020 Intel MacBook, in Chrome:
+
+**1 · The WebGPU-vs-WebGL question** (`09-sand-sim.md`, and the Stack line in `CLAUDE.md`)
+
+Open sand-sim twice and read its perf overlay:
+
+| URL | Path |
+| --- | --- |
+| `…/sand-sim/?webgpu=1` | forces WebGPU |
+| `…/sand-sim/?webgl=1` | forces the WebGL2 fallback |
+
+Both flags are honoured at boot by `src/boot/selectEngine.js`, and `src/core/perf.js` already tracks frame time, spikes and draw counts. Record p50, p99 and spike count for each, walking the beach and disturbing the sand.
+
+What the answer means:
+
+- **WebGL2 holds 60fps at acceptable fidelity** → port the remaining shaders and drop WebGPU. Note the size of that job first: 31 WGSL files, ~4,400 lines, of which only 3 have GLSL twins today.
+- **Both miss 60** → the API is not the problem, fidelity is. Cut particle counts and clipmap rings; keep both paths.
+- **WebGPU clears 60 comfortably, WebGL2 does not** → keep both, exactly as this doc already assumes.
+
+**2 · The water sim**, per the item above — `babylon-water/index.html`, with and without a skip run. The disturbance gate (`index.html:2070`) means the idle number and the active number are now very different; record both.
+
+**3 · The solver** — `cd stone-skipping-physics && npm run test:frame`. Runs in Node, no GPU, so it can be run on the floor machine directly. It reports the worst single `advance(1/60)` against a 6 ms slice of the frame. On a dev box the worst case is ~2 ms; the floor machine is the number that counts.
+
+> ⚠️ **Warm the JIT before believing a JS timing.** An unwarmed first case in the solver profiler read 7.06 ms against a true 2.04 ms — enough to justify a large refactor that was not needed. `test/frame-budget.mjs` warms up first; anything hand-rolled should too.
 
 ## OPEN
 
-- [ ] Measure the water sim on the floor machine
+- [ ] Measure the water sim on the floor machine — recipe above; idle and active separately, now that the gate exists
+- [ ] Run the sand-sim `?webgpu=1` / `?webgl=1` A/B — the decision that unblocks the renderer question
 - [ ] Set the ms budget from that measurement
 - [ ] Decide sweet-spot window width alongside the framerate floor
 - [ ] Render resolution / upscale factor
