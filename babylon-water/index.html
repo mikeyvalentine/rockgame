@@ -117,13 +117,14 @@
 
 // Scaled up from his 2 m pool to pond size. RES, SIZE and STEPS are COUPLED and
 // cannot be changed independently: a wave crosses one cell per step, so
-//     waveSpeed = (SIZE / RES) * 0.694 * STEPS * 60
-// (the 0.694 cells-per-step is measured, not theoretical). Real ripples of the
+//     waveSpeed = (SIZE / RES) * 0.551 * STEPS * 60
+// (the cells-per-step figure is measured, not theoretical: 0.694 at Wallace's
+// WAVE_C 2.0, 0.551 at the 1.5 this now uses — see WAVE_C for why). Real ripples of the
 // size a stone makes travel 0.7-1.0 m/s by deep-water dispersion, and that pins
 // the cell size to roughly 25 mm. Everything below follows from that:
 //
 //   SIZE 24 m / RES 1024  ->  23.4 mm cells
-//   STEPS 1               ->  0.98 m/s waves, physically right
+//   STEPS 1, WAVE_C 1.5   ->  0.78 m/s waves, inside the physical 0.7-1.0 band
 //   damping rescaled      ->  0.995 was per-step at 2 steps/frame, so halving
 //                             the step count needs 0.995^2 to decay the same
 //                             amount per second
@@ -166,6 +167,31 @@ const STEPS   = 1;       // stepSimulation() calls per frame
 // safe: a twin of the update shader stays bounded all the way to 1.0 (no
 // damping at all), so this is a look knob, not a stability one.
 const RIPPLE = window.RIPPLE = { damping: 0.9992 };
+
+/**
+ * Wave coefficient in the update step: v += (average - h) * WAVE_C.
+ *
+ * Wallace's 2.0 sits exactly AT this scheme's CFL limit, and that is not a
+ * safety margin — it is the edge. For the checkerboard mode (alternating every
+ * texel) the 4-neighbour average is exactly -h, so the update becomes
+ * v' = damp*(v - 2*C*h); at C = 2 the eigenvalues are a DEFECTIVE double root at
+ * -1, which grows like n*lambda^n before it decays.
+ *
+ * It grows at EVERY damping value, including the original 0.990 — measured peak
+ * 13x over 600 steps. The old code got away with it because damping killed the
+ * amplitude long before the growth was visible. Raise the damping to make
+ * ripples last, and the same mode reaches 49x and shows up as a full-screen
+ * two-pixel hatch. That is a real regression this file shipped, and it is why
+ * this constant is now named and tested rather than inlined.
+ *
+ * 1.5 buys the margin: the mode stays bounded at ~2x for any damping, so
+ * RIPPLE.damping is genuinely free to dial. The cost is wave speed, which drops
+ * from 0.98 to 0.78 m/s — still inside the 0.7-1.0 m/s that deep-water
+ * dispersion gives real ripples, which is the band this file already cites.
+ *
+ * tools/scheme-stability-check.mjs asserts both halves of that on every test run.
+ */
+const WAVE_C = 1.5;
 const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
 const DROP_S  = 0.01;    // his drop strength, in metres of displacement
 
@@ -237,7 +263,7 @@ void main(void) {
         texture2D(prev, vUV + dy).r
     ) * 0.25;
 
-    info.g += (average - info.r) * 2.0;
+    info.g += (average - info.r) * WAVE_C;
 
     // ABSORBING EDGE, over the same outer 8% the renderer fades across.
     //
@@ -260,7 +286,7 @@ void main(void) {
 
     gl_FragColor = info;
 }
-`;
+`.replace(/WAVE_C/g, WAVE_C.toFixed(4));
 
 // Window recentre. Shifts the whole field (height, velocity, normals — every
 // channel) by a whole-texel offset so the window can follow the stone without
