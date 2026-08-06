@@ -77,13 +77,12 @@ That is why the sift screenshots read pale and flat next to the forge lab.
 
 ---
 
-## 2. sand-sim × rock-sift integration — scoped, not started
+## 2. sand-sim × rock-sift integration — built
 
 **Goal:** rock piles visible in the sand sim, walkable in first person, click to crouch
 into sifting.
 
-**Status:** investigated end to end. Not begun. The plan below is grounded in the
-actual APIs.
+**Status:** all three slices built, tested and seen running.
 
 ### The DeformationField is the wrong tool
 
@@ -123,16 +122,187 @@ Piles follow the same twin pattern.
 
 ### Slices
 
-1. **Pile field.** A shared module turning bed manifests into `{x, z, radius, height}`
-   mounds, plus the mound term in the WGSL bake. **Testable headlessly**: assert
-   `heightAt()` rises over a pile and is flat away from it. This is the foundation.
-2. **Rock instances.** Spawn each bed's stones at its pile, statically — `spawnBed`'s
-   `asleep: true`, which `bed-test.mjs` measures at 0.00 mm drift. Visual only; no
-   Havok bed until the player crouches.
-3. **Crouch transition.** Proximity prompt → camera move → hand off to rock-sift's
-   sift mode, which is where the physics bed wakes.
+1. **Pile field.** ✅ Built. `shared/pileField.js` + the mound term in the height bake.
+2. **Rock instances.** ✅ Built. `sand-sim/src/scene/siftingBeds.js` — 2160 stones
+   across four spots, drawn and culled, no physics.
+3. **Crouch transition.** ✅ Built. Stand on a pile, press E, sift; Escape comes
+   back. The beach pauses while the sift world is up.
 
-Slices 2 and 3 need a live scene to judge.
+### Slice 1, as built
+
+`shared/pileField.js` is the single source of truth: four spots along the shingle
+band, a C1 radial falloff, and `pileCoverage/pileHeightJS/pileMaskJS/spotAt`.
+`sand-sim/tools/pile-field-check.mjs` covers it (30 assertions, in `npm test`).
+
+Three things the plan above did not anticipate, all of them found by writing the
+test rather than by reasoning:
+
+**The crown has to be flat, and flat is a correctness requirement.** rock-sift
+pours its bed on flat ground (`config.js`: "the ground is flat and the pile is
+allowed to find its own angle of repose"). A baked bed restored onto a dome has
+stones floating on the high side and buried on the low one. So the falloff
+saturates over an inner `CROWN_RADIUS` (0.9 m, clear of rock-sift's 0.42 m
+`BED_RADIUS`) instead of peaking at a point, **and the mound damps micro relief
+under itself in the same proportion as it rises** — otherwise the crown carries
+the beach's own ±0.09 m of noise.
+
+*Corrected while building slice 2:* flattening the noise was only half of it.
+The beach itself rises at `FORESHORE_SLOPE`, which across a 1.4 m bed is **48 mm
+of tilt** — and rock-sift's stones are 40 to 100 mm across, so the seaward edge
+of a bed poured flat floats by half a stone. The pile now cancels the ramp under
+itself (`pileLift`), making the crown a true horizontal plateau: the drawn
+surface measures **0.000 mm** across the bed footprint. The grounding mirror
+still reads 23 mm because its 0.5 m B-spline drags the bank face inward, which
+is the character's business and well inside the micro relief it walks on
+anyway — the two are now checked separately, because conflating them is exactly
+how the ramp survived the first pass.
+
+Levelling also keeps the crouch honest: rock-sift simulates the bed on flat
+ground under vertical gravity, so a level crown is the one that will not pop at
+the handoff.
+
+**A pile the size of the bed is invisible to the terrain.** The bake is 0.25
+m/texel and the CPU mirror the walker grounds on is 0.5 m/texel, then bicubic
+B-spline reconstructed. A 0.42 m mound would be filtered away and the player
+would walk through a bank they can see. `PILE_RADIUS` is 2.4 m — the mound is
+the *shingle bank*, and the sift bed occupies its crown. The test asserts this
+against a faithful stand-in for `_readback` + `heightAt`, not against the
+analytic profile, because analytic flatness proves nothing about what the
+character actually stands on.
+
+**The pile belongs in the aux bake too.** `auxBake`'s B channel — the pebble
+band, deliberately zeroed since the open beach is all sand — already drives a
+voronoi cobble shading path. Writing the pile mask there makes the bank *shade*
+as shingle from standing distance for free, which is the direct answer to
+docs/09's stated risk that the crouch pops between a smooth sand lump and a bed
+of stones.
+
+**No uniforms.** The WGSL is generated from the JS constants
+(`pileFieldWGSL()`), registered as the `snowPiles` include, and unrolled to one
+`max` per spot. So there is no uniform array to bind, no runtime indexing of a
+const array, and the twin problem the beach profile lives with — WGSL and JS
+kept in structural agreement by hand — does not exist here at all. Both
+renderers read the same four numbers.
+
+Pile height sits **outside** `macroHeightScale`: the piles are where the player
+sifts, so their geometry is level design rather than an art-direction tunable.
+
+### Verified in a browser, and what it turned up
+
+Driven headlessly through the app's own `SANDSIM` hook on `?webgl=1`. The live
+`terrain.heightAt` around the eastern spot:
+
+| | |
+|---|---|
+| crown | 0.594 m |
+| crown edge, 0.8 m | 0.622 m (the foreshore's own ramp, not a dome) |
+| mid-face, 1.65 m | 0.419 m |
+| rim, 2.4 m | 0.2445 m |
+| open beach, 9 m | 0.2445 m |
+
+Rim and open beach agree to four decimals — the mound closes exactly where it
+should. The walker climbs it with no controller work, as predicted: `player
+11.50 0.59 -8.40` on the crown against `player 2.50 0.26 -8.40` at the same z
+on open sand.
+
+**The WGSL bake is still not compile-verified.** WebGPU cannot run in a
+container: SwiftShader's Vulkan refuses the bake's 4 MB allocations
+(`createBuffer failed, size (4194304) is too large for the implementation`) and
+the adapter drops out. The generated include does parse clean as WGSL under
+`wgsl_reflect`, which rules out syntax but not Babylon's preprocessor or Dawn.
+First run on real hardware is still the real check.
+
+**The piles are WebGPU-only, by decision.** The WebGL beach is a single 256²
+grid over 512 m, so a 2.4 m mound gets **4 vertices** (nearest 0.64 m from the
+crown, measured off the live mesh) and the bank is not meaningfully drawn —
+while grounding stays exact, so the fallback walks you up a step that isn't
+there. Fixing it needs local dense patches *and* a GLSL port of the pebble
+shading, since the fallback has neither an aux texture nor the voronoi cobble
+path. Deliberately not done. See docs/09.
+
+### Slice 3, as built
+
+`rock-sift/src/main.js` gave up everything below the engine to a new
+`world.js`, so the lab page and sand-sim build the *same* sift mode instead of
+two of them. sand-sim's `scene/siftSession.js` opens it as a second scene and
+stops the beach dead — no render, no character, no deformation, no input —
+which is the pausable-sand-sim arrangement docs/10 asks for and what makes a
+full Havok bed affordable.
+
+A handoff rather than a merge, because the two worlds do not share a scale: 512
+m of terrain in metres against 80 cm of stones modelled at 4x.
+
+**Escape was being swallowed.** `shore.leave()` returns early while a tween is
+running, so a press during the crouch transition did nothing and the player had
+to notice and press again. It is not a narrow window — the transition is 1.1 s
+of tween time and `world.js` clamps dt to 50 ms, so at 5 fps it stretches past
+four seconds. The intent is remembered now and acted on when the camera settles.
+Found by instrumenting the live scene, not by reading it.
+
+Verified in the browser: crouch and stand at two different spots, scene count
+1 → 2 → 1 each time, so the sift scene really is disposed.
+
+### Slice 2, as built
+
+`siftingBeds.js` draws each spot's baked bed on its crown. The plan said "spawn
+each bed's stones — `spawnBed`'s `asleep: true`". That turned out to be the
+wrong route, for a reason the plan could not have known: `spawnBed` lives in
+rock-sift and would drag Babylon 8.56 into a Babylon 9.18 page. So the boundary
+was redrawn at things that carry no engine —
+
+- geometry from `rock-forge/src/forge/*`, pure JS, plain position/index arrays;
+- the bed file through `shared/bedFormat.js`, DataView and nothing else
+  (`rock-sift/src/bed.js` is now a shim over it, like `rocks.js` over
+  `shared/rockRating.js` — rock-sift's five Havok tests still pass);
+
+— and sand-sim builds meshes with its own Babylon. The cast matches because the
+forge is deterministic: same seed, same count, same RNG draw order. The bed's
+stored *names* are the proof, and `tools/bed-load-check.mjs` resolves all forty.
+
+**Three failures worth writing down, because all three are silent.**
+
+*Thin instances are an augmentation module.* `thinInstanceSetBuffer` is not on
+`Mesh` in the tree-shaken ES6 build — `@babylonjs/core/Meshes/thinInstanceMesh.js`
+has to be imported for its side effect, exactly like the `engine.dynamicTexture.js`
+imports already in both app modules. Without it every call is a no-op on
+`undefined`, nothing throws, and the beach just has no stones on it. There is now
+a post-condition that counts uploaded instances and says so.
+
+*Thin-instance buffers live on the Geometry, not the Mesh.* So `mesh.clone()`,
+which shares geometry, gives four spots one buffer and the last write wins. The
+symptom is vicious: every mesh reports the right instance count and the right
+bounding box, passes culling exactly where its stones should be, and draws some
+other spot's stones off screen. Three of the four beds were invisible with
+nothing anywhere reporting a problem. Each (archetype, spot) now gets its own
+geometry — 160 copies of a 320-triangle pebble, under a megabyte.
+
+*A frozen material cannot compile the instanced variant.* `material.freeze()`
+pins whatever effect was compiled first. Not frozen now; the world matrices are,
+which is where the per-frame cost was.
+
+**And one measurement that changed the design.** Built the obvious way — one
+mesh per archetype, rock-sift's own icosphere level 3 — the beds submitted
+**2,764,800 triangles from anywhere on the beach**, against a 131k beach mesh,
+because a thin-instanced mesh is culled by the bounds of all its instances and
+those spanned 55 m of shore. Split per spot and dropped to icosphere level 2
+(indistinguishable at standing distance, four times cheaper): **172,800
+triangles with a bed in view, 0 with none.** Measured both ways in the browser,
+not estimated.
+
+### The Babylon version gap — resolved
+
+`rock-sift` was on `@babylonjs/core` **8.56**, `sand-sim` on **9.18**, and the
+crouch puts both in one page. It upgraded cleanly: all five Havok tests pass on
+9.18 with no source changes at all. sand-sim's vite config now dedupes
+`@babylonjs/core`, since rock-sift's bare import otherwise resolves to a second
+copy of the same version — two ShaderStores, two Engine classes, and an
+`instanceof` that quietly answers false.
+
+Unrelated good news for that slice: `rock-sift/src/main.js:61` constructs a
+plain `Engine`, i.e. **WebGL2**. The sifting minigame never used WebGPU, so
+Havok, the bed, examine and bucket are renderer-agnostic and work everywhere.
+The fallback question only ever touches the approach to a spot, never the
+sifting itself.
 
 ---
 

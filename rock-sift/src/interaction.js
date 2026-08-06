@@ -37,7 +37,14 @@ const DOWN = 1, UP = 2, MOVE = 4, WHEEL = 8;
 /** @param onRepour async () => void — rebuild the bed, for the R key */
 export function createInteraction(scene, {
   camera, hand, examine, hud, getRocks, getOrigin, getClearance, onRepour, onToggleAO,
+  // World units per metre. Defaults to the lab's own 4x, so nothing here
+  // changes for rock-sift; sand-sim hosts the same bed at 1:1 and passes 1.
+  // Everything below is authored in metres and scaled at the point of use,
+  // which is what made this a parameter rather than a rewrite — except HAND,
+  // which config.js already scaled, so it is re-scaled by the ratio instead.
+  unitScale = U,
 }) {
+  const handScale = unitScale / U;
   // Where the sweep is riding, in metres. Owned here because the pointer wheel
   // sets it, the hand consumes it, and the cursor ring is drawn at it.
   let dig = START_DIG;
@@ -55,7 +62,7 @@ export function createInteraction(scene, {
   const carriedAt = new Vector3();
 
   const ring = MeshBuilder.CreateTorus(
-    "ring", { diameter: HAND.width * 1.2, thickness: 0.004 * U, tessellation: 40 }, scene
+    "ring", { diameter: HAND.width * 1.2 * handScale, thickness: 0.004 * unitScale, tessellation: 40 }, scene
   );
   const ringMat = new StandardMaterial("ringMat", scene);
   ringMat.disableLighting = true;
@@ -89,8 +96,8 @@ export function createInteraction(scene, {
    * there is not, which is what a hand does.
    */
   function sweepHeight() {
-    const top = surfaceTopNear(getRocks(), hand.position.x, hand.position.z, SWEEP_PROBE_RADIUS * U);
-    return Math.max(HAND.height * 0.5, Math.min(dig * U, top));
+    const top = surfaceTopNear(getRocks(), hand.position.x, hand.position.z, SWEEP_PROBE_RADIUS * unitScale);
+    return Math.max(HAND.height * 0.5 * handScale, Math.min(dig * unitScale, top));
   }
 
   function endSweep() {
@@ -108,7 +115,7 @@ export function createInteraction(scene, {
     // to run before the body is parked out of the world.
     examine.enter(rock);
     rock.body.setMotionType(PhysicsMotionType.STATIC);
-    teleport(scene, rock.body, rock.node, new Vector3(0, -30 * U, 0), Quaternion.Identity());
+    teleport(scene, rock.body, rock.node, new Vector3(0, -30 * unitScale, 0), Quaternion.Identity());
 
     hud.showStone(rock.arch.metrics);
     endSweep();
@@ -123,7 +130,7 @@ export function createInteraction(scene, {
       // A little above its old spot, so it settles rather than interpenetrating
       // whatever has rolled into the gap while it was out.
       teleport(scene, rock.body, rock.node,
-        rock.restore.position.add(new Vector3(0, 0.05 * U, 0)), rock.restore.rotation);
+        rock.restore.position.add(new Vector3(0, 0.05 * unitScale, 0)), rock.restore.rotation);
     });
     if (!rock) return;
     hud.hideStone();
@@ -149,8 +156,8 @@ export function createInteraction(scene, {
         // origin — at a spot along the beach every point is far from the origin
         // and no sweep could ever start.
         const o = getOrigin?.() ?? null;
-        const p = planePointAt(scene.pointerX, scene.pointerY, dig * U);
-        if (p && Math.hypot(p.x - (o?.x ?? 0), p.z - (o?.z ?? 0)) < BED_RADIUS * SWEEP_REACH * U) {
+        const p = planePointAt(scene.pointerX, scene.pointerY, dig * unitScale);
+        if (p && Math.hypot(p.x - (o?.x ?? 0), p.z - (o?.z ?? 0)) < BED_RADIUS * SWEEP_REACH * unitScale) {
           hand.grab(p);
           ringMat.alpha = 0.25;
         }
@@ -173,14 +180,14 @@ export function createInteraction(scene, {
           // under the pointer as it lifts over a rim rather than sliding out
           // from under it. The height comes from where the stone is now; once
           // the new point is known the height it should rise to is read there.
-          const here = Math.max(CARRY.height * U, getClearance?.(carriedAt.x, carriedAt.z) ?? 0);
+          const here = Math.max(CARRY.height * unitScale, getClearance?.(carriedAt.x, carriedAt.z) ?? 0);
           const p = planePointAt(scene.pointerX, scene.pointerY, here);
           if (p) {
             carriedAt.copyFrom(p);
-            carrier.aim(p, Math.max(CARRY.height * U, getClearance?.(p.x, p.z) ?? 0));
+            carrier.aim(p, Math.max(CARRY.height * unitScale, getClearance?.(p.x, p.z) ?? 0));
           }
         } else if (hand.isActive) {
-          const p = planePointAt(scene.pointerX, scene.pointerY, dig * U);
+          const p = planePointAt(scene.pointerX, scene.pointerY, dig * unitScale);
           if (p) hand.aim(p);
         }
         break;
@@ -240,7 +247,7 @@ export function createInteraction(scene, {
     if (!hand.isActive) return;
     const y = sweepHeight();
     hand.advance(dt, y);
-    ring.position.set(hand.position.x, y + 0.015 * U, hand.position.z);
+    ring.position.set(hand.position.x, y + 0.015 * unitScale, hand.position.z);
   });
 
   return {

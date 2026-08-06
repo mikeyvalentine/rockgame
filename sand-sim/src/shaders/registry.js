@@ -21,6 +21,8 @@ import deformLib from "./lib/deform.wgsl?raw";
 import spellLightsLib from "./lib/spellLights.wgsl?raw";
 import postCommonLib from "./lib/postCommon.wgsl?raw";
 
+import { pileFieldWGSL } from "../../../shared/pileField.js";
+
 import heightBakeFrag from "./heightBake.fragment.wgsl?raw";
 import auxBakeFrag from "./auxBake.fragment.wgsl?raw";
 import detailBakeFrag from "./detailBake.fragment.wgsl?raw";
@@ -39,6 +41,13 @@ import prepassFrag from "./prepass.fragment.wgsl?raw";
 import terrainPrepassVert from "./terrainPrepass.vertex.wgsl?raw";
 import waterPrepassVert from "./waterPrepass.vertex.wgsl?raw";
 
+/**
+ * The one include with no file behind it: the sifting piles are generated from
+ * `shared/pileField.js`, so the bake and the JS grounding twin cannot disagree
+ * about where the mounds are. Generated once, at module load.
+ */
+const pilesLib = pileFieldWGSL();
+
 const INCLUDES = {
     snowNoise: noiseLib,
     snowTerrain: terrainLib,
@@ -52,6 +61,7 @@ const INCLUDES = {
     // which happens once, in the sand restyle.
     snowSpellLights: spellLightsLib,
     snowPostCommon: postCommonLib,
+    snowPiles: pilesLib,
 };
 
 const SHADERS = {

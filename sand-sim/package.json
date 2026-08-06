@@ -8,9 +8,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/registry-check.mjs && node tools/beach-profile-check.mjs && node tools/raymarch-test.mjs && node tools/glsl-check.mjs && node tools/settings-check.mjs && node tools/package-check.mjs",
+    "test": "node tools/registry-check.mjs && node tools/wiring-check.mjs && node tools/beach-profile-check.mjs && node tools/pile-field-check.mjs && node tools/bed-load-check.mjs && node tools/sift-physics-check.mjs && node tools/imprint-check.mjs && node tools/raymarch-test.mjs && node tools/glsl-check.mjs && node tools/settings-check.mjs && node tools/package-check.mjs",
     "test:registry": "node tools/registry-check.mjs",
+    "test:wiring": "node tools/wiring-check.mjs",
     "test:profile": "node tools/beach-profile-check.mjs",
+    "test:piles": "node tools/pile-field-check.mjs",
+    "test:beds": "node tools/bed-load-check.mjs",
+    "test:siftphysics": "node tools/sift-physics-check.mjs",
+    "test:imprint": "node tools/imprint-check.mjs",
     "test:raymarch": "node tools/raymarch-test.mjs",
     "test:glsl": "node tools/glsl-check.mjs",
     "test:settings": "node tools/settings-check.mjs",
@@ -28,6 +33,8 @@
   "license": "MIT",
   "dependencies": {
     "@babylonjs/core": "^9.18.0",
+    "@babylonjs/havok": "^1.3.14",
+    "@babylonjs/loaders": "^9.18.0",
     "@babylonjs/materials": "^9.18.0"
   },
   "devDependencies": {

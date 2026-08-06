@@ -41,6 +41,12 @@ import { MaskPaint } from "../terrain/maskPaint.js";
 import { initMaskBrush } from "../tools/maskBrush.js";
 import { DigTool } from "../tools/dig.js";
 import { buildWater } from "../scene/water.js";
+import { buildSiftingBeds } from "../scene/siftingBeds.js";
+import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { Crouch, spotAt } from "../scene/crouch.js";
+import { createCrouchPrompt } from "../scene/crouchPrompt.js";
+import { createSiftInteraction } from "../scene/siftInteraction.js";
+import { Imprints } from "../scene/imprints.js";
 import { DepthPass } from "../render/depthPass.js";
 import { PostChain } from "../post/postChain.js";
 import { createScribblePass } from "../post/scribblePass.js";
@@ -201,6 +207,47 @@ export async function run(canvas) {
 
     // ------------------------------------------------------------- warm-up
     // Everything that can compile, compiles here — behind the loading screen.
+    // ------------------------------------------------------- sifting beds
+    // The stones on the piles: baked beds from rock-sift, drawn as scenery on
+    // each crown. No physics — the bed only wakes when the player crouches.
+    await loading.phase("laying the beds", 0.72);
+    const beds = await buildSiftingBeds(scene, terrain);
+    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
+
+    // Behind the loading screen, so the crouch is a camera move and not a load.
+    await loading.phase("waking the stones", 0.75);
+    const physics = beds ? await loadSiftPhysics(scene) : null;
+    const prompt = createCrouchPrompt();
+    // rock-sift's own sweep, carry and examine, constructed against this
+    // camera and this bed — see scene/siftInteraction.js.
+    // The sand the beds have been resting in, and the holes sifting leaves.
+    // Built after the beds because it is derived from the transforms they were
+    // placed with.
+    const imprints = beds ? new Imprints(terrain, beds, terrain.deform) : null;
+    // The walker grounds on the DUG terrain from here on, so a bed that has
+    // been sifted is one you stand lower in. Reassigned rather than passed at
+    // construction because the imprints are derived from bed transforms that do
+    // not exist until after the controller is built.
+    if (imprints) character.terrain = imprints.wrapTerrain();
+    const sift = physics ? createSiftInteraction(scene, rig.camera, physics) : null;
+    const crouch = physics
+        ? new Crouch({
+            rig, character, physics, beds,
+            interaction: sift?.interaction, examine: sift?.examine, imprints,
+        })
+        : null;
+    let nearSpot = null;
+
+    window.addEventListener("keydown", (e) => {
+        if (!crouch) return;
+        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
+            prompt.show(false);
+            crouch.enter(nearSpot);
+        } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
+            crouch.leave();
+        }
+    });
+
     await loading.phase("compiling pipelines", 0.78);
     shadows.update(rig.camera, sky.sunDir);
     sky.render(rig, 0);
@@ -245,10 +292,20 @@ export async function run(canvas) {
         // of it — the overlay labels them `cpu` for that reason.
         const tFrame = performance.now();
 
-        character.update(dt, rig);
-        terrain.heightfield.clampToPlayArea(character.position);
-        contact.update(dt);
-        dig.update();
+        // Crouched, the walker is frozen and everything the stones touch keeps
+        // running — see scene/crouch.js on why "pausing the sim" means freezing
+        // the walker rather than the world.
+        const knelt = crouch ? crouch.update(dt) : false;
+        if (!knelt) {
+            character.update(dt, rig);
+            terrain.heightfield.clampToPlayArea(character.position);
+            contact.update(dt);
+            dig.update();
+        }
+        nearSpot = crouch && !crouch.engaged
+            ? spotAt(character.position.x, character.position.z)
+            : null;
+        prompt.show(!!nearSpot);
         // While a dig stroke is held the ground is *changing* every 60 ms;
         // TAA history reprojected across that shows the previous crater
         // shapes as layered translucent facet-ghosts. No history while
@@ -304,7 +361,8 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgpu",
         engine, scene, rig, character, contact, dig, spray, grains, water,
-        maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble,
+        maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble, beds,
+        physics, crouch, sift, imprints,
         S, input, perfStats: stats,
     };
 }

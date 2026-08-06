@@ -50,6 +50,12 @@ import {
     WORLD_SIZE, SPAWN, shoreProfileJS, clampToPlayRect,
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
+import { buildSiftingBeds } from "../scene/siftingBeds.js";
+import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { Crouch, spotAt } from "../scene/crouch.js";
+import { createCrouchPrompt } from "../scene/crouchPrompt.js";
+import { createSiftInteraction } from "../scene/siftInteraction.js";
+import { Imprints } from "../scene/imprints.js";
 import * as loading from "../core/loading.js";
 
 /** Grid density for the visible beach. 256² over 512 m = 2 m spacing. */
@@ -151,6 +157,21 @@ export async function run(canvas) {
     // ----------------------------------------------------------------- water
     const water = buildWater(scene);
 
+    // ------------------------------------------------------- sifting beds
+    // The stones on the piles. Renderer-agnostic — it wants nothing but
+    // `heightAt`, and the stones are ordinary meshes, so the fallback draws
+    // them as well as the WebGPU path does. (The mound they sit on is the part
+    // this renderer loses; see docs/09.)
+    await loading.phase("laying the beds", 0.68);
+    const beds = await buildSiftingBeds(scene, terrain);
+    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
+
+    // Physics is built HERE, not at the crouch, and that is the whole reason
+    // crouching is a camera move: the wasm fetch and the forty convex hulls are
+    // the expensive part, and they are paid once, behind this loading screen.
+    await loading.phase("waking the stones", 0.74);
+    const physics = beds ? await loadSiftPhysics(scene) : null;
+
     const character = new CharacterController(terrain);
     character.position.set(SPAWN.x, 0, SPAWN.z);
     character.position.y = terrain.heightAt(SPAWN.x, SPAWN.z);
@@ -212,6 +233,40 @@ export async function run(canvas) {
     // ------------------------------------------------------------- run loop
     let prev = performance.now();
 
+    // ------------------------------------------------------------ the crouch
+    // One scene. Crouching is a camera move with the bed waking behind it —
+    // see scene/crouch.js.
+    const prompt = createCrouchPrompt();
+    // rock-sift's own sweep, carry and examine, constructed against this
+    // camera and this bed — see scene/siftInteraction.js.
+    // The sand the beds have been resting in, and the holes sifting leaves.
+    // Built after the beds because it is derived from the transforms they were
+    // placed with.
+    const imprints = beds ? new Imprints(terrain, beds, deform) : null;
+    // The walker grounds on the DUG terrain from here on, so a bed that has
+    // been sifted is one you stand lower in. Reassigned rather than passed at
+    // construction because the imprints are derived from bed transforms that do
+    // not exist until after the controller is built.
+    if (imprints) character.terrain = imprints.wrapTerrain();
+    const sift = physics ? createSiftInteraction(scene, rig.camera, physics) : null;
+    const crouch = physics
+        ? new Crouch({
+            rig, character, physics, beds,
+            interaction: sift?.interaction, examine: sift?.examine, imprints,
+        })
+        : null;
+    let nearSpot = null;    // the pile under the player, or null
+
+    window.addEventListener("keydown", (e) => {
+        if (!crouch) return;
+        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
+            prompt.show(false);
+            crouch.enter(nearSpot);
+        } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
+            crouch.leave();
+        }
+    });
+
     engine.runRenderLoop(() => {
         const now = performance.now();
         let dtMs = now - prev;
@@ -222,9 +277,23 @@ export async function run(canvas) {
         pollInput();
         const tFrame = performance.now();
 
-        character.update(dt, rig);
-        clampToPlayRect(character.position);
-        if (contact) contact.update(dt);
+        // Crouched, the walker is frozen and everything the stones touch keeps
+        // running — which is the point of being in this scene. The sand sim is
+        // still only stepping because something is disturbing it; while sifting
+        // that something is the bed rather than the boots.
+        const knelt = crouch ? crouch.update(dt) : false;
+        if (!knelt) {
+            character.update(dt, rig);
+            clampToPlayRect(character.position);
+            if (contact) contact.update(dt);
+        }
+
+        // Proximity for the crouch prompt. spotAt uses the crown rather than
+        // the rim — standing on the bank's face is not standing at the bed.
+        nearSpot = crouch && !crouch.engaged
+            ? spotAt(character.position.x, character.position.z)
+            : null;
+        prompt.show(!!nearSpot);
 
         rig.update(dt, character.position);
         sky.update();
@@ -253,7 +322,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble,
+        deform, contact, scribble, beds, physics, crouch, sift, imprints, imprints,
         S, input, perfStats: stats,
     };
 }
