@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tools/registry-check.mjs && node tools/import-check.mjs && node tools/wiring-check.mjs && node tools/beach-profile-check.mjs && node tools/sift-pad-check.mjs && node tools/bed-load-check.mjs && node tools/sift-physics-check.mjs && node tools/imprint-check.mjs && node tools/sift-tools-check.mjs && node tools/rock-material-check.mjs && node tools/raymarch-test.mjs && node tools/glsl-check.mjs && node tools/settings-check.mjs && node tools/package-check.mjs",
+    "test": "node tools/registry-check.mjs && node tools/import-check.mjs && node tools/wiring-check.mjs && node tools/beach-profile-check.mjs && node tools/sift-pad-check.mjs && node tools/bed-load-check.mjs && node tools/sift-physics-check.mjs && node tools/imprint-check.mjs && node tools/sift-tools-check.mjs && node tools/rock-material-check.mjs && node tools/raymarch-test.mjs && node tools/glsl-check.mjs && node tools/deform-uniform-check.mjs && node tools/settings-check.mjs && node tools/package-check.mjs",
     "test:registry": "node tools/registry-check.mjs",
     "test:imports": "node tools/import-check.mjs",
     "test:wiring": "node tools/wiring-check.mjs",
@@ -21,6 +21,7 @@
     "test:rockmat": "node tools/rock-material-check.mjs",
     "test:raymarch": "node tools/raymarch-test.mjs",
     "test:glsl": "node tools/glsl-check.mjs",
+    "test:deformuni": "node tools/deform-uniform-check.mjs",
     "test:settings": "node tools/settings-check.mjs",
     "test:package": "node tools/package-check.mjs"
   },

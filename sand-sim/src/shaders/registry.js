@@ -252,8 +252,16 @@ void main() {
         float d = length(q);
         if (d > 1.55) { continue; }
 
-        float ang = atan(q.y, q.x);
-        float wob = 1.0 + cc.z * 0.22 * vnoise2(vec2(cos(ang), sin(ang)) * 2.7 + cc.w);
+        // atan(0, 0) is UNDEFINED in GLSL, and (0, 0) is exactly the texel at a
+        // brush's centre — the one texel every brush is guaranteed to write.
+        // A NaN there propagates wob -> dn -> core -> dep, and clamp() of a NaN
+        // is implementation-defined, so the deepest point of every mark is the
+        // least predictable one. The rim wobble is a cosmetic angular term; at
+        // d = 0 there is no angle to speak of, so any fixed value is correct.
+        float ang = (d > 1e-6) ? atan(q.y, q.x) : 0.0;
+        // And keep the divisor away from zero: wob is 1 +/- 0.22 by construction,
+        // but a bad edge or seed would make d / wob a second NaN source.
+        float wob = max(1.0 + cc.z * 0.22 * vnoise2(vec2(cos(ang), sin(ang)) * 2.7 + cc.w), 0.05);
         float dn = d / wob;
 
         float core = 1.0 - smoothstep(0.42, 1.0, dn);

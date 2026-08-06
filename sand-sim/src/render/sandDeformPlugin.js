@@ -9,6 +9,10 @@
  * wetness channel) darkens hard — so a trail on WebGL reads as a trail, just a
  * tonal one rather than a carved one.
  *
+ * The normal is tilted by the buffer's slope as well. That is not displacement
+ * and it costs four taps; it is what makes a centimetre-deep rock dent visible
+ * at all, since as albedo alone such a dent is under one percent.
+ *
  * The toroidal UV (`fract(worldXZ / size)`) and the window falloff are the
  * byte-same formulas as `lib/deform.wgsl`.
  */
@@ -74,6 +78,7 @@ export class SandDeformPlugin extends MaterialPluginBase {
             ubo: [
                 { name: "sandDeformCenter", size: 2, type: "vec2" },
                 { name: "sandDeformSize", size: 1, type: "float" },
+                { name: "sandDeformTexel", size: 1, type: "float" },
                 { name: "sandWetColor", size: 3, type: "vec3" },
                 { name: "sandWaterlineZ", size: 1, type: "float" },
                 { name: "sandWetNear", size: 1, type: "float" },
@@ -83,6 +88,7 @@ export class SandDeformPlugin extends MaterialPluginBase {
                 #ifdef SAND_DEFORM
                     uniform vec2 sandDeformCenter;
                     uniform float sandDeformSize;
+                    uniform float sandDeformTexel;
                     uniform vec3 sandWetColor;
                     uniform float sandWaterlineZ;
                     uniform float sandWetNear;
@@ -103,6 +109,7 @@ export class SandDeformPlugin extends MaterialPluginBase {
         if (f) {
             uniformBuffer.updateFloat2("sandDeformCenter", f.center.x, f.center.y);
             uniformBuffer.updateFloat("sandDeformSize", f.size);
+            uniformBuffer.updateFloat("sandDeformTexel", f.texel);
             // Re-bound every frame: the field ping-pongs its targets.
             uniformBuffer.setTexture("sandDeformTex", f.texture);
         }
@@ -116,7 +123,12 @@ export class SandDeformPlugin extends MaterialPluginBase {
                     uniform sampler2D sandDeformTex;
                 #endif
             `,
-            CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
+            // CUSTOM_FRAGMENT_BEFORE_LIGHTS, not CUSTOM_FRAGMENT_UPDATE_ALBEDO:
+            // the latter is injected inside `albedoOpacityBlock`, a function
+            // where `normalW` does not exist. This marker sits in main() with
+            // both `surfaceAlbedo` and the finalised `normalW` in scope, and
+            // still runs before anything reads either.
+            CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
                 #ifdef SAND_DEFORM
                 {
                     float sdDep = 0.0;
@@ -128,11 +140,42 @@ export class SandDeformPlugin extends MaterialPluginBase {
                         vec2 sdD = abs(vPositionW.xz - sandDeformCenter) / (sandDeformSize * 0.5);
                         float sdW = 1.0 - smoothstep(0.80, 0.96, max(sdD.x, sdD.y));
                         if (sdW > 0.001) {
-                            vec4 sdF = texture2D(sandDeformTex, fract(vPositionW.xz / sandDeformSize));
+                            vec2 sdUV = fract(vPositionW.xz / sandDeformSize);
+                            vec4 sdF = texture2D(sandDeformTex, sdUV);
                             sdDep = sdF.r * sdW;
                             sdBerm = sdF.g * sdW;
                             sdComp = sdF.b * sdW;
                             sdWetC = sdF.a * sdW;
+
+                            // Tilt the normal by the buffer's own slope.
+                            //
+                            // The ground grid is 2 m, so the fallback cannot
+                            // displace a boot print — but it does not have to.
+                            // A dent is read from its shading, and shading comes
+                            // from the normal, so the normal is where the mark
+                            // has to land. Tonal darkening alone put a 10 mm
+                            // rock dent under 1% of albedo: invisible. The same
+                            // dent as a slope is a degree or two of tilt against
+                            // a low sun, which is exactly what the eye picks up.
+                            //
+                            // Central differences on (berm - depth), one texel
+                            // apart. The beach is near-horizontal, so the tilt
+                            // can be added straight to normalW rather than built
+                            // through a tangent frame.
+                            vec2 sdT = vec2(sandDeformTexel / sandDeformSize, 0.0);
+                            vec4 sdXL = texture2D(sandDeformTex, sdUV - sdT.xy);
+                            vec4 sdXR = texture2D(sandDeformTex, sdUV + sdT.xy);
+                            vec4 sdZD = texture2D(sandDeformTex, sdUV - sdT.yx);
+                            vec4 sdZU = texture2D(sandDeformTex, sdUV + sdT.yx);
+                            float sdHx = (sdXR.g - sdXR.r) - (sdXL.g - sdXL.r);
+                            float sdHz = (sdZU.g - sdZU.r) - (sdZD.g - sdZD.r);
+                            vec2 sdSlope = vec2(sdHx, sdHz) / (2.0 * sandDeformTexel);
+                            // Capped: a brush edge steeper than the sand's angle
+                            // of repose is the sim clamping, not a real wall, and
+                            // an uncapped normal there flips the face black.
+                            float sdMag = length(sdSlope);
+                            if (sdMag > 0.9) sdSlope *= 0.9 / sdMag;
+                            normalW = normalize(normalW - vec3(sdSlope.x, 0.0, sdSlope.y) * sdW);
                         }
                     }
                     #endif

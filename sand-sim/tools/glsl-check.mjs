@@ -42,11 +42,19 @@ check("plugin registers on the material", mat.pluginManager?._plugins?.some?.(
 ) ?? true);
 
 const frag = plugin.getCustomCode("fragment");
-check("fragment injection exists", !!frag && !!frag.CUSTOM_FRAGMENT_UPDATE_ALBEDO);
-check("albedo chunk gated by define",
-    frag.CUSTOM_FRAGMENT_UPDATE_ALBEDO.includes("#ifdef SAND_DEFORM"));
-check("albedo chunk braces balanced",
-    balanced(frag.CUSTOM_FRAGMENT_UPDATE_ALBEDO.replace(/#ifdef[^\n]*|#endif[^\n]*/g, "")));
+// BEFORE_LIGHTS, not UPDATE_ALBEDO: the latter is injected inside
+// `albedoOpacityBlock`, where `normalW` is not in scope. Asserted by name so a
+// move back to that marker fails here rather than at shader compile time on a
+// machine no check runs on.
+const shade = frag?.CUSTOM_FRAGMENT_BEFORE_LIGHTS;
+check("fragment injection exists", !!shade);
+check("shading chunk gated by define", shade.includes("#ifdef SAND_DEFORM"));
+check("shading chunk braces balanced",
+    balanced(shade.replace(/#ifdef[^\n]*|#endif[^\n]*/g, "")));
+check("shading chunk writes both albedo and normal",
+    shade.includes("surfaceAlbedo") && shade.includes("normalW ="));
+check("normal read is not injected where normalW is out of scope",
+    !frag.CUSTOM_FRAGMENT_UPDATE_ALBEDO);
 check("vertex injection absent (fragment-only by design)",
     plugin.getCustomCode("vertex") === null);
 
