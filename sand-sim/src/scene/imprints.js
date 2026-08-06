@@ -6,7 +6,7 @@
  *
  * Two things press the sand:
  *
- *   1. **The bed, at placement.** 540 stones have been resting there; the sand
+ *   1. **The bed, at placement.** Hundreds of stones have been resting there; the sand
  *      under them should already be dented. Every resting position is in the
  *      bed file, so this is derived rather than authored — no bake step, no
  *      asset, just a pass over the transforms the spot was placed with.
@@ -42,10 +42,8 @@
  * player comes back to a spot. Nothing about that needs a shader touched.
  */
 
-import {
-    SpotImprint, bakeBedImprint, BED_PRESS, IMPRINT_HALF,
-} from "../../../shared/spotImprint.js";
-import { SIFT_SPOTS } from "../../../shared/pileField.js";
+import { SpotImprint, bakeBedImprint } from "../../../shared/spotImprint.js";
+import { SIFT_SPOTS } from "../../../shared/siftPad.js";
 import { U } from "./siftingBeds.js";
 
 /**
@@ -61,6 +59,28 @@ const IMPACT_SPEED = 0.35;
 /** How deep an impact presses, against a resting stone's BED_PRESS. */
 const IMPACT_PRESS = 0.6;
 
+/**
+ * Brushes drawn per frame while replaying a bed's dents.
+ *
+ * The field takes 96 a frame and shares that budget with footfalls and the surf
+ * wake, so a bed cannot have all of it: a boot that fails to print because a bed
+ * was being redrawn is a worse trade than a bed that finishes arriving a fifth
+ * of a second later. At 56 a frame a 620-stone bed lands in 11 frames.
+ */
+const REPLAY_BUDGET = 56;
+
+/**
+ * How wide a resting stone's dent is drawn, as a multiple of its radius.
+ *
+ * The field is 2048 texels over 80 m — 3.9 cm each — and a bed stone is about
+ * 6 cm across, so a stone gets two or three texels. That is the honest limit,
+ * and it is the right one: what a bed of pebbles does to sand is not a field of
+ * individual craters, it is a surface that has been worked over. Wider than the
+ * stone by a little so neighbouring dents join up rather than aliasing into
+ * isolated dots.
+ */
+const REST_BRUSH = 1.8;
+
 export class Imprints {
     /**
      * @param terrain  wrapped, not modified — see `heightAt` below
@@ -72,25 +92,41 @@ export class Imprints {
         // render targets the field is off (webglApp warns and carries on), and
         // the imprint should still be felt even when it cannot be seen.
         this.deform = deform;
+        this.beds = beds;
         this.layers = new Map();
+        /** Presses waiting to be drawn, newest bed first. See `drain`. */
+        this._queue = [];
+        this._radiusOf = new Map(
+            (beds?.archetypeList ?? []).map((a) => [a.name, a.radius])
+        );
 
         for (const spot of SIFT_SPOTS) {
             const layer = new SpotImprint(spot);
             this.layers.set(spot.id, layer);
-
             // The bed's own imprint, from the transforms this spot was placed
-            // with. A scattered spot has no baked bed; its stones each press
-            // where they landed instead, which `pressScatter` does.
-            const entry = beds?.bedForSpot?.get(spot.id);
-            if (entry && spot.style !== "scattered") {
-                const radiusOf = new Map(
-                    (beds.archetypeList ?? []).map((a) => [a.name, a.radius])
-                );
-                bakeBedImprint(layer, entry.bed, (n) => radiusOf.get(n) ?? 0.05, {
-                    unitScale: U, baseY: entry.baseY, spot,
-                });
-            }
+            // with. Every stone in a single-layer bed is touching the sand, so
+            // unlike the old four-deep heap this is very nearly all of them.
+            this._bakeSpot(spot);
         }
+    }
+
+    /**
+     * Press one spot's current arrangement into its layer, and return it.
+     *
+     * Re-runnable, and re-run on every replay rather than cached from load:
+     * `SiftPhysics.sleep` writes the arrangement the player left back into the
+     * bed, so a bed that has been dug through has different stones in different
+     * places. Pressing is idempotent — the layer combines with `max` — so
+     * repeating it deepens nothing; it only adds where stones have moved to,
+     * which is exactly right, because where they moved FROM should stay dug.
+     */
+    _bakeSpot(spot) {
+        const entry = this.beds?.bedForSpot?.get(spot.id);
+        const layer = this.layers.get(spot.id);
+        if (!entry || !layer) return [];
+        return bakeBedImprint(layer, entry.bed, (n) => this._radiusOf.get(n) ?? 0.05, {
+            unitScale: U, baseY: entry.baseY, spot,
+        });
     }
 
     /** Metres pressed into the sand at a point, across every spot. */
@@ -136,6 +172,10 @@ export class Imprints {
      * not making a hole.
      */
     pressImpacts(awake) {
+        // Both live paths drain: this one runs every frame while crouched, and
+        // `tick` runs every frame while walking. Between them the queue is
+        // always being spent.
+        this.drain();
         if (!awake) return 0;
         const layer = this.layers.get(awake.spot.id);
         if (!layer) return 0;
@@ -159,50 +199,93 @@ export class Imprints {
         return pressed;
     }
 
-    /** Stones strewn on open sand each press where they came to rest. */
-    pressScatter(spotId, stones) {
-        const layer = this.layers.get(spotId);
-        if (!layer) return;
-        for (const s of stones) {
-            layer.press(s.x, s.z, s.radius, s.radius * BED_PRESS);
-        }
-    }
-
     /**
-     * Redraw a spot's remembered dents into the deformation field.
+     * Redraw a spot's remembered dents into the deformation field — one brush
+     * per stone.
      *
      * The field relaxes and is anchored to the player, so by the time someone
      * walks back to a bed they dug yesterday it has forgotten every hole. This
-     * is what makes the memory visible again: on crouching, the layer replays
-     * itself as brushes.
+     * is what makes the memory visible again.
      *
-     * Sampled on a coarse grid rather than replayed stone by stone — the field
-     * takes 96 brushes a frame and a dug bed can hold far more presses than
-     * that, so what is redrawn is the SHAPE of the excavation rather than every
-     * event that made it.
+     * Per stone, and that is the whole point of this version. The first one
+     * resampled the imprint grid at 25 cm and drew 35 blobs 37 cm across, which
+     * is the SHAPE of the excavation — a soft bed-sized dip — and not what was
+     * asked for. Every rock displaces the sand it is sitting in, the way a boot
+     * does, so every rock gets its own brush.
+     *
+     * Queued rather than drawn, because 620 stones is six times the field's
+     * whole per-frame brush budget. `drain` spends it over the next handful of
+     * frames; the bed is arriving during a 1.1 s crouch, or while the player is
+     * still walking towards it, so nothing waits on it.
      */
-    restamp(spotId, { step = 0.25, maxBrushes = 80 } = {}) {
-        const layer = this.layers.get(spotId);
-        if (!layer || !this.deform) return 0;
+    restamp(spotId) {
+        if (!this.deform) return 0;
         const spot = SIFT_SPOTS.find((s) => s.id === spotId);
         if (!spot) return 0;
 
-        const found = [];
-        for (let dx = -IMPRINT_HALF; dx <= IMPRINT_HALF; dx += step) {
-            for (let dz = -IMPRINT_HALF; dz <= IMPRINT_HALF; dz += step) {
-                const d = layer.depthAt(spot.x + dx, spot.z + dz);
-                if (d > 0.004) found.push({ x: spot.x + dx, z: spot.z + dz, d });
-            }
+        const presses = this._bakeSpot(spot);
+        // Replaces rather than appends: a queue with two copies of the same bed
+        // in it draws the same brushes twice and starves whatever is behind it.
+        this._queue = presses;
+        return presses.length;
+    }
+
+    /**
+     * Draw a slice of the queued replay. Called every frame, cheap when empty.
+     *
+     * Shallow and wide, like a footfall: the berm is a fraction of the depth
+     * because displaced sand has to go somewhere, and a rock that has settled
+     * has pushed a little up around itself.
+     */
+    drain() {
+        if (!this._queue.length || !this.deform) return 0;
+        const n = Math.min(REPLAY_BUDGET, this._queue.length);
+        for (let i = 0; i < n; i++) {
+            const p = this._queue[i];
+            this.deform.brush(
+                p.x, p.z, p.radius * REST_BRUSH, p.depth, p.depth * 0.45, 0.25, 0, 0, 1, 0.85
+            );
         }
-        // Deepest first, so if the bed is more dug than the budget allows it is
-        // the real holes that survive the truncation rather than an arbitrary
-        // corner of the grid.
-        found.sort((a, b) => b.d - a.d);
-        const drawn = found.slice(0, maxBrushes);
-        for (const f of drawn) {
-            this.deform.brush(f.x, f.z, step * 1.5, f.d, f.d * 0.4, 0.25, 0, 0, 1, 0.8);
+        this._queue = this._queue.slice(n);
+        return n;
+    }
+
+    /**
+     * Keep the nearest spot's dents drawn while the player can see them.
+     *
+     * `restamp` on crouching is not enough on its own. The dents are most of
+     * what makes a bed read as stones lying IN the sand rather than on it, and
+     * the field relaxes — so a bed you are walking towards would smooth back to
+     * flat sand before you reached it, and only dent once you knelt. Redrawn on
+     * a slow tick instead, which the field's own relaxation absorbs.
+     *
+     * Deliberately cheap and deliberately rare: one spot, a fraction of a
+     * frame's brush budget, once a second and a half. The budget is shared with
+     * footfalls, and a boot that fails to print because a bed was being redrawn
+     * is a worse trade than a dent that fades a little between redraws.
+     */
+    tick(dt, x, z, radius = 14) {
+        this.drain();
+        this._since = (this._since ?? 1e9) + dt;
+        if (this._since < 1.5) return 0;
+        // Never re-enqueue over a replay still in flight. `restamp` REPLACES the
+        // queue, so on a machine slow enough that draining a bed takes longer
+        // than the tick interval, the tail of every bed would be thrown away and
+        // re-queued forever — the far half of the bed would never once be drawn.
+        // At 60 fps the queue is empty in a fifth of a second and this never
+        // fires; it is here for the machine where that is not true.
+        if (this._queue.length) return 0;
+
+        let near = null;
+        let bestD = radius;
+        for (const spot of SIFT_SPOTS) {
+            const d = Math.hypot(x - spot.x, z - spot.z);
+            if (d < bestD) { bestD = d; near = spot; }
         }
-        return drawn.length;
+        if (!near) return 0;
+
+        this._since = 0;
+        return this.restamp(near.id);
     }
 
     /** For the overlay and the checks: how dug the beach is. */

@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { decodeBed } from "../../shared/bedFormat.js";
-import { SIFT_SPOTS, CROWN_RADIUS } from "../../shared/pileField.js";
+import { SIFT_SPOTS, PAD_HALF_X, PAD_HALF_Z } from "../../shared/siftPad.js";
 import { SpotImprint, bakeBedImprint, IMPRINT_HALF, BED_PRESS } from "../../shared/spotImprint.js";
 import { Imprints } from "../src/scene/imprints.js";
 import { castSequence } from "../src/scene/siftingBeds.js";
@@ -29,15 +29,29 @@ const baseY = shoreProfileJS(spot.x, spot.z, 1);
 const imp = new SpotImprint(spot);
 
 check("a fresh layer is untouched sand", imp.maxDepth() === 0 && imp.coverage() === 0);
-check("the layer covers the whole crown", IMPRINT_HALF > CROWN_RADIUS,
-    IMPRINT_HALF + " m half-extent vs " + CROWN_RADIUS + " m crown");
+check("the layer covers the whole pad", IMPRINT_HALF > Math.max(PAD_HALF_X, PAD_HALF_Z),
+    IMPRINT_HALF + " m half-extent vs " + Math.max(PAD_HALF_X, PAD_HALF_Z) + " m pad");
 
-const pressed = bakeBedImprint(imp, bed, radiusOf, { unitScale: 4, baseY, spot });
+const presses = bakeBedImprint(imp, bed, radiusOf, { unitScale: 4, baseY, spot });
+const pressed = presses.length;
 check("the bed presses the sand it rests in", pressed > 0, pressed + " stones of " + bed.count);
-// Only the stones touching the sand press it — a pile 30 cm deep would flatten
-// the crown if all 540 counted.
-check("only the bottom layer presses", pressed < bed.count * 0.6,
+// Nearly every stone presses, and that is the point rather than a slack bound:
+// the bed is ONE layer, so almost all of it is touching the sand. The old
+// four-deep heap passed at under 60%, and this check reading 55% today would
+// mean the bed had quietly gone back to being a heap.
+//
+// Not 100%: `bakeBedImprint` still skips a stone perched more than 1.6 radii up,
+// and a packed layer has a few of those sitting in the gaps.
+check("a single layer presses nearly all of itself", pressed > bed.count * 0.9,
     pressed + " of " + bed.count + " pressed");
+
+// The presses come back, not just their count, because the drawing side wants
+// one brush per stone. Resampling the grid instead is what made the replay a
+// bed-shaped blob rather than the rocks it is made of.
+check("the bake hands back every press it made",
+    presses.every((p) => Number.isFinite(p.x) && Number.isFinite(p.z) && p.radius > 0 && p.depth > 0));
+check("a press is a dent, not a crater",
+    presses.every((p) => p.depth < p.radius), "depth must stay under the stone's own radius");
 
 const deepest = imp.maxDepth();
 check("the imprint is a dent, not a pit", deepest > 0.002 && deepest < 0.05,
@@ -109,5 +123,51 @@ const dug = wrapped.heightAt(s0.x, s0.z);
 check("pressed sand grounds lower", dug < 1 - 0.015,
     "ground at " + dug.toFixed(4) + " after a 20 mm press");
 check("the dent is local", wrapped.heightAt(s0.x + 1.5, s0.z) === 1);
+
+// ---------------------------------------------------------------------------
+// The replay: one brush per stone, spent over several frames
+// ---------------------------------------------------------------------------
+//
+// The first version resampled the imprint grid at 25 cm and drew ~35 brushes
+// 37 cm across, which draws the SHAPE of the excavation and not the rocks that
+// made it. Every rock displaces the sand it sits in, so every rock gets a brush.
+
+const drawn = [];
+const fakeField = { brush: (x, z, r, depth) => drawn.push({ x, z, r, depth }) };
+const radiusList = castSequence().map((c) => ({ name: c.name, radius: c.sizeMetres * 0.5 }));
+const replay = new Imprints(flat, {
+    bedForSpot: new Map([[s0.id, { bed, baseY: 0 }]]),
+    archetypeList: radiusList,
+}, fakeField);
+
+const queued = replay.restamp(s0.id);
+check("a replay queues one press per resting stone", queued > bed.count * 0.9,
+    queued + " of " + bed.count);
+check("nothing is drawn before it is drained", drawn.length === 0);
+
+const first = replay.drain();
+check("a drain spends a bounded slice", first > 0 && first < queued,
+    first + " brushes of " + queued);
+let guard = 0;
+while (replay._queue.length && guard++ < 100) replay.drain();
+check("the whole bed lands within a handful of frames", replay._queue.length === 0 && guard < 20,
+    (guard + 1) + " frames");
+check("every stone got its own brush", drawn.length === queued,
+    drawn.length + " brushes for " + queued + " stones");
+
+// Stone-scale, not bed-scale. The deformation field is 3.9 cm a texel, so a
+// brush wider than a few of those is drawing the bed rather than a rock.
+const widest = Math.max(...drawn.map((d) => d.r));
+check("brushes are stone-sized", widest < 0.12,
+    "widest " + (widest * 100).toFixed(1) + " cm across the radius");
+check("brushes are dents, not craters", drawn.every((d) => d.depth > 0 && d.depth < 0.05),
+    "deepest " + (Math.max(...drawn.map((d) => d.depth)) * 1000).toFixed(1) + " mm");
+
+// Re-running must not double-draw: `restamp` replaces the queue rather than
+// appending to it, or walking past a bed four times queues it four times.
+replay.restamp(s0.id);
+replay.restamp(s0.id);
+check("a second replay replaces the first", replay._queue.length === queued,
+    replay._queue.length + " queued after two restamps");
 
 process.exit(failures ? 1 : 0);

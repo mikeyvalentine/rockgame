@@ -38,13 +38,17 @@
  *
  * The ground
  * ----------
- * One static box with its top face exactly at the crown height — which is
- * *exact*, not approximate, because the pile levels its own crown into a true
- * horizontal plane (`shared/pileField.js`). rock-sift learned this the hard
- * way and its note is worth repeating: a trimesh following the sand leaves
+ * One static box with its top face exactly at the sand height under the spot —
+ * which is *exact*, not approximate, because the pad levels that patch of beach
+ * into a true horizontal plane (`shared/siftPad.js`). rock-sift learned this the
+ * hard way and its note is worth repeating: a trimesh following the sand leaves
  * convex hulls catching on the internal edges between triangles, and the bed
- * never comes to rest. A box has no internal edges and is exact for flat
- * ground.
+ * never comes to rest. A box has no internal edges and is exact for flat ground.
+ *
+ * It is sized to the PAD, not generously, because level is only true inside the
+ * pad. Past the feather the beach resumes its 2 degree ramp and a wider box
+ * would be a flat shelf under sloping sand — which a stone knocked out of the
+ * bed would come to rest on, visibly buried or visibly hovering.
  */
 
 // Side-effect import: `scene.enablePhysics` / `getPhysicsEngine` are an
@@ -67,6 +71,7 @@ import { PhysicsShapeBox, PhysicsShapeConvexHull } from "@babylonjs/core/Physics
 import { buildHullPoints } from "../../../rock-forge/src/forge/bake.js";
 import { detailedMetrics, SOLVER_LOD } from "../../../rock-forge/src/forge/solverParams.js";
 import { castSequence, U } from "./siftingBeds.js";
+import { PAD_HALF_X, PAD_HALF_Z } from "../../../shared/siftPad.js";
 
 /** Metres. 1:1 — see the header. */
 export const GRAVITY = -9.81;
@@ -224,13 +229,16 @@ export class SiftPhysics {
         beds.setSceneryEnabled(spot.id, false);
         const archByName = new Map((beds.archetypeList ?? []).map((a) => [a.name, a]));
 
-        // Ground: top face exactly at the crown. Sunk half its own height so the
-        // top lands on baseY without arithmetic at every contact.
+        // Ground: top face exactly at the sand. Sunk half its own height so the
+        // top lands on baseY without arithmetic at every contact. Full
+        // dimensions, so this spans the pad's flat region and about half its
+        // feather — see the header on why it is not wider.
         const ground = new Mesh(`siftGround_${spot.id}`, this.scene);
         ground.position.set(spot.x, baseY - 0.5, spot.z);
         ground.isVisible = false;
         const groundShape = new PhysicsShapeBox(
-            Vector3.Zero(), Quaternion.Identity(), new Vector3(8, 1, 8), this.scene
+            Vector3.Zero(), Quaternion.Identity(),
+            new Vector3((PAD_HALF_X + 0.6) * 2, 1, (PAD_HALF_Z + 0.6) * 2), this.scene
         );
         groundShape.material = { friction: 0.85, restitution: 0.02 };
         const groundBody = new PhysicsBody(ground, PhysicsMotionType.STATIC, false, this.scene);

@@ -38,7 +38,7 @@ import { S, onChange } from "../core/settings.js";
 import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "../core/perf.js";
-import { initInput, pollInput, endFrame, input } from "../core/input.js";
+import { initInput, pollInput, endFrame, input, allowPointerLock } from "../core/input.js";
 import { FpsRig } from "../core/camera.js";
 import { CharacterController } from "../character/controller.js";
 import { SnowContact } from "../character/snowContact.js";
@@ -253,15 +253,30 @@ export async function run(canvas) {
         ? new Crouch({
             rig, character, physics, beds,
             interaction: sift?.interaction, examine: sift?.examine, imprints,
+            // Sifting is done with the cursor, so crouching gives it back and
+            // standing up takes it again. `allowPointerLock` is what stops the
+            // canvas click handler from grabbing it straight back — without it
+            // the first click on a stone re-locks and the bed goes dead.
+            pointer: {
+                release() {
+                    allowPointerLock(false);
+                    document.exitPointerLock?.();
+                },
+                restore() {
+                    allowPointerLock(true);
+                },
+            },
         })
         : null;
-    let nearSpot = null;    // the pile under the player, or null
+    // A knelt player leans; they do not turn around. See scene/crouch.js.
+    if (crouch) rig.lookFilter = (pose) => crouch.clampLook(pose);
+    let nearSpot = null;    // the spot under the player, or null
 
     window.addEventListener("keydown", (e) => {
         if (!crouch) return;
-        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
-            prompt.show(false);
-            crouch.enter(nearSpot);
+        // One key, both directions — see Crouch.toggle.
+        if (e.code === "KeyE") {
+            if (crouch.toggle(nearSpot)) prompt.show(false);
         } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
             crouch.leave();
         }
@@ -288,12 +303,15 @@ export async function run(canvas) {
             if (contact) contact.update(dt);
         }
 
-        // Proximity for the crouch prompt. spotAt uses the crown rather than
-        // the rim — standing on the bank's face is not standing at the bed.
+        // Proximity for the crouch prompt. spotAt measures to the pad's flat
+        // region — standing out on the blend is not standing at the bed.
         nearSpot = crouch && !crouch.engaged
             ? spotAt(character.position.x, character.position.z)
             : null;
         prompt.show(!!nearSpot);
+
+        // Keep the nearest bed's dents drawn. Rare and cheap; see Imprints.tick.
+        if (!knelt) imprints?.tick(dt, character.position.x, character.position.z);
 
         rig.update(dt, character.position);
         sky.update();

@@ -18,7 +18,7 @@ import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin.js";
 import HavokPhysics from "@babylonjs/havok";
 
 import { decodeBed } from "../../shared/bedFormat.js";
-import { SIFT_SPOTS } from "../../shared/pileField.js";
+import { SIFT_SPOTS } from "../../shared/siftPad.js";
 import { shoreProfileJS } from "../src/terrain/beachParams.js";
 import { initSiftPhysics, PHYSICS_SUBSTEP_MS } from "../src/scene/siftPhysics.js";
 import { U, createBedArchetypes } from "../src/scene/siftingBeds.js";

@@ -18,6 +18,8 @@ import "@babylonjs/core/Engines/AbstractEngine/abstractEngine.timeQuery";
 import "@babylonjs/core/Engines/WebGPU/Extensions/engine.dynamicTexture.js";
 import { Scene } from "@babylonjs/core/scene";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
 
@@ -26,7 +28,7 @@ import { S, onChange } from "../core/settings.js";
 import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "../core/perf.js";
-import { initInput, pollInput, endFrame, input } from "../core/input.js";
+import { initInput, pollInput, endFrame, input, allowPointerLock } from "../core/input.js";
 import { FpsRig } from "../core/camera.js";
 import { CharacterController } from "../character/controller.js";
 import { SnowContact } from "../character/snowContact.js";
@@ -108,7 +110,6 @@ export async function run(canvas) {
     // against it.
     scene.setRenderingAutoClearDepthStencil(1, false);
     scene.setRenderingAutoClearDepthStencil(2, false);
-    // No stock lights: every material here computes its own lighting.
     scene.ambientColor = new Color3(0, 0, 0);
 
     const rig = new FpsRig(scene, canvas);
@@ -121,6 +122,30 @@ export async function run(canvas) {
     await sky.solve();
     // PBR env (the water's reflections). Fire-and-forget; see attachCube.
     sky.attachCube();
+
+    // ---------------------------------------------------------------- lights
+    // For a long time this path had none, and correctly so: the terrain, sky,
+    // water and spray all compute their own lighting in WGSL, and a stock light
+    // would have been a uniform nothing read.
+    //
+    // The sifting beds changed that. Their stones are ordinary PBR meshes — they
+    // have to be, because they also carry convex hulls and get picked — and a
+    // PBR mesh in a scene with no lights and no reflection texture yet is BLACK.
+    // That is what the beds were, in every screenshot of the deployed WebGPU
+    // build, and it read as a material bug rather than as a missing light.
+    //
+    // Matched to the WebGL path's pair rather than invented, so a stone shades
+    // the same on both renderers.
+    const sun = new DirectionalLight(
+        "sun", new Vector3(-sky.sunDir.x, -sky.sunDir.y, -sky.sunDir.z), scene
+    );
+    sun.diffuse = new Color3(sky.sunColor.r, sky.sunColor.g, sky.sunColor.b);
+    sun.intensity = 2.2;
+
+    const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
+    hemi.diffuse = new Color3(0.55, 0.66, 0.82);
+    hemi.groundColor = new Color3(0.42, 0.40, 0.36);
+    hemi.intensity = 0.35;
 
     // -------------------------------------------------------------- shadows
     const shadows = new ShadowSystem(scene);
@@ -234,15 +259,30 @@ export async function run(canvas) {
         ? new Crouch({
             rig, character, physics, beds,
             interaction: sift?.interaction, examine: sift?.examine, imprints,
+            // Sifting is done with the cursor, so crouching gives it back and
+            // standing up takes it again. `allowPointerLock` is what stops the
+            // canvas click handler from grabbing it straight back — without it
+            // the first click on a stone re-locks and the bed goes dead.
+            pointer: {
+                release() {
+                    allowPointerLock(false);
+                    document.exitPointerLock?.();
+                },
+                restore() {
+                    allowPointerLock(true);
+                },
+            },
         })
         : null;
+    // A knelt player leans; they do not turn around. See scene/crouch.js.
+    if (crouch) rig.lookFilter = (pose) => crouch.clampLook(pose);
     let nearSpot = null;
 
     window.addEventListener("keydown", (e) => {
         if (!crouch) return;
-        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
-            prompt.show(false);
-            crouch.enter(nearSpot);
+        // One key, both directions — see Crouch.toggle.
+        if (e.code === "KeyE") {
+            if (crouch.toggle(nearSpot)) prompt.show(false);
         } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
             crouch.leave();
         }
@@ -306,6 +346,9 @@ export async function run(canvas) {
             ? spotAt(character.position.x, character.position.z)
             : null;
         prompt.show(!!nearSpot);
+
+        // Keep the nearest bed's dents drawn. Rare and cheap; see Imprints.tick.
+        if (!knelt) imprints?.tick(dt, character.position.x, character.position.z);
         // While a dig stroke is held the ground is *changing* every 60 ms;
         // TAA history reprojected across that shows the previous crater
         // shapes as layered translucent facet-ghosts. No history while

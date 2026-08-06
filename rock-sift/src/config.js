@@ -13,11 +13,35 @@ export const GRAVITY = -9.81 * U;
 // repose. BED_RADIUS is no longer a wall, just the radius the bed is expected to
 // occupy: it sizes the gravel ring, the region a sweep can start in, and the
 // distance past which a stone counts as having left the shore.
-export const BED_RADIUS = 0.42;   // metres
-// Stones rain over this whole disc rather than being tipped into the middle, so
-// the bed comes out as a broad field a few stones deep instead of a cone.
-export const POOL_RADIUS = 0.38;  // metres
-export const ROCK_COUNT = 540;
+export const BED_RADIUS = 1.2;   // metres
+// Stones rain over this whole RECTANGLE rather than being tipped into the
+// middle, so the bed comes out as a field rather than a cone.
+//
+// A rectangle, not a disc, for two reasons. The near one: the bed is meant to be
+// ONE tightly packed layer, and a layer's thickness is decided by area — a disc
+// wide enough to hold this many stones one deep is also deeper than a crouched
+// player can reach across. A strip is wide where the hands are and shallow where
+// they are not. The far one: the stones are meant to spread ALONG the beach
+// later rather than sitting in a patch, and a strip is then a bigger
+// POOL_HALF_X rather than a new idea.
+export const POOL_HALF_X = 1.0;   // metres, along the shore
+export const POOL_HALF_Z = 0.55;  // metres, across it
+/**
+ * How many stones. Set against the pool's area, not by taste.
+ *
+ * The old bed was 540 stones over a 0.38 m disc — 0.45 m² — which is about four
+ * layers deep, and it read as a heap you excavate. One layer is the brief now.
+ * `layOutField` packs bounding circles into squares, so a slot costs about
+ * (2r)²: at a mean bounding radius near 33 mm that is ~4.4 cm², and the 2.2 m²
+ * pool holds roughly 500 of them in a single sheet.
+ *
+ * 620 rather than 500 on purpose. An exactly-full sheet of squares leaves the
+ * ~21% of each square that the circle does not cover as visible sand, and stones
+ * are not spheres so the real gaps are wider still. The surplus rains onto that
+ * first sheet and rolls into the gaps, which is what "touching and slightly
+ * overlapping" is — a second tier needs far more than a 24% surplus to form.
+ */
+export const ROCK_COUNT = 620;
 /**
  * How many DISTINCT stones the forge generates. The bed instances these, so this is
  * the variety of the cast, not the size of the pile.

@@ -4,7 +4,7 @@
 import { PhysicsBody, PhysicsMotionType, Quaternion, Vector3 } from "@babylonjs/core";
 import { mulberry32 } from "./noise.js";
 import {
-  FINAL_STEPS, LAYER_STEPS, POOL_RADIUS, SETTLE_DT, SPAWN_GAP, U,
+  FINAL_STEPS, LAYER_STEPS, POOL_HALF_X, POOL_HALF_Z, SETTLE_DT, SPAWN_GAP, U,
 } from "./config.js";
 
 /** Largest distance from the origin over a centred vertex set. */
@@ -46,31 +46,34 @@ export function teleport(scene, body, node, position, rotation) {
 }
 
 /**
- * Shelf-pack every stone into a disc of radius `R`, spilling into further layers
- * once a layer is full. Spacing uses each stone's bounding sphere — a randomly
- * tumbled rock sweeps out its diagonal, not its longest axis, and packing by the
- * latter leaves a third of the bed interpenetrating.
+ * Shelf-pack every stone into a rectangle of half-extents `hx` by `hz`, spilling
+ * into further layers once a layer is full. Spacing uses each stone's bounding
+ * sphere — a randomly tumbled rock sweeps out its diagonal, not its longest
+ * axis, and packing by the latter leaves a third of the bed interpenetrating.
  *
  * The whole field is laid out up front and then poured a *layer* at a time,
  * rather than a fixed-size batch at a time. A batch only ever fills the first
- * couple of rows of the disc, so batch pouring drops every stone into the same
- * strip of ground and builds a cone in the middle of the beach. Pouring by layer
- * rains an even sheet over the entire disc each time, which is what makes a
- * field instead of a heap.
+ * couple of rows, so batch pouring drops every stone into the same strip of
+ * ground and builds a cone in the middle of the beach. Pouring by layer rains an
+ * even sheet over the whole pool each time, which is what makes a field instead
+ * of a heap.
+ *
+ * The pool was a disc until the bed became a single layer; see POOL_HALF_X.
+ * A rectangle also drops the per-slot "am I inside the circle" rejection, so a
+ * sheet now fills to its own edges rather than to an inscribed circle.
  */
-function layOutField(archs, R) {
+function layOutField(archs, hx, hz) {
   const slots = [];
-  let x = -R, z = -R, rowMax = 0, layer = 0;
+  let x = -hx, z = -hz, rowMax = 0, layer = 0;
   let i = 0;
   for (let guard = 0; i < archs.length && guard < archs.length * 60; guard++) {
     const r = archs[i].radius * 1.06;
-    if (x + 2 * r > R) { x = -R; z += 2 * rowMax; rowMax = 0; }
-    if (z + 2 * r > R) { x = -R; z = -R; rowMax = 0; layer++; }
+    if (x + 2 * r > hx) { x = -hx; z += 2 * rowMax; rowMax = 0; }
+    if (z + 2 * r > hz) { x = -hx; z = -hz; rowMax = 0; layer++; }
 
     const cx = x + r, cz = z + r;
     x += 2 * r;
     rowMax = Math.max(rowMax, r);
-    if (Math.hypot(cx, cz) + r > R) continue; // outside the disc — skip the slot
 
     slots.push({ arch: archs[i], x: cx, z: cz, r, layer });
     i++;
@@ -137,9 +140,8 @@ export async function pourAndSettle(scene, archetypes, {
     [picks[i], picks[j]] = [picks[j], picks[i]];
   }
 
-  const R = POOL_RADIUS * U;
   const rocks = [];
-  const slots = layOutField(picks, R);
+  const slots = layOutField(picks, POOL_HALF_X * U, POOL_HALF_Z * U);
   const layers = slots.length ? slots[slots.length - 1].layer + 1 : 0;
 
   for (let layer = 0; layer < layers; layer++) {

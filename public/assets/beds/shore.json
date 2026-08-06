@@ -1,6 +1,6 @@
 {
   "name": "shore",
-  "stones": 540,
+  "stones": 620,
   "variants": [
     "shore-0.bed",
     "shore-1.bed",
@@ -10,8 +10,8 @@
   "world": {
     "U": 4,
     "gravity": -39.24,
-    "bedRadius": 0.42,
+    "bedRadius": 1.2,
     "source": "forge:99:40"
   },
-  "bakedWith": "bake-bed.mjs shore 4 540"
+  "bakedWith": "bake-bed.mjs shore 4 620"
 }

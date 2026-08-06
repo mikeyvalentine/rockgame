@@ -88,7 +88,14 @@ export function createShapeTexture(scene, lib) {
   return tex;
 }
 
-class RockShapePlugin extends MaterialPluginBase {
+/**
+ * Exported for `sand-sim/tools/rock-material-check.mjs`, which cannot get at the
+ * WGSL branch any other way: a material picks its shader language from the
+ * engine, and there is no WebGPU engine in a headless check. The check
+ * constructs the plugin against a material whose language it has set by hand,
+ * which is the only seam between "generated the WGSL" and "ran it on a GPU".
+ */
+export class RockShapePlugin extends MaterialPluginBase {
   constructor(material, opts) {
     // addToPluginList=false is load-bearing. Registering a plugin makes the
     // manager call getCustomCode immediately, and `super()` necessarily runs
@@ -102,7 +109,60 @@ class RockShapePlugin extends MaterialPluginBase {
   }
 
   getClassName() { return "RockShapePlugin"; }
-  isCompatible(shaderLanguage) { return shaderLanguage === ShaderLanguage.GLSL; }
+
+  /**
+   * GLSL always; WGSL only in real-geometry mode.
+   *
+   * This is not a preference, it is a hard gate: `MaterialPluginManager` THROWS
+   * when a plugin is added to a material whose shader language it does not
+   * claim, and `PBRMaterial` picks WGSL by itself the moment the engine is
+   * WebGPU. So a plugin that only speaks GLSL does not degrade on WebGPU — it
+   * takes the whole scene down at construction time.
+   *
+   * The instanced path stays GLSL-only because rock-forge's own lab requires
+   * WebGL 2 anyway (see its `createEngine`), and porting the shape-texture
+   * vertex fetch buys nothing today. Real-geometry mode has to cross, because
+   * sand-sim's primary renderer IS WebGPU.
+   *
+   * The alternative was PBRMaterial's third constructor argument, `forceGLSL`,
+   * which works and costs a CDN fetch of glslang at first compile — an unpinned
+   * third-party script on the critical path of a deployed game, for a shader
+   * that could simply be written twice.
+   */
+  isCompatible(shaderLanguage) {
+    return shaderLanguage === ShaderLanguage.GLSL
+      || (this._real && shaderLanguage === ShaderLanguage.WGSL);
+  }
+
+  /**
+   * Real-geometry mode: the mesh already IS the rock.
+   *
+   * The scheme above exists so one unit sphere can be every rock in the field —
+   * `position` is a unit direction, `vertIndex` says which vertex it is, and the
+   * instance's `rockInst.x` says which row of the shape texture to read. That
+   * pays for itself when thousands of stones share one draw call.
+   *
+   * sand-sim's sifting beds are the other case. There the stone geometry is
+   * baked per archetype by `rock-forge/src/forge/bake.js` and drawn as ordinary
+   * meshes with real positions and real normals, because the same meshes have to
+   * carry convex hulls, be individually pickable, and be driven by Havok. Handed
+   * that mesh, the vertex half of this plugin is not merely unnecessary — it is
+   * actively wrong: it would rescale every real position by a shape-texture
+   * radius, and `vRockTint` would read an attribute that is not bound, come back
+   * zero, and render every stone black.
+   *
+   * So the vertex half is skipped and the fragment half — the whole surfacing
+   * scheme, which is what the forge work was actually for — is kept. What
+   * replaces the missing attributes:
+   *
+   *   vRockNrm   the mesh's own object-space normal
+   *   vRockObj   the mesh's own object-space position, already in metres
+   *   tint       the mesh's vertex colours, which PBR applies to surfaceAlbedo
+   *              before this plugin's hook runs
+   *   vRockVar   a per-material constant; the meshes differ from each other
+   *              already, so the offset only has to decorrelate families
+   */
+  get _real() { return !!this._o.realGeometry; }
 
   // ROCKFORGE_VARIANT is load-bearing even though no GLSL ever reads it.
   //
@@ -123,26 +183,30 @@ class RockShapePlugin extends MaterialPluginBase {
     defines.ROCKFORGE = true;
     defines.ROCKFORGE_VARIANT = this._o.variant ?? 0;
   }
-  getAttributes(attributes) { attributes.push("vertIndex", "rockInst", "rockVar"); }
+  getAttributes(attributes) {
+    if (this._real) return;
+    attributes.push("vertIndex", "rockInst", "rockVar");
+  }
 
   getSamplers(samplers) {
     const o = this._o;
-    samplers.push("shapeTex", "grainTex");
+    samplers.push("grainTex");
+    if (!this._real) samplers.push("shapeTex");
     if (o.colTex) samplers.push("colTex");
     if (o.nrmTex) samplers.push("nrmTex");
     if (o.aoTex) samplers.push("aoTex");
-    if (o.heightTex) samplers.push("heightTex");
+    if (o.heightTex && !this._real) samplers.push("heightTex");
     if (o.varTex) samplers.push("varTex");
   }
 
   bindForSubMesh(uniformBuffer) {
     const o = this._o;
-    uniformBuffer.setTexture("shapeTex", o.shapeTex);
+    if (!this._real) uniformBuffer.setTexture("shapeTex", o.shapeTex);
     uniformBuffer.setTexture("grainTex", o.grainTex);
     if (o.colTex) uniformBuffer.setTexture("colTex", o.colTex);
     if (o.nrmTex) uniformBuffer.setTexture("nrmTex", o.nrmTex);
     if (o.aoTex) uniformBuffer.setTexture("aoTex", o.aoTex);
-    if (o.heightTex) uniformBuffer.setTexture("heightTex", o.heightTex);
+    if (o.heightTex && !this._real) uniformBuffer.setTexture("heightTex", o.heightTex);
     if (o.varTex) uniformBuffer.setTexture("varTex", o.varTex);
   }
 
@@ -155,8 +219,164 @@ class RockShapePlugin extends MaterialPluginBase {
   // untouched, inside a `#version 300 es` shader, and every rock material fails
   // to compile with nothing on screen but the ground. Write ES 3.00 directly.
   // The WebGL 2 check in createEngine() is what makes that safe.
-  getCustomCode(shaderType) {
+  /**
+   * Real-geometry mode, in WGSL. Structurally the same shader as the GLSL
+   * branch below, line for line, minus two things that do not apply:
+   *
+   *   the shape-texture vertex fetch  real geometry has none
+   *   the gem blocks                  `bakeLibrary` draws only plain rock, so
+   *                                   no bed contains a treasure; when treasures
+   *                                   arrive they land here as well as there
+   *
+   * The dialect differences are all mechanical and all mandatory. Varyings are
+   * declared `varying x: T;` in BOTH stages and addressed through
+   * `vertexOutputs.` / `fragmentInputs.`; a texture is two module-scope vars,
+   * the sampler being the texture's name plus `Sampler`; `texture(t, uv)`
+   * becomes `textureSample(t, tSampler, uv)`. `surfaceAlbedo` and `normalW` are
+   * plain `var`s at these injection points in Babylon's WGSL PBR exactly as
+   * they are in its GLSL one, which is what lets the body be a transliteration
+   * rather than a rewrite.
+   */
+  _wgsl(shaderType) {
     const o = this._o;
+    const VARYINGS = `
+varying vRockObj: vec3f;
+varying vRockNrm: vec3f;
+varying vRockVar: vec2f;
+varying vRockTX: vec3f;
+varying vRockTY: vec3f;`;
+
+    if (shaderType === "vertex") {
+      return stripComments({
+        CUSTOM_VERTEX_DEFINITIONS: VARYINGS,
+        CUSTOM_VERTEX_UPDATE_POSITION: `
+#ifdef NORMAL
+vertexOutputs.vRockNrm = normalUpdated;
+#else
+vertexOutputs.vRockNrm = normalize(positionUpdated);
+#endif
+vertexOutputs.vRockVar = vec2f(${f(o.varOffset?.[0] ?? 0)}, ${f(o.varOffset?.[1] ?? 0)});
+vertexOutputs.vRockObj = positionUpdated * ${f(1 / GRAIN_REFERENCE)};`,
+        CUSTOM_VERTEX_MAIN_END: `
+vertexOutputs.vRockTX = normalize(finalWorld[0].xyz);
+vertexOutputs.vRockTY = normalize(finalWorld[1].xyz);
+`,
+      });
+    }
+
+    if (shaderType !== "fragment") return null;
+
+    const sampler = (name) => `var ${name}: texture_2d<f32>;
+var ${name}Sampler: sampler;`;
+
+    return stripComments({
+      CUSTOM_FRAGMENT_DEFINITIONS: `${VARYINGS}
+${sampler("grainTex")}
+${o.colTex ? sampler("colTex") : ""}
+${o.nrmTex ? sampler("nrmTex") : ""}
+${o.aoTex ? sampler("aoTex") : ""}
+${o.varTex ? sampler("varTex") : ""}
+
+fn rockWeights(n: vec3f) -> vec3f {
+    var w = abs(n);
+    w = w * w * w;
+    return w / (w.x + w.y + w.z);
+}
+
+fn rockTri(t: texture_2d<f32>, s: sampler, p: vec3f, w: vec3f) -> vec4f {
+    return textureSample(t, s, p.zy) * w.x
+         + textureSample(t, s, p.xz) * w.y
+         + textureSample(t, s, p.xy) * w.z;
+}
+
+fn rockTriNormal(t: texture_2d<f32>, s: sampler, p: vec3f, n: vec3f, w: vec3f) -> vec3f {
+    var nx = textureSample(t, s, p.zy).xyz * 2.0 - 1.0;
+    var ny = textureSample(t, s, p.xz).xyz * 2.0 - 1.0;
+    var nz = textureSample(t, s, p.xy).xyz * 2.0 - 1.0;
+    nx = vec3f(nx.xy + n.zy, abs(nx.z) * n.x);
+    ny = vec3f(ny.xy + n.xz, abs(ny.z) * n.y);
+    nz = vec3f(nz.xy + n.xy, abs(nz.z) * n.z);
+    return normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
+}
+`,
+      CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
+{
+    let nObj = normalize(fragmentInputs.vRockNrm);
+    let w = rockWeights(nObj);
+    let pT = fragmentInputs.vRockObj * ${f(o.texRepeat)} + 0.5;
+    let pG = fragmentInputs.vRockObj * ${f(o.grainScale)} + 0.5;
+
+    ${o.nrmTex
+        ? "let detail = rockTriNormal(nrmTex, nrmTexSampler, pT, nObj, w);"
+        : "let detail = rockTriNormal(grainTex, grainTexSampler, pG, nObj, w);"}
+    let perturbed = normalize(mix(nObj, detail, ${f(o.grainStrength)}));
+
+    let tz = cross(fragmentInputs.vRockTX, fragmentInputs.vRockTY);
+    normalW = normalize(fragmentInputs.vRockTX * perturbed.x
+                      + fragmentInputs.vRockTY * perturbed.y
+                      + tz * perturbed.z);
+
+    ${o.aoTex
+        ? "let ao = rockTri(aoTex, aoTexSampler, pT, w).r;"
+        : "let ao = rockTri(grainTex, grainTexSampler, pG, w).a;"}
+
+    ${o.colTex ? "surfaceAlbedo *= rockTri(colTex, colTexSampler, pT, w).rgb;" : ""}
+    surfaceAlbedo *= mix(1.0, ao, ${f(o.cavity)});
+${o.varTex ? `
+    {
+        let pV = fragmentInputs.vRockObj * ${f(o.varScale)}
+               + vec3f(fragmentInputs.vRockVar, fragmentInputs.vRockVar.x + fragmentInputs.vRockVar.y);
+        let vr = rockTri(varTex, varTexSampler, pV, w);
+
+        surfaceAlbedo *= mix(1.0, 0.55 + 0.9 * vr.r, ${f(o.mottle)});
+        ${o.band > 0 ? `
+        let rim = pow(1.0 - abs(nObj.y), 1.5);
+        let bands = textureSample(varTex, varTexSampler,
+            vec2f(fragmentInputs.vRockObj.y * ${f(o.bandFreq)} + fragmentInputs.vRockVar.x, fragmentInputs.vRockVar.y)).a;
+        surfaceAlbedo *= 1.0 + ${f(o.band)} * (bands - 0.5) * rim;
+        ` : ""}
+        ${o.spot > 0 ? `
+        let spot = smoothstep(0.74, 0.88, vr.b);
+        surfaceAlbedo = mix(surfaceAlbedo, vec3f(${f(o.spotColour[0])}, ${f(o.spotColour[1])}, ${f(o.spotColour[2])}), spot * ${f(o.spot)});
+        ` : ""}
+        ${o.vein > 0 ? `
+        surfaceAlbedo = mix(surfaceAlbedo, vec3f(${f(o.veinColour[0])}, ${f(o.veinColour[1])}, ${f(o.veinColour[2])}), vr.g * ${f(o.vein)});
+        ` : ""}
+    }
+` : ""}
+}
+`,
+    });
+  }
+
+  getCustomCode(shaderType, shaderLanguage = ShaderLanguage.GLSL) {
+    const o = this._o;
+    if (this._real && shaderLanguage === ShaderLanguage.WGSL) return this._wgsl(shaderType);
+    if (shaderType === "vertex" && this._real) {
+      // See `_real`. The mesh is the rock, so nothing here moves a vertex: this
+      // only forwards object space and the normal to the fragment half.
+      return stripComments({
+        CUSTOM_VERTEX_DEFINITIONS: `
+out vec3 vRockObj;
+out vec2 vRockVar;
+out vec3 vRockNrm;
+out vec3 vRockTX;
+out vec3 vRockTY;`,
+        CUSTOM_VERTEX_UPDATE_POSITION: `
+#ifdef NORMAL
+vRockNrm = normalUpdated;
+#else
+vRockNrm = normalize(positionUpdated);
+#endif
+vRockVar = vec2(${f(o.varOffset?.[0] ?? 0)}, ${f(o.varOffset?.[1] ?? 0)});
+vRockObj = positionUpdated * ${f(1 / GRAIN_REFERENCE)};`,
+        CUSTOM_VERTEX_MAIN_END: `
+vRockTX = normalize(finalWorld[0].xyz);
+vRockTY = normalize(finalWorld[1].xyz);
+`,
+      });
+    }
+
     if (shaderType === "vertex") {
       return stripComments({
         CUSTOM_VERTEX_DEFINITIONS: `
@@ -268,7 +488,7 @@ ${o.aoTex ? "uniform sampler2D aoTex;" : ""}
 ${o.varTex ? "uniform sampler2D varTex;" : ""}
 in vec3 vRockObj;
 in vec3 vRockNrm;
-in vec3 vRockTint;
+${o.realGeometry ? "" : "in vec3 vRockTint;"}
 in vec3 vRockTX;
 in vec3 vRockTY;
 in vec2 vRockVar;
@@ -370,14 +590,21 @@ vec3 rockTriNormal(sampler2D t, vec3 p, vec3 n, vec3 w) {
     float ao = rockTri(grainTex, pG, w).a;
     `}
 
-    ${o.colTex ? `
+    ${o.colTex ? (o.realGeometry ? `
+    // Real-geometry mode has no per-instance tint attribute: the stone's colour
+    // is in its vertex colours, and PBR has already folded that into
+    // surfaceAlbedo by the time this runs. So the photograph MULTIPLIES rather
+    // than replaces — which is the same arithmetic as the instanced branch
+    // below, given a tint normalised to average 1.
+    surfaceAlbedo *= rockTri(colTex, pT, w).rgb;
+    ` : `
     // The photograph carries the colour. The per-instance tint is normalised to
     // average 1 in this mode, so it varies stones around the photograph rather
     // than multiplying two colours together and muting the whole field.
     surfaceAlbedo = rockTri(colTex, pT, w).rgb * vRockTint;
-    ` : `
+    `) : (o.realGeometry ? "" : `
     surfaceAlbedo *= vRockTint;
-    `}
+    `)}
     surfaceAlbedo *= mix(1.0, ao, ${f(o.cavity)});
 ${o.varTex ? `
     // proc-rock's texture adders. A photographed albedo tiled across a thousand
@@ -438,7 +665,7 @@ ${o.gem ? `
             `}
             vec3 gemA = vec3(${f(o.gem.colours[0][0])}, ${f(o.gem.colours[0][1])}, ${f(o.gem.colours[0][2])});
             vec3 gemB = vec3(${f(o.gem.colours[1][0])}, ${f(o.gem.colours[1][1])}, ${f(o.gem.colours[1][2])});
-            surfaceAlbedo = mix(gemA, gemB, gt) * vRockTint;
+            surfaceAlbedo = mix(gemA, gemB, gt)${o.realGeometry ? "" : " * vRockTint"};
 
             ${o.gem.flaw > 0 ? `
             // Altered patches: rust in jade, chalky zones in agate.
@@ -509,7 +736,11 @@ ${o.gem ? `
  * @returns {Record<string, PBRMaterial>}
  */
 export function createRockMaterials(scene, lib, {
-  shapeTex, grainTex, grainStrength = 1, bypassShapeTexture = false,
+  shapeTex = null, grainTex, grainStrength = 1, bypassShapeTexture = false,
+  // Draw onto meshes that already carry the rock's geometry, instead of onto a
+  // shared unit sphere reshaped by `shapeTex`. See RockShapePlugin._real.
+  // `lib` is then unused and may be null.
+  realGeometry = false,
   surfaces = null,        // per-archetype photo texture sets from loadRockTextures
   heightTex = null,       // shared displacement source
   heightAspect = 1,       // height source's height/width, to keep its texels square
@@ -626,9 +857,14 @@ export function createRockMaterials(scene, lib, {
       // See prepareDefines: keeps this material's compiled program from being
       // swapped for another archetype's by the effect cache.
       variant: variant++,
+      realGeometry,
+      // Decorrelates the variation map between families. In the instanced path
+      // this is a per-instance attribute; with real geometry the meshes already
+      // differ from each other, so a per-family constant is all it has to do.
+      varOffset: [(variant * 0.618034) % 1, (variant * 0.414214) % 1],
       shapeTex, grainTex,
-      shapeWidth: lib.width,
-      shapeCount: lib.count,
+      shapeWidth: lib?.width ?? 1,
+      shapeCount: lib?.count ?? 1,
       grainScale: a.grain ?? 1.6,   // treasures carry no photo surface, so this is the procedural grain scale
       // A photographed normal map is measured relief and can be applied nearly
       // at full strength. The procedural grain cannot: it is meant only to keep

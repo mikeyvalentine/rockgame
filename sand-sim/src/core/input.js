@@ -26,6 +26,19 @@ export const input = {
 
 const keys = Object.create(null);
 
+/**
+ * Whether a click on the canvas should take pointer lock.
+ *
+ * Off while sifting. rock-sift drives everything from `scene.pointerX/Y`, so
+ * the crouch hands the cursor back — and a click handler that immediately takes
+ * it again would make the bed untouchable in a way that looks like the sifting
+ * being broken rather than like a lock being re-grabbed. See scene/crouch.js.
+ */
+let pointerLockAllowed = true;
+
+/** @param {boolean} on */
+export function allowPointerLock(on) { pointerLockAllowed = on; }
+
 const LOOK_SCALE = 0.0022;
 
 /** @type {(() => void)|null} */
@@ -39,7 +52,7 @@ export function initInput(canvas, hooks) {
     onToggleOverlay = hooks?.onToggleOverlay ?? null;
 
     canvas.addEventListener("click", () => {
-        if (input.locked) return;
+        if (input.locked || !pointerLockAllowed) return;
         // While the mask brush is armed, an unlocked click paints (see
         // tools/maskBrush.js) — don't steal it into pointer lock.
         if (S.maskBrushMode && S.maskBrushMode !== "off") return;
