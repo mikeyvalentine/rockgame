@@ -17,6 +17,7 @@
 // values are compared against a sphere built by MeshBuilder.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import {
   HavokPlugin, Material, MeshBuilder, NullEngine, Scene, StandardMaterial, Vector3, VertexBuffer,
 } from "@babylonjs/core";
@@ -37,7 +38,10 @@ const orientationName = (v) =>
   v === null ? "null" : v === Material.ClockWiseSideOrientation ? "CW" :
   v === Material.CounterClockWiseSideOrientation ? "CCW" : String(v);
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const scene = new Scene(new NullEngine());
 scene.enablePhysics(new Vector3(0, -9.81, 0), new HavokPlugin(true, await HavokPhysics({ wasmBinary })));
 

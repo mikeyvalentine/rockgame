@@ -1,0 +1,100 @@
+# Run every lab's test suite, one job per lab.
+#
+# ## Why one job per lab and not one `npm test`
+#
+# The labs are tuned individually — a physics tuning pass and a sand-sim pass are
+# separate pieces of work, often in separate sessions, and they must be able to go
+# red separately. Chaining them into a single script (which is what `deploy.yml`
+# used to do) loses that: the first `&&` that fails hides every suite behind it, so
+# "tests are red" tells you nothing about which lab to look in, and a lab whose deps
+# fail to install silently takes the rest of the monorepo down with it.
+#
+# One job per lab means the Actions tab reads as a status board — `physics` green,
+# `sand-sim` red — and `fail-fast: false` below is what keeps it that way.
+#
+# ## Coverage this fixes
+#
+# The suite that used to live in `deploy.yml` ran the hub, sand-sim and rock-sift.
+# It did NOT run `rock-forge` or `stone-skipping-physics`, so the solver — the thing
+# the whole game's scoring rests on — had never been tested by CI at all. Both are
+# in the matrix now.
+#
+# ## Adding a lab
+#
+# Add a row to the matrix, and add the directory to `workspaces` in the root
+# package.json. Dependencies come from the single root install either way, so a
+# dependency-free lab (`stone-skipping-physics` is one, and should stay one) needs
+# no special case.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Superseded PR runs are worth cancelling; superseded main runs are not, because a
+# main run is the record of whether that commit was good.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      # THE POINT OF THIS FILE. Without it the first lab to fail cancels the others
+      # and you learn about exactly one problem per push.
+      fail-fast: false
+      matrix:
+        include:
+          # The app shell. Its suite also carries babylon-water's ambient-sync check,
+          # because babylon-water has no package.json of its own.
+          - name: hub + babylon-water
+            dir: .
+            timeout: 10
+          # Dependency-free and fast (~40 s): 40 literature checks, the API and mesh
+          # audits, and the skill ladder.
+          - name: stone-skipping-physics
+            dir: stone-skipping-physics
+            timeout: 10
+          - name: rock-forge
+            dir: rock-forge
+            timeout: 10
+          # Five real Havok runs. The slowest suite in the repo by some way.
+          - name: rock-sift
+            dir: rock-sift
+            timeout: 25
+          # Imports rock-forge source directly (rock-material, bed-load, sift-pad).
+          # That needed an explicit sibling install back when each lab had its own
+          # node_modules; under workspaces the root install covers it.
+          - name: sand-sim
+            dir: sand-sim
+            timeout: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # One install, at the workspace root, for every job. The labs are npm
+      # workspaces now, so there is exactly one lockfile and one hoisted
+      # node_modules — installing per-lab is not just unnecessary, it is what
+      # produced the duplicate-Babylon problem in the first place.
+      #
+      # Each job still runs only its own suite and still fails on its own, which
+      # is what keeps the labs independently tunable. Only the install is shared.
+      - name: Install workspace
+        run: npm ci
+
+      - name: Test
+        working-directory: ${{ matrix.dir }}
+        run: npm test

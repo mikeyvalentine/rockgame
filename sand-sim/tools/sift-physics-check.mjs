@@ -11,6 +11,7 @@
 // cost that.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
@@ -29,8 +30,12 @@ function check(name, ok, detail) {
     if (!ok) failures++;
 }
 
+// Resolved through Node rather than by walking to a hard-coded `../node_modules`.
+// The labs are npm workspaces, so dependencies hoist to the repo root and that
+// path does not exist any more — but it also should never have been assumed:
+// whether a package sits in the lab or the root is npm's business, not a test's.
 const wasmBinary = fs.readFileSync(
-    new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url)
+    createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm")
 );
 const havok = await HavokPhysics({ wasmBinary });
 
