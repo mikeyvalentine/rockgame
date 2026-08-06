@@ -28,8 +28,30 @@ export class SandDeformPlugin extends MaterialPluginBase {
      *   the analytic shore-wetness band.
      */
     constructor(material, field) {
-        super(material, "SandDeform", 200, { SAND_DEFORM: false, SAND_DEFORM_TEX: false });
+        super(material, "SandDeform", 200, {
+            SAND_DEFORM: false, SAND_DEFORM_TEX: false, SAND_DEFORM_DEBUG: false,
+        });
         this._field = field;
+        // `?deform=debug` paints the sand with the deformation buffer's own
+        // channels instead of shading by them: red = depth, green = berm,
+        // blue = wetness. Nothing subtle to judge — brushed sand is bright,
+        // unbrushed sand is black, and a buffer that is not being written is
+        // black everywhere.
+        //
+        // It is here rather than in a scratch file because the question it
+        // answers cannot be answered from this side. The deformation renders
+        // nothing under the software driver this project is developed on, with
+        // every diagnostic reporting health: plugin attached, both defines set,
+        // brushes staged and consumed, both ping-pong targets ready with no
+        // compilation error, and half-float render AND linear filtering both
+        // supported. Either the driver is dropping the writes, or the sim is
+        // genuinely broken on WebGL — and one look at this on real hardware is
+        // the difference.
+        // Guarded: `tools/glsl-check.mjs` constructs this plugin under a
+        // NullEngine, where there is no `location` — and it caught the
+        // unguarded version on the first run.
+        this._debug = typeof location !== "undefined"
+            && new URLSearchParams(location.search).get("deform") === "debug";
         this._enable(true);
     }
 
@@ -40,6 +62,7 @@ export class SandDeformPlugin extends MaterialPluginBase {
     prepareDefines(defines) {
         defines.SAND_DEFORM = true;
         defines.SAND_DEFORM_TEX = !!this._field;
+        defines.SAND_DEFORM_DEBUG = this._debug;
     }
 
     getSamplers(samplers) {
@@ -120,6 +143,16 @@ export class SandDeformPlugin extends MaterialPluginBase {
                         -(vPositionW.z - sandWaterlineZ) + sdTide
                     );
                     float sdWet = max(sdShore, sdWetC);
+                    #ifdef SAND_DEFORM_DEBUG
+                        // See the constructor. Gains are large on purpose: this
+                        // is a yes/no about whether the buffer holds anything,
+                        // not a picture of the sand.
+                        surfaceAlbedo = vec3(
+                            clamp(sdDep * 4.0, 0.0, 1.0),
+                            clamp(sdBerm * 8.0, 0.0, 1.0),
+                            clamp(sdWetC, 0.0, 1.0)
+                        );
+                    #else
                     surfaceAlbedo = mix(surfaceAlbedo, sandWetColor, sdWet * 0.9);
                     // (The analytic pebble band that lived here was removed
                     // with the WGSL band — the default beach is all sand.)
@@ -128,6 +161,7 @@ export class SandDeformPlugin extends MaterialPluginBase {
                     surfaceAlbedo *= 1.0 - clamp(sdDep * 1.9, 0.0, 1.0) * 0.35;
                     surfaceAlbedo *= 1.0 + clamp(sdBerm * 5.0, 0.0, 1.0) * 0.10;
                     surfaceAlbedo *= 1.0 - sdComp * 0.18;
+                    #endif
                 }
                 #endif
             `,

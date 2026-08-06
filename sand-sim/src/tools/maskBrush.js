@@ -12,7 +12,7 @@
 import "@babylonjs/core/Culling/ray.js";
 
 import { S } from "../core/settings.js";
-import { input } from "../core/input.js";
+import { input, worldToolsAllowed } from "../core/input.js";
 import { marchHeightfield } from "./raymarch.js";
 
 const CHANNEL = { "pebble+": 0, "pebble-": 0, "wet+": 1, "wet-": 1 };
@@ -28,7 +28,11 @@ export function initMaskBrush(canvas, scene, camera, heightAt, maskPaint) {
     let painting = false;
     let lastStamp = 0;
 
-    const modeActive = () => S.maskBrushMode && S.maskBrushMode !== "off";
+    // `worldToolsAllowed` is false while sifting: the brush paints on UNLOCKED
+    // clicks, and the crouch unlocks the pointer on purpose so the cursor can
+    // work the bed. Without this, every click on a stone also painted the mask.
+    const modeActive = () => worldToolsAllowed()
+        && S.maskBrushMode && S.maskBrushMode !== "off";
 
     const paintAt = () => {
         // Throttled: a stamp uploads the mask texture, and 60/s of that is

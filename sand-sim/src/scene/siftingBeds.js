@@ -166,6 +166,9 @@ export function createBedArchetypes(scene, opts = {}, materials = {}, photo = fa
         mesh.material = material;
         mesh.isPickable = false;
         mesh.position.set(0, -50, 0);
+        // Instances made off this source inherit nothing, so the group is set
+        // here as well and copied at `createInstance` — see siftPhysics.wake.
+        mesh.renderingGroupId = opts.renderingGroupId ?? 0;
 
         // Farthest vertex from the origin. The sweep reads it to find the top
         // of the pile near the hand.
@@ -297,7 +300,9 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
     // The forge's materials and their photographed surfaces. An await, and the
     // reason this whole function is one: it belongs behind the loading screen
     // with Havok and the hulls, not in front of the player.
-    const { byFamily, photo, notes } = await createBedMaterials(scene);
+    const { byFamily, photo, notes } = await createBedMaterials(scene, {
+        forge: opts.forgeMaterial !== false,
+    });
     if (notes.length) console.info("[sand-sim] rock surfaces:", notes.join("; "));
 
     const archetypes = createBedArchetypes(scene, opts, byFamily, photo);
@@ -363,6 +368,7 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
             mesh.material = arch.material;
             mesh.isPickable = false;
             mesh.receiveShadows = true;
+            mesh.renderingGroupId = opts.renderingGroupId ?? 0;
             // NOT a static buffer: while this spot is crouched at, the live
             // body transforms are written straight back into `buf` every frame
             // and re-uploaded. Static would pin it and the stones would never

@@ -29,7 +29,7 @@ import { S, onChange } from "../core/settings.js";
 import {
     sample, checkSpike, stats, mark, installDrawCounter, endFrameDraws,
 } from "../core/perf.js";
-import { initInput, pollInput, endFrame, input, allowPointerLock } from "../core/input.js";
+import { initInput, pollInput, endFrame, input, allowPointerLock, allowWorldTools } from "../core/input.js";
 import { FpsRig } from "../core/camera.js";
 import { CharacterController } from "../character/controller.js";
 import { SnowContact } from "../character/snowContact.js";
@@ -237,7 +237,27 @@ export async function run(canvas) {
     // The stones on the piles: baked beds from rock-sift, drawn as scenery on
     // each crown. No physics — the bed only wakes when the player crouches.
     await loading.phase("laying the beds", 0.72);
-    const beds = await buildSiftingBeds(scene, terrain);
+    // Group 1, with the terrain, NOT the default 0.
+    //
+    // This path splits the scene into three rendering groups — 0 sky, 1 opaque,
+    // 2 alpha — and only group 0 still auto-clears depth. A mesh that does not
+    // say which group it is in lands in 0, which means the stones were being
+    // drawn with the SKY: before the terrain they lie on, and writing depth
+    // into a buffer that the opaque pass then does not clear. The WebGL path
+    // has no groups at all, so nothing there ever said this was wrong.
+    //
+    // `?beds=0` skips them entirely and `?forge=0` draws them with a plain
+    // material instead of the forge one. Two URL flags rather than two deploys:
+    // WebGPU cannot be run in the dev container (the software adapter refuses
+    // every mappedAtCreation buffer, so no texture ever uploads and no material
+    // ever compiles), so when this path misbehaves on a real GPU the fastest
+    // way to find out whether the beds are involved is to be able to turn them
+    // off from the address bar.
+    const q = new URLSearchParams(location.search);
+    const beds = q.get("beds") === "0" ? null : await buildSiftingBeds(scene, terrain, {
+        renderingGroupId: 1,
+        forgeMaterial: q.get("forge") !== "0",
+    });
     if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
 
     // Behind the loading screen, so the crouch is a camera move and not a load.
@@ -267,10 +287,14 @@ export async function run(canvas) {
             pointer: {
                 release() {
                     allowPointerLock(false);
+                    // The world's cursor tools go with it: while sifting, the
+                    // only thing allowed to disturb the sand is the stones.
+                    allowWorldTools(false);
                     document.exitPointerLock?.();
                 },
                 restore() {
                     allowPointerLock(true);
+                    allowWorldTools(true);
                 },
             },
         })

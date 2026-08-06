@@ -36,8 +36,40 @@ const keys = Object.create(null);
  */
 let pointerLockAllowed = true;
 
+/**
+ * True while the player is sifting a bed.
+ *
+ * The cursor belongs to the bed then, not to the world, so the world's tools
+ * must not see it. Enforced HERE rather than at each tool, because "sifting"
+ * and "not digging" were previously two separate implicit facts — the dig tool
+ * checked `input.locked`, and the app happened to skip `dig.update()` while
+ * knelt — and neither of them says what the rule is. A tool added later would
+ * inherit neither.
+ *
+ * It also closes a hole those two gates did not: crouching RELEASES pointer
+ * lock so the cursor can drive the sweep, and the mask brush paints on
+ * *unlocked* clicks. Every click on a stone was a click on the mask brush too,
+ * whenever it was armed.
+ */
+let worldTools = true;
+
 /** @param {boolean} on */
 export function allowPointerLock(on) { pointerLockAllowed = on; }
+
+/**
+ * Turn the world's cursor tools (dig, mask brush) off while sifting.
+ * @param {boolean} on
+ */
+export function allowWorldTools(on) {
+    worldTools = on;
+    // Not just refused from now on — a button already held must not stay held
+    // across the transition, or a dig stroke begun before the crouch carries
+    // into it.
+    if (!on) input.dig = false;
+}
+
+/** False while sifting — the dig tool and the mask brush both check this. */
+export function worldToolsAllowed() { return worldTools; }
 
 const LOOK_SCALE = 0.0022;
 
@@ -69,7 +101,7 @@ export function initInput(canvas, hooks) {
     });
 
     document.addEventListener("mousedown", (e) => {
-        if (!input.locked) return;
+        if (!input.locked || !worldTools) return;
         if (e.button === 0) input.dig = true;
     });
 

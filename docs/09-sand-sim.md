@@ -8,6 +8,32 @@ Adapt [SNOWFLOW](https://snowflow-lilac.vercel.app/) — a WebGPU snow particle 
 
 **WebGPU, with a WebGL fallback path** at reduced fidelity (simpler sand, fewer particles).
 
+### WebGL2 is the DEFAULT at boot — a working decision, 2026-08-06
+
+`?webgpu=1` opts into the WGSL path; everything else, including no query string
+at all, gets WebGL2. This is not a change of rendering target and does not
+relitigate the line above — `CLAUDE.md`'s stack rule is untouched, and nothing
+about the WebGPU path is removed.
+
+It is about being able to see a change before shipping it. WebGPU cannot be run
+where this project is worked on: a software adapter refuses every
+`createBuffer({mappedAtCreation})` at any size — 4 MB, 1 MB, 256 KB and 64 KB all
+fail — so no texture uploads, no material compiles, and no screenshot exists.
+WebGL2 runs headlessly under SwiftShader, screenshots, and can be driven by a
+test.
+
+The cost of not having that was measured rather than imagined. In one afternoon
+the WebGPU path shipped: a scene with no lights (PBR stones rendering black), a
+`new Vector3()` whose import was missing (a hard `ReferenceError` at boot), and
+bed meshes left in rendering group 0 — the sky's group, the one that still clears
+depth — so the stones drew ahead of the terrain they lie on. Each was found by a
+person loading the deployed page. None was findable here.
+
+So the work happens on the path that can be verified, and WebGPU is opted into
+when there is real hardware to opt in with. `tools/wgsl-probe/` covers the one
+piece of WebGPU that CAN be checked headlessly: `createShaderModule` needs no
+buffers, so generated WGSL can at least be compiled.
+
 ### Why a fallback is needed
 
 SNOWFLOW requires WebGPU ("Chrome 113+ on a desktop GPU"). Support as of 2026:

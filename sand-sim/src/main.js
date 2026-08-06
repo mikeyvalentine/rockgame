@@ -7,6 +7,9 @@
  * shader-bound (input, controller, gait, settings, overlay, HDRI environment)
  * is shared between them — that boundary is the project's architecture rule.
  *
+ * WebGL2 is the default and WebGPU is opted into with `?webgpu=1` — see
+ * `boot/selectEngine.js` for why that is the way round it is.
+ *
  * If WebGPU device creation itself fails on a machine the probe accepted, the
  * loader retries the page on the WebGL path rather than dying — unless the URL
  * explicitly forced WebGPU.
