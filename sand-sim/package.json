@@ -13,7 +13,7 @@
     "test:imports": "node tools/import-check.mjs",
     "test:wiring": "node tools/wiring-check.mjs",
     "test:profile": "node tools/beach-profile-check.mjs",
-    "test:piles": "node tools/sift-pad-check.mjs",
+    "test:pad": "node tools/sift-pad-check.mjs",
     "test:beds": "node tools/bed-load-check.mjs",
     "test:siftphysics": "node tools/sift-physics-check.mjs",
     "test:imprint": "node tools/imprint-check.mjs",
