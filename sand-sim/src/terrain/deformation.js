@@ -18,11 +18,13 @@
  * construction and written in place.
  */
 
-import { ProceduralTexture } from "@babylonjs/core/Materials/Textures/Procedurals/proceduralTexture";
-import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
-import { Constants } from "@babylonjs/core/Engines/constants";
-import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
-import { Vector2 } from "@babylonjs/core/Maths/math.vector";
+// Explicit .js: `tools/deform-uniform-check.mjs` loads this module under plain
+// node, which (unlike vite) does not resolve extensionless deep imports.
+import { ProceduralTexture } from "@babylonjs/core/Materials/Textures/Procedurals/proceduralTexture.js";
+import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture.js";
+import { Constants } from "@babylonjs/core/Engines/constants.js";
+import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage.js";
+import { Vector2 } from "@babylonjs/core/Maths/math.vector.js";
 
 import { S } from "../core/settings.js";
 import { whenReady } from "../core/gpuUtil.js";
@@ -43,6 +45,16 @@ const MAX_BRUSHES = 96;
 
 /** Seconds of relaxation banked before it is worth applying. See `_relaxOwed`. */
 const RELAX_STEP = 0.4;
+
+/**
+ * Every scalar uniform of the sim pass. The list exists so they can be
+ * registered before the effect compiles — see `_makeTarget`. Kept in sync with
+ * `deformSim.fragment.wgsl` and its GLSL twin by `tools/deform-uniform-check`.
+ */
+export const SIM_FLOATS = [
+    "size", "res", "dt", "brushCount",
+    "refillRate", "maxDepth", "maxBerm", "windAngle",
+];
 
 export class DeformationField {
     /**
@@ -150,7 +162,32 @@ export class DeformationField {
         // The pass writes every texel unconditionally, so clearing first is pure
         // bandwidth.
         pt.autoClear = false;
+
+        // Register EVERY uniform and sampler this pass uses, now, before the
+        // effect is compiled.
+        //
+        // `ProceduralTexture.setFloat` does two things: it stores the value,
+        // and it appends the name to `_uniforms`. But `_uniforms` is only read
+        // once — `isReady()` passes it to `createEffect` and never recreates
+        // the effect unless the *defines* change. Any name first mentioned
+        // after that point has no location in the compiled program, and
+        // `Effect.setFloat` on an unknown name is a silent no-op. `warmUp()`
+        // awaits readiness (compiling the effect) and only then sets the
+        // uniforms, so on WebGL every single one of them was being dropped:
+        // `size` 0, `brushCount` 0, `prevTex` unbound. The sand shaded from a
+        // buffer that never received a brush.
+        //
+        // WebGPU hid this completely — there the uniform block and the
+        // bindings come from reflecting the WGSL source, so the JS-side name
+        // list is not what decides whether a value arrives.
         pt.setTexture("brushTex", this.brushTex);
+        // Replaced with the real previous target every frame; this is only
+        // here so the sampler exists in the program.
+        pt.setTexture("prevTex", this.brushTex);
+        pt.setVector2("center", this.center);
+        pt.setVector2("prevCenter", this._prevCenter);
+        for (const name of SIM_FLOATS) pt.setFloat(name, 0);
+
         return pt;
     }
 
