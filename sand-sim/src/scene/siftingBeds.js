@@ -62,6 +62,7 @@ import { ARCHETYPES } from "../../../rock-forge/src/forge/archetypes.js";
 import { mulberry32 } from "../../../rock-forge/src/forge/rng.js";
 import { decodeBed } from "../../../shared/bedFormat.js";
 import { SIFT_SPOTS } from "../../../shared/pileField.js";
+import { scatterStones } from "../../../shared/scatterField.js";
 
 /**
  * rock-sift's cast, as constants. These are not free parameters: the baked beds
@@ -272,6 +273,46 @@ export function bedInstanceMatrices(bed, origin, baseY, names) {
 }
 
 /**
+ * The scattered option: stones strewn on the shore instead of heaped.
+ *
+ * Same instance buffers, same draw calls — only the transforms come from a seed
+ * rather than a baked file, and each stone sits on the terrain where it lands
+ * rather than on a crown levelled to receive it.
+ */
+function scatterInstanceMatrices(spot, names, archetypes, terrain) {
+    const radiusOf = new Map(archetypes.map((a) => [a.name, a.radius]));
+    const stones = scatterStones(spot, {
+        seed: 4242 + (spot.variant ?? 0) * 101,
+        names,
+        radiusOf: (n) => radiusOf.get(n) ?? 0.05,
+        heightAt: (x, z) => terrain.heightAt(x, z),
+    });
+
+    const counts = new Map();
+    for (const st of stones) counts.set(st.name, (counts.get(st.name) ?? 0) + 1);
+    const buffers = new Map();
+    const cursor = new Map();
+    for (const [n, c] of counts) { buffers.set(n, new Float32Array(c * 16)); cursor.set(n, 0); }
+
+    const m = new Matrix();
+    const scale = Vector3.One();
+    const pos = new Vector3();
+    const rot = new Quaternion();
+    const slots = new Array(stones.length);
+
+    for (const [i, st] of stones.entries()) {
+        pos.set(st.x, st.y, st.z);
+        Quaternion.FromEulerAnglesToRef(st.tilt, st.yaw, st.tilt * 0.5, rot);
+        Matrix.ComposeToRef(scale, rot, pos, m);
+        const at = cursor.get(st.name);
+        m.copyToArray(buffers.get(st.name), at * 16);
+        slots[i] = { name: st.name, slot: at };
+        cursor.set(st.name, at + 1);
+    }
+    return { buffers, slots };
+}
+
+/**
  * Draw every spot's bed on its pile.
  *
  * @param scene
@@ -327,7 +368,9 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
         };
         const baseY = terrain.heightAt(spot.x, spot.z);
         bedForSpot.set(spot.id, { bed, baseY });
-        const { buffers, slots } = bedInstanceMatrices(bed, spot, baseY, names);
+        const { buffers, slots } = spot.style === "scattered"
+            ? scatterInstanceMatrices(spot, names, archetypes, terrain)
+            : bedInstanceMatrices(bed, spot, baseY, names);
         slotsForSpot.set(spot.id, slots);
 
         for (const [name, buf] of buffers) {

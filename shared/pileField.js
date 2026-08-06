@@ -83,7 +83,12 @@ export const SIFT_SPOTS = [
     { id: "shore-w", x: -27.0, z: -7.2, variant: 0 },
     { id: "shore-c", x: -9.5, z: -4.6, variant: 1 },
     { id: "shore-e", x: 11.5, z: -8.4, variant: 2 },
-    { id: "shore-f", x: 28.0, z: -5.1, variant: 3 },
+    // The A/B. Everything else is a baked pile to dig; this one is the same
+    // stones strewn along the shore to be spotted, so the two can be compared
+    // by walking between them under one light and one terrain rather than by
+    // argument. `style: "scattered"` also means no mound: a scatter sits on the
+    // beach as it finds it, which is half the point of trying it.
+    { id: "shore-f", x: 28.0, z: -5.1, variant: 3, style: "scattered" },
 ];
 
 /**
@@ -116,6 +121,10 @@ function dominant(x, z) {
     let cov = 0;
     let spot = null;
     for (const s of SIFT_SPOTS) {
+        // A scattered spot raises no mound — the stones lie on the shore as it
+        // is, which is exactly what makes it cheap: no flat crown to build and
+        // no bed that needs one.
+        if (s.style === "scattered") continue;
         const dx = x - s.x;
         const dz = z - s.z;
         const d = Math.sqrt(dx * dx + dz * dz);

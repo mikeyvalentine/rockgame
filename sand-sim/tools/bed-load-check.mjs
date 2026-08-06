@@ -13,6 +13,11 @@ import { fileURLToPath } from "node:url";
 
 import { decodeBed } from "../../shared/bedFormat.js";
 import { SIFT_SPOTS, CROWN_RADIUS, pileCoverage } from "../../shared/pileField.js";
+
+// One spot is deliberately the scattered A/B — no mound, no crown, no baked
+// bed. The pile checks below are about piles, so they say so rather than
+// quietly asserting something the scattered spot was never meant to satisfy.
+const PILE_SPOTS = SIFT_SPOTS.filter((s) => s.style !== "scattered");
 import { bedInstanceMatrices, U, ROCK_SEED, ARCHETYPE_COUNT } from "../src/scene/siftingBeds.js";
 import { bakeLibrary } from "../../rock-forge/src/forge/bake.js";
 import { ARCHETYPES } from "../../rock-forge/src/forge/archetypes.js";
@@ -92,7 +97,7 @@ let worstRadius = 0;
 let worstBelow = 0;
 let highest = -Infinity;
 
-for (const spot of SIFT_SPOTS) {
+for (const spot of PILE_SPOTS) {
     const bed = beds[spot.variant % beds.length];
     const baseY = shoreProfileJS(spot.x, spot.z, 1);
     const { buffers } = bedInstanceMatrices(bed, spot, baseY, names);
@@ -119,8 +124,8 @@ for (const spot of SIFT_SPOTS) {
     placed += n;
 }
 
-check("every spot's stones are placed", placed === SIFT_SPOTS.length * manifest.stones,
-    placed + " of " + SIFT_SPOTS.length * manifest.stones);
+check("every pile spot's stones are placed", placed === PILE_SPOTS.length * manifest.stones,
+    placed + " of " + PILE_SPOTS.length * manifest.stones);
 
 // The bed must land on the flat crown, not spill down the face — that is the
 // whole reason CROWN_RADIUS is sized clear of rock-sift's BED_RADIUS.
@@ -137,7 +142,7 @@ check("no stone is buried under the crown", worstBelow > -0.1,
 // And the ground it lands on is genuinely flat, sampled where the stones are.
 let crownMin = Infinity;
 let crownMax = -Infinity;
-for (const spot of SIFT_SPOTS) {
+for (const spot of PILE_SPOTS) {
     for (let a = 0; a < Math.PI * 2; a += 0.3) {
         for (const r of [0, worstRadius * 0.5, worstRadius]) {
             const h = shoreProfileJS(spot.x + Math.cos(a) * r, spot.z + Math.sin(a) * r, 1) -
@@ -148,15 +153,21 @@ for (const spot of SIFT_SPOTS) {
     }
 }
 check("the ground under every bed is flat", crownMax - crownMin < 0.03,
-    ((crownMax - crownMin) * 1000).toFixed(1) + " mm across all four crowns");
+    ((crownMax - crownMin) * 1000).toFixed(1) + " mm across the pile crowns");
 
 // Each spot draws a different variant, so the shore does not repeat.
 check("each spot uses its own variant",
     new Set(SIFT_SPOTS.map((s) => s.variant % beds.length)).size === SIFT_SPOTS.length);
 
 // Every spot's centre is fully covered, i.e. the bed is on a pile at all.
-check("every spot is on a pile",
-    SIFT_SPOTS.every((s) => pileCoverage(s.x, s.z) === 1));
+check("every pile spot is on a pile",
+    PILE_SPOTS.every((s) => pileCoverage(s.x, s.z) === 1));
+// And the scattered one is on open beach — no mound under it at all, which is
+// the comparison: stones on the shore as it is, against stones on a bank built
+// to receive them.
+check("the scattered spot raises no mound",
+    SIFT_SPOTS.filter((s) => s.style === "scattered")
+        .every((s) => pileCoverage(s.x, s.z) === 0));
 
 // ---------------------------------------------------------------------------
 // The loud failure
