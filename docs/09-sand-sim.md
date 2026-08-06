@@ -83,7 +83,15 @@ That last point is the whole design. Because it is the beach's own scene:
 
 The ground collider is a single static box with its top face exactly at the crown, and *exact* is the word: levelling the crown made it a true horizontal plane. rock-sift's note on why a trimesh is wrong here still applies — convex hulls catch on the internal edges between triangles and the bed never rests.
 
-Files: `scene/crouch.js` (the transition), `scene/siftPhysics.js` (the two bed states and the swap), tested by `tools/sift-physics-check.mjs`. Both renderers carry it.
+**Sweeping is rock-sift's, not a second copy.** `hand.js`, `examine.js` and `interaction.js` are constructed against sand-sim's camera and the woken bed at `unitScale: 1` — reusable because their scale turned out to be a parameter in all but name (every constant is authored in metres and multiplied by `U` at the point of use). rock-sift's own five Havok tests pass unchanged at the default, which is what says the change was safe.
+
+That needed the awake bed to be pickable: the sweep works by picking the stone under the pointer, and thin instances cannot be picked individually. So the awake spot swaps its scenery for `createInstance` nodes carrying `metadata.rock` — rock-sift's own arrangement — while the other three spots stay on thin instances and cost nothing.
+
+Verified in a browser: picking at screen centre returns a real stone, and a pointer drag across the bed displaces stones by up to 364 mm.
+
+Files: `scene/crouch.js` (the transition), `scene/siftPhysics.js` (the two bed states and the swap), `scene/siftInteraction.js` (the sweep, wired), tested by `tools/sift-physics-check.mjs`. Both renderers carry it.
+
+Not wired yet: the bucket and a sift HUD. Sweeping, carrying and examining are what make a bed a bed; keeping what you find is the economy, and that wants docs/02 read properly first.
 
 **Two things designed for but not yet built:**
 

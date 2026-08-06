@@ -143,10 +143,31 @@ export function createBedArchetypes(scene, opts = {}) {
         // reasoning as rock-sift/src/forgeRocks.js, and its winding-check.
         material.sideOrientation = null;
 
-        // Geometry as data, not as a mesh. Each (archetype, spot) gets its own
-        // Mesh built from this below — see the note there on why they cannot
-        // share one.
-        archetypes.push({ name, vertexData, material, family: shape.archetype, sizeMetres });
+        // A parked source mesh, for the one spot that is awake at a time.
+        //
+        // The scenery draws through thin instances, which cannot be picked
+        // individually — and the sweep works by picking the stone under the
+        // pointer. So a woken bed uses `createInstance` off this: pickable,
+        // carries `metadata.rock`, and is what rock-sift's own interaction
+        // expects.
+        //
+        // Parked below the world rather than disabled, because disabling a
+        // source disables its instances with it — rock-sift's
+        // `parkArchetypeSources` exists for the same reason.
+        const mesh = new Mesh(name, scene);
+        vertexData.applyToMesh(mesh, false);
+        mesh.material = material;
+        mesh.isPickable = false;
+        mesh.position.set(0, -50, 0);
+
+        // Farthest vertex from the origin. The sweep reads it to find the top
+        // of the pile near the hand.
+        let radius = 0;
+        for (let i = 0; i < positions.length; i += 3) {
+            radius = Math.max(radius, Math.hypot(positions[i], positions[i + 1], positions[i + 2]));
+        }
+
+        archetypes.push({ name, mesh, vertexData, material, radius, family: shape.archetype, sizeMetres });
     }
 
     return archetypes;

@@ -54,6 +54,7 @@ import { buildSiftingBeds } from "../scene/siftingBeds.js";
 import { loadSiftPhysics } from "../scene/siftPhysics.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
+import { createSiftInteraction } from "../scene/siftInteraction.js";
 import * as loading from "../core/loading.js";
 
 /** Grid density for the visible beach. 256² over 512 m = 2 m spacing. */
@@ -235,7 +236,15 @@ export async function run(canvas) {
     // One scene. Crouching is a camera move with the bed waking behind it —
     // see scene/crouch.js.
     const prompt = createCrouchPrompt();
-    const crouch = physics ? new Crouch({ rig, character, physics, beds }) : null;
+    // rock-sift's own sweep, carry and examine, constructed against this
+    // camera and this bed — see scene/siftInteraction.js.
+    const sift = physics ? createSiftInteraction(scene, rig.camera, physics) : null;
+    const crouch = physics
+        ? new Crouch({
+            rig, character, physics, beds,
+            interaction: sift?.interaction, examine: sift?.examine,
+        })
+        : null;
     let nearSpot = null;    // the pile under the player, or null
 
     window.addEventListener("keydown", (e) => {
@@ -303,7 +312,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble, beds, physics, crouch,
+        deform, contact, scribble, beds, physics, crouch, sift,
         S, input, perfStats: stats,
     };
 }

@@ -45,6 +45,7 @@ import { buildSiftingBeds } from "../scene/siftingBeds.js";
 import { loadSiftPhysics } from "../scene/siftPhysics.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
+import { createSiftInteraction } from "../scene/siftInteraction.js";
 import { DepthPass } from "../render/depthPass.js";
 import { PostChain } from "../post/postChain.js";
 import { createScribblePass } from "../post/scribblePass.js";
@@ -216,7 +217,15 @@ export async function run(canvas) {
     await loading.phase("waking the stones", 0.75);
     const physics = beds ? await loadSiftPhysics(scene) : null;
     const prompt = createCrouchPrompt();
-    const crouch = physics ? new Crouch({ rig, character, physics, beds }) : null;
+    // rock-sift's own sweep, carry and examine, constructed against this
+    // camera and this bed — see scene/siftInteraction.js.
+    const sift = physics ? createSiftInteraction(scene, rig.camera, physics) : null;
+    const crouch = physics
+        ? new Crouch({
+            rig, character, physics, beds,
+            interaction: sift?.interaction, examine: sift?.examine,
+        })
+        : null;
     let nearSpot = null;
 
     window.addEventListener("keydown", (e) => {
@@ -343,7 +352,7 @@ export async function run(canvas) {
         renderer: "webgpu",
         engine, scene, rig, character, contact, dig, spray, grains, water,
         maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble, beds,
-        physics, crouch,
+        physics, crouch, sift,
         S, input, perfStats: stats,
     };
 }

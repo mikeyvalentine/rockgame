@@ -55,7 +55,11 @@
 import "@babylonjs/core/Physics/joinedPhysicsEngineComponent.js";
 import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
-import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
+// Side-effect import: `Mesh.createInstance` is an augmentation too — the fourth
+// in this project after thinInstanceMesh, engine.dynamicTexture and the physics
+// engine component. This one at least throws a message naming itself; the other
+// three failed silently.
+import "@babylonjs/core/Meshes/instancedMesh.js";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody.js";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsShapeBox, PhysicsShapeConvexHull } from "@babylonjs/core/Physics/v2/physicsShape.js";
@@ -209,14 +213,16 @@ export class SiftPhysics {
         if (!entry) return null;
         const { bed, baseY } = entry;
 
-        // The scenery stays ON. An earlier draft hid it and gave the bodies
-        // geometry-less nodes, so crouching showed bare sand — 540 bodies
-        // simulating invisibly. The stones the player digs through are the very
-        // same thin instances they saw from across the beach; `sync()` below
-        // just writes the live transforms into them. Same forty draw calls
-        // awake or asleep, and no pop at the swap because nothing is swapped.
-        const meshes = beds.meshForSpot?.get(spot.id) ?? null;
-        const slots = beds.slotsForSpot?.get(spot.id) ?? null;
+        // Scenery off, real instances on.
+        //
+        // The previous build drove the thin instances from the bodies. That drew
+        // well and could not be picked — and the sweep works by picking the
+        // stone under the pointer. `createInstance` is pickable, carries
+        // `metadata.rock`, and is what rock-sift's tested interaction expects,
+        // so the awake spot swaps to it. Only one spot is ever awake; the other
+        // three stay on thin instances and cost nothing.
+        beds.setSceneryEnabled(spot.id, false);
+        const archByName = new Map((beds.archetypeList ?? []).map((a) => [a.name, a]));
 
         // Ground: top face exactly at the crown. Sunk half its own height so the
         // top lands on baseY without arithmetic at every contact.
@@ -248,12 +254,13 @@ export class SiftPhysics {
                 bed.quaternions[i * 4 + 2], bed.quaternions[i * 4 + 3]
             );
 
-            // TransformNode, not Mesh: these carry no geometry — the thin
-            // instances draw — and a Mesh would drag the whole render
-            // bookkeeping in for 540 nodes. Measured in the browser, the Mesh
-            // version took ~1.9 s to wake, which is longer than the transition
-            // it was supposed to hide behind.
-            const node = new TransformNode(`stone_${spot.id}_${i}`, this.scene);
+            const source = archByName.get(name);
+            if (!source?.mesh) continue;
+            // InstancedMesh, not Mesh: it shares the source's geometry and is
+            // cheap — rock-sift measures ~28 ms for a whole bed this way, while
+            // a bare Mesh per stone measured 1.9 s in the browser.
+            const node = source.mesh.createInstance(`${name}_i${i}`);
+            node.isPickable = true;
             node.position.copyFrom(pos);
             node.rotationQuaternion = rot.clone();
             // Third argument is startsAsleep, and it has to be true: the bed is
@@ -264,36 +271,27 @@ export class SiftPhysics {
             const body = new PhysicsBody(node, PhysicsMotionType.DYNAMIC, true, this.scene);
             body.shape = hull.shape;
             body.setMassProperties({ mass: hull.massKg });
-            rocks.push({ node, body, archetype: name, index: i });
+            body.setLinearDamping(0.2);
+            body.setAngularDamping(0.4);
+
+            // The shape rock-sift's interaction reads: it picks a mesh, takes
+            // `metadata.rock`, and uses `rock.arch` for the stone's radius and
+            // mass. Matching that contract is what lets the tuned sweep be
+            // reused rather than rewritten.
+            const rock = {
+                node, body, index: i, archetype: name,
+                arch: {
+                    mesh: source.mesh, shape: hull.shape, radius: source.radius,
+                    metrics: { massKgWorld: hull.massKg }, family: hull.family,
+                },
+                unitScale: 1,
+            };
+            node.metadata = { rock };
+            rocks.push(rock);
         }
 
-        this.awake = { spot, rocks, ground, groundBody, groundShape, meshes, slots };
+        this.awake = { spot, rocks, ground, groundBody, groundShape };
         return this.awake;
-    }
-
-    /**
-     * Push the live body transforms into the instance buffers.
-     *
-     * Called once a frame while crouched. 540 matrix writes and one buffer
-     * upload per archetype — against 540 scene nodes, which is what the
-     * alternative costs.
-     */
-    sync() {
-        if (!this.awake) return;
-        const { rocks, meshes, slots } = this.awake;
-        if (!meshes || !slots) return;
-
-        const touched = new Set();
-        for (const r of rocks) {
-            const at = slots[r.index];
-            if (!at) continue;
-            const mesh = meshes.get(at.name);
-            const buf = mesh?.metadata?.matrixBuffer;
-            if (!buf) continue;
-            r.node.computeWorldMatrix(true).copyToArray(buf, at.slot * 16);
-            touched.add(mesh);
-        }
-        for (const mesh of touched) mesh.thinInstanceBufferUpdated("matrix");
     }
 
     /**
@@ -323,12 +321,11 @@ export class SiftPhysics {
             }
         }
 
-        // One last sync so the instances hold exactly where the stones stopped,
-        // then the bodies go and the same instances carry on as scenery.
-        this.sync();
         for (const r of rocks) { r.body.dispose(); r.node.dispose(); }
         groundBody.dispose();
         ground.dispose();
+
+        beds.setSceneryEnabled(spot.id, true);
         // The hulls are shared across wakes and deliberately outlive this.
         const was = this.awake;
         this.awake = null;

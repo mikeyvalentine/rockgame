@@ -21,7 +21,7 @@ import { decodeBed } from "../../shared/bedFormat.js";
 import { SIFT_SPOTS } from "../../shared/pileField.js";
 import { shoreProfileJS } from "../src/terrain/beachParams.js";
 import { initSiftPhysics, PHYSICS_SUBSTEP_MS } from "../src/scene/siftPhysics.js";
-import { U, bedInstanceMatrices } from "../src/scene/siftingBeds.js";
+import { U, createBedArchetypes } from "../src/scene/siftingBeds.js";
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -60,25 +60,14 @@ console.log("     preload: " + hullMs + " ms for 40 convex hulls");
 const spot = SIFT_SPOTS[0];
 const baseY = shoreProfileJS(spot.x, spot.z, 1);
 
-// Stand in for buildSiftingBeds' handle: the same shape, without a GPU. The
-// instance buffers are real, because the woken bed draws through them and a
-// body written into the wrong slot would put one stone's motion on another
-// stone's instance — visible only as a bed that thrashes.
+// Stand in for buildSiftingBeds' handle. The archetypes are the REAL ones —
+// the awake bed instances off their parked source meshes, so a stub would not
+// exercise the path that matters.
 let sceneryOn = true;
-const names = [...new Set(bed.names)];
-const { buffers, slots } = bedInstanceMatrices(bed, spot, baseY, bed.names);
-const fakeMeshes = new Map();
-let uploads = 0;
-for (const [name, buf] of buffers) {
-    fakeMeshes.set(name, {
-        metadata: { matrixBuffer: buf },
-        thinInstanceBufferUpdated: () => { uploads++; },
-    });
-}
+const archetypeList = createBedArchetypes(scene);
 const beds = {
     bedForSpot: new Map([[spot.id, { bed, baseY }]]),
-    meshForSpot: new Map([[spot.id, fakeMeshes]]),
-    slotsForSpot: new Map([[spot.id, slots]]),
+    archetypeList,
     setSceneryEnabled: (id, on) => { sceneryOn = on; },
 };
 
@@ -88,10 +77,9 @@ const wakeMs = Date.now() - tWake;
 
 check("the whole bed wakes", awake.rocks.length === bed.count,
     awake.rocks.length + " of " + bed.count);
-// The scenery stays on: the woken bed IS the scenery, driven live. Hiding it
-// and giving the bodies geometry-less nodes is what made an earlier build show
-// bare sand at the crouch.
-check("the stones stay drawn while the bed is awake", sceneryOn === true);
+// Scenery off while awake: the instances draw instead, and unlike thin
+// instances they can be picked, which is what the sweep needs.
+check("scenery gives way to the awake bed", sceneryOn === false);
 // The number that decides whether the crouch can be a camera move rather than a
 // load. rock-sift measured ~28 ms for the same swap.
 check("waking fits inside the camera move", wakeMs < 500, wakeMs + " ms");
@@ -121,26 +109,23 @@ for (const r of awake.rocks) {
 check("the bed sits on the crown", lowest > -0.1 && highest < 0.35,
     lowest.toFixed(3) + " .. " + highest.toFixed(3) + " m above the crown");
 
-// Every body must write into the instance that was drawing it, and no two into
-// the same one.
-physics.sync();
-check("every stone uploads once per archetype", uploads === buffers.size,
-    uploads + " uploads for " + buffers.size + " archetypes");
-
-const seen = new Set();
-let mismatched = 0;
+// The sweep finds a stone by picking a mesh and reading metadata.rock, so
+// every stone has to be pickable and has to point back at itself.
+let unpickable = 0;
+let unlinked = 0;
 for (const r of awake.rocks) {
-    const at = slots[r.index];
-    const key = at.name + "#" + at.slot;
-    if (seen.has(key)) mismatched++;
-    seen.add(key);
-    const buf = buffers.get(at.name);
-    const dx = buf[at.slot * 16 + 12] - r.node.position.x;
-    const dz = buf[at.slot * 16 + 14] - r.node.position.z;
-    if (Math.hypot(dx, dz) > 1e-5) mismatched++;
+    if (!r.node.isPickable) unpickable++;
+    if (r.node.metadata?.rock !== r) unlinked++;
 }
-check("each body drives its own instance", mismatched === 0,
-    mismatched + " stones on the wrong slot");
+check("every stone can be picked", unpickable === 0, unpickable + " not pickable");
+check("every picked mesh points back at its rock", unlinked === 0, unlinked + " unlinked");
+
+// rock-sift's interaction reads arch.radius and arch.metrics.massKgWorld off
+// the rock it picked; a missing one is a crash mid-drag rather than at boot.
+const badArch = awake.rocks.filter((r) =>
+    !(r.arch?.radius > 0) || !(r.arch?.metrics?.massKgWorld > 0) || !r.arch?.shape).length;
+check("every rock carries the arch the sweep reads", badArch === 0,
+    badArch + " incomplete");
 
 // ---------------------------------------------------------------------------
 // It has to stay put — this is what 1:1 was tested for

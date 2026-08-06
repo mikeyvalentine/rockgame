@@ -52,7 +52,9 @@ export class Crouch {
      * @param physics    a SiftPhysics
      * @param beds       the handle from `buildSiftingBeds`
      */
-    constructor({ rig, character, physics, beds }) {
+    constructor({ rig, character, physics, beds, interaction = null, examine = null }) {
+        this.interaction = interaction;
+        this.examine = examine;
         this.rig = rig;
         this.character = character;
         this.physics = physics;
@@ -132,9 +134,11 @@ export class Crouch {
      * @returns true while the walker should stay frozen.
      */
     update(dt) {
-        // The woken bed draws through the scenery's own instances, so its live
-        // transforms have to be pushed into them every frame.
-        this.physics.sync();
+        // Sifting is live only once the camera has arrived: dragging the bed
+        // around while the view is still travelling reads as the scene
+        // fighting you. rock-sift gates its own the same way.
+        this.interaction?.setEnabled(this.spot !== null && !this.tween);
+        this.examine?.update(dt);
 
         if (!this.tween) return this.spot !== null;
 
