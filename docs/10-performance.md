@@ -67,6 +67,25 @@ Do not rely on the water and sand sims never co-occurring — they are frequentl
 
 This is what buys the throw its budget.
 
+### The water's gate is derived, not fixed — and lingering ripples cost real time
+
+babylon-water has the same gate, and its settle window is **computed from the
+ripple damping** rather than hard-coded, because they are the same fact: the
+gate exists to stop stepping once there is nothing left to integrate, and how
+long that takes is exactly what the damping sets.
+
+This matters because the two were allowed to disagree once. The gate was a fixed
+6 s, chosen when ripples flattened in three. Ripples now persist for tens of
+seconds (they were dying before the run they belong to had finished), and a
+fixed 6 s would have **frozen them mid-spread** — the pond stopping dead with
+rings still on it.
+
+**The trade, stated plainly:** ripples that linger require the sim to keep
+integrating, and that is ~64 MB/frame of ping-pong traffic. Longer ripple life
+directly buys longer wake-time. The settle window is therefore capped (45 s),
+and `RIPPLE.damping` is a live slider on the page so the look and its cost can
+be dialled together on real hardware.
+
 ## Resolution is the biggest lever
 
 On integrated graphics, **render resolution dominates everything else.** Rendering at native Retina on an Iris Plus G7 would be brutal.
