@@ -15,14 +15,9 @@ import { store } from '../lib/store.js';
 const DEV = Boolean(import.meta.env?.DEV);
 const LABS = [
   {
-    name: 'Water',
+    name: 'Skip lab',
     href: '/babylon-water/index.html',
-    note: 'The pond surface — Wallace-style sim, HDRI, splash particles.',
-  },
-  {
-    name: 'Skipping physics',
-    href: '/stone-skipping-physics/demo/index.html',
-    note: 'The 6-DOF flight/skip solver with its 3D viewer.',
+    note: 'The pond and the 6-DOF solver on one page — throw a stone at the real water.',
   },
   {
     name: 'Props',

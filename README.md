@@ -6,15 +6,15 @@ menu, results, leaderboard, profile — plus the database the stats live in, and
 
 | Folder | Lab | Dev URL |
 | --- | --- | --- |
-| `babylon-water/` | the water surface (static page, Babylon via CDN) | http://localhost:5180/babylon-water/index.html |
-| `stone-skipping-physics/` | 6-DOF flight/skip solver + 3D viewer (static page) | http://localhost:5180/stone-skipping-physics/demo/index.html |
+| `babylon-water/` | **the skip lab** — pond surface + the 6-DOF solver throwing at it, one page | http://localhost:5180/babylon-water/index.html |
+| `stone-skipping-physics/` | the solver itself: a dependency-free ES module, no page of its own | — |
 | `props/` | optimized GLB props preview (static page, model-viewer) | http://localhost:5180/props/preview.html |
 | `rock-forge/` | procedural rock geometry + texture set (Vite) | http://localhost:5184 |
 | `rock-sift/` | the shore, sifting, picking a stone (Vite) | http://localhost:5183 |
 | `sand-sim/` | first-person beach sand, WebGPU (Vite) | http://localhost:5185 |
 
 The two static pages are served by the hub's own dev server; the Vite labs have
-their own ports. The menu screen links to all five, and the scribble/pastel dial
+their own ports. The menu screen links to all four, and the scribble/pastel dial
 panel carries its settings across every page (a cookie — localhost cookies
 ignore ports).
 
