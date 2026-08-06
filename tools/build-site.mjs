@@ -38,9 +38,27 @@ const run = (cmd, cwd = ROOT) => {
 };
 
 // ------------------------------------------------------------------- builds
+//
+// Each lab's dependencies are installed here rather than assumed. They used to
+// be assumed, and that is a quiet way to ship a stale site: a lab whose
+// package.json has moved on builds against whatever `node_modules` happens to
+// be lying about, and on a clean machine — CI, or a fresh clone — it simply
+// fails on the first missing import. `npm ci` when there is a lockfile, so what
+// deploys is what the lockfile pins.
+const LABS = ["rock-sift", "rock-forge", "sand-sim"];
+
+function install(dir) {
+  const at = join(ROOT, dir);
+  if (!existsSync(join(at, "package.json"))) return;
+  run(existsSync(join(at, "package-lock.json")) ? "npm ci" : "npm install", at);
+}
+
+install(".");
+for (const lab of LABS) install(lab);
+
 run("npx vite build");
 
-for (const lab of ["rock-sift", "rock-forge", "sand-sim"]) {
+for (const lab of LABS) {
   run(`npx vite build --base=/${lab}/`, join(ROOT, lab));
   cpSync(join(ROOT, lab, "dist"), join(DIST, lab), { recursive: true });
 }
