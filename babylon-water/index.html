@@ -123,8 +123,14 @@
 // size a stone makes travel 0.7-1.0 m/s by deep-water dispersion, and that pins
 // the cell size to roughly 25 mm. Everything below follows from that:
 //
-//   SIZE 24 m / RES 1024  ->  23.4 mm cells
-//   STEPS 1, WAVE_C 1.5   ->  0.78 m/s waves, inside the physical 0.7-1.0 band
+//   SIZE 64 m / RES 1024  ->  62.5 mm cells
+//   STEPS 1, WAVE_C 0.09  ->  0.78 m/s waves, inside the physical 0.7-1.0 band
+//
+// SIZE went 24 -> 64 to hold a WHOLE RUN's ripples at once (see placeWindow).
+// That is free in memory and bandwidth — RES is unchanged, so it is the same
+// 1024^2 pair — and is paid for in cell size, which is bought back with WAVE_C.
+// The earlier note here that "48 m at this cell size needs 2048^2" was assuming
+// the cell size had to stay fixed. It does not; the wave speed does.
 //   damping rescaled      ->  0.995 was per-step at 2 steps/frame, so halving
 //                             the step count needs 0.995^2 to decay the same
 //                             amount per second
@@ -139,7 +145,7 @@
 // fades to zero at the window edge, and what remains is ambient, so there is
 // no join to hide. A skip run's ripples ride along with the stone.
 const RES     = 1024;    // simulation texture size
-const SIZE    = 24;      // interaction WINDOW span in metres (was the whole pond)
+const SIZE    = 64;      // interaction WINDOW span in metres (was the whole pond)
 const HALF    = SIZE / 2;
 // The pond the player sees. docs/01 asks for ~200 m "pending feasibility
 // check against the water sim" — the windowed sim IS that feasibility
@@ -184,14 +190,18 @@ const RIPPLE = window.RIPPLE = { damping: 0.9992 };
  * two-pixel hatch. That is a real regression this file shipped, and it is why
  * this constant is now named and tested rather than inlined.
  *
- * 1.5 buys the margin: the mode stays bounded at ~2x for any damping, so
- * RIPPLE.damping is genuinely free to dial. The cost is wave speed, which drops
- * from 0.98 to 0.78 m/s — still inside the 0.7-1.0 m/s that deep-water
- * dispersion gives real ripples, which is the band this file already cites.
+ * Backing off it buys the margin: well below 2.0 the mode stays bounded at ~1x
+ * for any damping, so RIPPLE.damping is genuinely free to dial.
+ *
+ * The value is not chosen for stability alone — it is what holds the wave speed
+ * at 0.78 m/s now that SIZE is 64 m and a cell is 62.5 mm. Cell size and WAVE_C
+ * trade directly: a wider window means bigger cells, and a lower WAVE_C slows
+ * the wave back down to the physical 0.7-1.0 m/s band. Change one, re-derive
+ * the other; scheme-stability-check.mjs fails if the pair drifts out of band.
  *
  * tools/scheme-stability-check.mjs asserts both halves of that on every test run.
  */
-const WAVE_C = 1.5;
+const WAVE_C = 0.09;
 const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
 const DROP_S  = 0.01;    // his drop strength, in metres of displacement
 
@@ -763,6 +773,11 @@ const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
 // stay exact cell multiples.
 const windowCenter = new BABYLON.Vector2(0, 0);
 const windowTarget = { x: 0, z: 0 };
+/** Quiet time after which the next impact counts as a NEW run, and the window
+ *  is re-placed. Long enough to span a whole skip run (a champion throw is
+ *  ~8 s of contacts) plus the pause before the next throw. */
+const RUN_GAP_MS = 12000;
+let lastImpactAt = -Infinity;
 const passScroll = new BABYLON.Vector2(0, 0);
 
 const DELTA = new BABYLON.Vector2(1 / RES, 1 / RES);
@@ -1477,30 +1492,35 @@ const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 ///                 The spray disc needs metres, so that one is converted at
 ///                 the burst assignment below.
 function stoneImpact(x, z, opts) {
-    // LAZY FOLLOW, not centre-on-impact.
+    // THE WINDOW IS PLACED ONCE PER RUN, AND THEN NEVER MOVED.
     //
-    // The window is 24 m and a skip run is fifty or more, so some of the trail
-    // must fall off the back — that span is not a free parameter (SIZE/RES sets
-    // the wave speed, and 48 m at this cell size needs a 2048^2 pair). What IS
-    // free is which 24 m we keep. Centring the window on each new impact spends
-    // half of it on empty water AHEAD of the stone and throws away trail to
-    // keep it, which is what made the run's earlier rings vanish.
+    // Every scroll destroys trail: content shifted past the edge is gone, and
+    // what scrolls in is zero. So the way to stop ripples being cleared is not
+    // to scroll less cleverly — lazy follow, hysteresis, all of it still cleared
+    // them, just later. It is to not scroll at all while a run is in progress.
     //
-    // So: leave the window alone until the stone nears the leading edge, then
-    // shift only far enough to sit it back at LEAD from centre. The trail keeps
-    // the rest — about 20 m of the 24 instead of 12, and fewer scroll passes.
-    // Hysteresis on top: when the stone does cross LEAD, pull the window to
-    // SETTLE rather than to LEAD, so it does not re-trigger on the very next
-    // impact. Without it a run scrolls roughly once per bounce — and a scroll
-    // is a full 1024^2 pass, ~32 MB, landing inside the 60fps-hard throw window
-    // (docs/10). With it, a 50 m run scrolls about a dozen times instead of
-    // fifty, and the trail behind still averages ~18 m against the old 12.
-    const half = SIZE / 2;
-    const LEAD   = half * 0.70;   // clear of the 8% winFade band and a ring's radius
-    const SETTLE = half * 0.35;
-    const dx = x - windowTarget.x, dz = z - windowTarget.z;
-    if (Math.abs(dx) > LEAD) windowTarget.x = x - Math.sign(dx) * SETTLE;
-    if (Math.abs(dz) > LEAD) windowTarget.z = z - Math.sign(dz) * SETTLE;
+    // That is possible because a run is predictable. `opts.dirX/dirZ` is the
+    // travel direction, known at the FIRST impact, so the window can be dropped
+    // ahead of the stone to cover the whole lane before it gets there. 0.72 of
+    // a half-span downrange is what makes a 50 m run fit: measured against the
+    // USABLE window rather than the raw one, since winFade takes the outer 8%
+    // (5.1 m a side at 64 m), that leaves 49.9 m ahead of the first splash and
+    // 3.8 m behind it. One scroll for the whole run — the placement itself —
+    // against nine with a lazy follow and about fifty when it centred on every
+    // bounce. So every ripple a run makes is still there when it stops.
+    //
+    // A "run" ends when nothing has hit the water for RUN_GAP_MS. The next
+    // impact after that is a new run and gets a new placement — which does
+    // clear the field, correctly: you have thrown somewhere else.
+    const now = performance.now();
+    if (now - lastImpactAt > RUN_GAP_MS) {
+        const dl = Math.hypot(opts.dirX ?? 1, opts.dirZ ?? 0) || 1;
+        const lead = (SIZE / 2) * 0.72;
+        windowTarget.x = x + ((opts.dirX ?? 1) / dl) * lead;
+        windowTarget.z = z + ((opts.dirZ ?? 0) / dl) * lead;
+    }
+    lastImpactAt = now;
+
     const speed  = opts.speed  !== undefined ? opts.speed  : 6;
     const mass   = opts.mass   !== undefined ? opts.mass   : 0.15;
     const angle  = opts.angle  !== undefined ? opts.angle  : Math.PI / 4;
