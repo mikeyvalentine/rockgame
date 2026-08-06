@@ -86,6 +86,30 @@ directly buys longer wake-time. The settle window is therefore capped (45 s),
 and `RIPPLE.damping` is a live slider on the page so the look and its cost can
 be dialled together on real hardware.
 
+### The deviation texture went to 2048² — and that A/B is outstanding
+
+`babylon-water`'s ping-pong pair is now **2048² RGBA32F by default (134 MB), up
+from 1024² (33 MB)**, and `?res=1024` is the fallback. `?res=512` also works.
+Three passes a frame run over it (drop, update, normal), so this is four times
+the fill as well as four times the memory.
+
+It is not a look preference. A stone's real contact patch is 3–15 cm², under a
+tenth of one 62.5 mm cell, so a crater is band-limited to the smallest feature
+the grid can carry and its depth drops to keep the volume honest. That trade is
+**quadratic in cell size**: at 1024 the champion throw's hardest bounce is a
+0.5 mm crater and most of its run is under 0.1 mm, which is below what the
+surface shader shows. At 2048 the same volumes are 2.0 mm and 0.24 mm.
+
+`WAVE_C` is derived from the cell size rather than typed, so changing `res` does
+not silently change the wave speed; `scheme-stability-check.mjs` re-measures all
+three options and fails if any leaves the 0.7–1.0 m/s band.
+
+**This has not been run on the floor machine.** It is the single largest new
+memory and fill cost in the repo and it is a URL flag precisely so the A/B is
+cheap: load the skip lab, throw, record ms with `?res=2048` and `?res=1024`. If
+2048 does not hold 60fps during the throw, the default moves back to 1024 and
+the ripples get their amplitude from a tighter interaction window instead.
+
 ## Resolution is the biggest lever
 
 On integrated graphics, **render resolution dominates everything else.** Rendering at native Retina on an Iris Plus G7 would be brutal.
@@ -140,6 +164,7 @@ What the answer means:
 ## OPEN
 
 - [ ] Measure the water sim on the floor machine — recipe above; idle and active separately, now that the gate exists
+- [ ] **`?res=2048` vs `?res=1024` on the floor machine.** 134 MB vs 33 MB and 4x the fill, against 4x the ripple amplitude. See "The deviation texture went to 2048²" above; the default rides on this number
 - [ ] Run the sand-sim `?webgpu=1` / `?webgl=1` A/B — the decision that unblocks the renderer question
 - [ ] Set the ms budget from that measurement
 - [ ] Decide sweet-spot window width alongside the framerate floor

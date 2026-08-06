@@ -18,7 +18,7 @@
     "deploy": "node tools/build-site.mjs && npx wrangler pages deploy dist --project-name rockgame",
     "preview": "vite preview",
     "install:all": "npm install",
-    "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs && node tools/pinned-cdn-check.mjs && node tools/workspace-check.mjs && node babylon-water/tools/ambient-sync-check.mjs && node babylon-water/tools/scheme-stability-check.mjs && node tools/water-coupling-check.mjs",
+    "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs && node tools/pinned-cdn-check.mjs && node tools/workspace-check.mjs && node babylon-water/tools/page-syntax-check.mjs && node babylon-water/tools/ambient-sync-check.mjs && node babylon-water/tools/scheme-stability-check.mjs && node tools/water-coupling-check.mjs",
     "test:water": "node tools/water-coupling-check.mjs"
   },
   "license": "ISC",
