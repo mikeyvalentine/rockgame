@@ -341,10 +341,11 @@ function rebuild() {
 
 let sim, trailPts, trail, ripples = []
 
-// Wind numbers mirror babylon-water's own defaults, so the demo's stone planes
-// on the same swell the pond page shows. `ambient` is the static import above.
+// THE pond conditions, imported rather than copied. This used to be a local
+// literal; a local literal is how the water page and this lab could have
+// drifted apart without either one looking wrong.
 let waveSource = 'ambient'
-const AMBIENT_WIND = { windStrength: 0.01, windDirDeg: 93, waveScale: 8 }
+const AMBIENT_WIND = ambient.POND_CONDITIONS
 
 $('waveSource').addEventListener('change', (e) => {
   waveSource = e.target.value

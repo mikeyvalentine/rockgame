@@ -34,7 +34,7 @@
 
 import assert from 'node:assert/strict';
 import { StoneSkipSim, THROW_PRESETS } from '../stone-skipping-physics/src/stoneSkipping.js';
-import { makeAmbientWater, sampleAmbient } from '../shared/ambientWater.js';
+import { makeAmbientWater, sampleAmbient, POND_CONDITIONS } from '../shared/ambientWater.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed += 1; console.log(`  ok  ${name}`); };
@@ -183,6 +183,52 @@ test('a full gale costs a champion throw real distance', () => {
     `windStrength 1.0 ran ${gale.dist.toFixed(1)} m against ${glass.dist.toFixed(1)} m on ` +
     `glass — the water is barely coupling into the physics. Chop should change the ` +
     `effective attack angle on every contact.`
+  );
+});
+
+/* ------------------------------------------------------------------ *
+ * 5. Is the flat-water skill ladder still valid at the pond's own
+ *    conditions?
+ * ------------------------------------------------------------------ */
+
+// docs/04's ladder is measured against a flat plane, because the solver package
+// is dependency-free and cannot import the pond. That is only honest while the
+// pond is near-glass. POND_CONDITIONS is currently windStrength 0.01, which the
+// table above shows is indistinguishable from glass — so the ladder holds.
+//
+// If someone dials the pond choppier, this check fails and says so, because at
+// that point every number in docs/04 describes water the game no longer has.
+// Measured: at 0.55 a champion throw loses about half its score.
+const flat = (() => {
+  seed = 0xC0FFEE;
+  const hops = [];
+  for (let i = 0; i < 15; i++) {
+    const sim = new StoneSkipSim({ profile: 'game' });
+    sim.throwStone({
+      ...THROW_PRESETS.steinerThrow,
+      speed: THROW_PRESETS.steinerThrow.speed + jitter(0.5),
+      attackAngleDeg: 20 + jitter(1.5),
+      headingDeg: jitter(3),
+    });
+    sim.simulate({ maxTime: 60 });
+    hops.push(sim.cleanHops);
+  }
+  hops.sort((a, b) => a - b);
+  return hops[7];
+})();
+const pond = ensemble(POND_CONDITIONS.windStrength).hops;
+
+console.log(`  pond conditions: ${JSON.stringify(POND_CONDITIONS)}`);
+console.log(`  champion throw — flat water ${flat} hops · real pond ${pond} hops\n`);
+
+test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
+  const ratio = flat > 0 ? pond / flat : 0;
+  assert.ok(
+    ratio >= 0.75 && ratio <= 1.35,
+    `the pond now scores ${pond} against ${flat} on flat water (${(ratio * 100).toFixed(0)}%). ` +
+    `docs/04's skill ladder is measured on a flat plane, so it no longer describes ` +
+    `this pond. Either re-derive the ladder at POND_CONDITIONS or reconsider the ` +
+    `conditions — see docs/04 "The ladder is a FLAT-WATER measurement".`
   );
 });
 
