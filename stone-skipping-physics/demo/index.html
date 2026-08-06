@@ -94,12 +94,14 @@
     </select>
 
     <h2>Assist (not physics)</h2>
-    <div data-ctl="hopSpeedFraction" data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
-    <!-- max 40: game profile sits at 20, arcade at 32; the old max of 16 was
-         below both, and the slider sync clamps stored values into range, so
-         even choosing those profiles got squashed. -->
-    <div data-ctl="attitudeAssist"   data-min="0" data-max="40"   data-step="0.5"   data-unit="" data-grp="assist"></div>
-    <div data-ctl="bounceSpeedTax"   data-min="0" data-max="0.08" data-step="0.002" data-unit="" data-grp="assist"></div>
+    <!-- The four knobs the skill ladder is tuned on. Ranges bracket every profile:
+         the slider sync CLAMPS stored values into range, so a max below a profile's
+         value silently squashes that profile the moment it is selected. -->
+    <div data-ctl="contactLossScale" data-min="0.02" data-max="1"  data-step="0.01"  data-unit="" data-grp="assist"></div>
+    <div data-ctl="hopSpeedTarget"   data-min="0"    data-max="2"  data-step="0.05"  data-unit=" m/s" data-grp="assist"></div>
+    <div data-ctl="hopFlattenLimit"  data-min="0"    data-max="1"  data-step="0.05"  data-unit="" data-grp="assist"></div>
+    <div data-ctl="attitudeAssist"   data-min="0"    data-max="2000" data-step="25"  data-unit="" data-grp="assist"></div>
+    <div data-ctl="balanceRetention" data-min="0"    data-max="1"  data-step="0.05"  data-unit="" data-grp="assist"></div>
 
     <h2>Preset</h2>
     <select id="preset"></select>
@@ -139,7 +141,7 @@
 
 <script src="https://cdn.babylonjs.com/babylon.js"></script>
 <script type="module">
-import { StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, VERSION, Outcome } from '../src/stoneSkipping.js'
+import { StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, DEFAULT_ENV, VERSION, Outcome } from '../src/stoneSkipping.js'
 import { makeGerstnerWater } from '../src/babylonAdapter.js'
 
 const $ = id => document.getElementById(id)
@@ -158,20 +160,28 @@ $('ver').textContent = 'v' + VERSION
 const throwParams = { ...THROW_PRESETS.strong }
 const stoneParams = { radius: 0.045, thickness: 0.010, aspect: 1.0 }
 const waterParams = { amplitude: 0.0, wavelength: 3.0 }
-// AUDIT #C: these startup values mirror PHYSICS_PROFILES.game exactly. The
-// old attitudeAssist:6 predated the assist's recalibration (it now targets
-// angular momentum; 6 was ~a third of the intended hold) and, because this
-// object OVERRIDES the profile via the env spread below, it silently gutted
-// every profile — that was the "can't get good skip counts" bug.
-const assistParams = { hopSpeedFraction: 0.05, attitudeAssist: 20, bounceSpeedTax: 0.02 }
+// These startup values MUST mirror PHYSICS_PROFILES.game exactly, because this
+// object overrides the profile via the env spread below. Twice now a stale value
+// here has silently gutted every profile and been diagnosed as "the solver can't
+// reach good skip counts" — first attitudeAssist:6 against a profile of 20, then
+// this whole set after the ladder retune replaced the knobs it named. Derived from
+// the profile rather than retyped, so it cannot go stale a third time.
+const ASSIST_KEYS = ['contactLossScale', 'hopSpeedTarget', 'hopFlattenLimit',
+  'attitudeAssist', 'balanceRetention']
+const assistFrom = (name) => {
+  const preset = { ...DEFAULT_ENV, ...(PHYSICS_PROFILES[name] || {}) }
+  return Object.fromEntries(ASSIST_KEYS.map(k => [k, preset[k]]))
+}
+const assistParams = assistFrom('game')
 
 const LABEL = {
   speed: 'Speed', elevationDeg: 'Launch elevation', attackAngleDeg: 'Attack angle',
   spinRPS: 'Spin', bankAngleDeg: 'Bank (roll)', spinAxisTiltDeg: 'Spin-axis tilt',
   releaseHeight: 'Release height', radius: 'Radius', thickness: 'Thickness',
   aspect: 'Aspect (1 = round)', amplitude: 'Wave amplitude', wavelength: 'Wavelength',
-  hopSpeedFraction: 'Rebound', attitudeAssist: 'Attitude hold',
-  bounceSpeedTax: 'Run-length damping',
+  contactLossScale: 'Contact loss (run length)', hopSpeedTarget: 'Hop height',
+  hopFlattenLimit: 'Hop flatten limit', attitudeAssist: 'Attitude hold',
+  balanceRetention: 'Balance (rock)',
 }
 const GROUP = { throw: throwParams, stone: stoneParams, water: waterParams, assist: assistParams }
 
@@ -351,10 +361,7 @@ function makeSim() {
 }
 $('profile').addEventListener('change', e => {
   profileName = e.target.value
-  const preset = PHYSICS_PROFILES[profileName] || {}
-  assistParams.hopSpeedFraction = preset.hopSpeedFraction ?? 0
-  assistParams.attitudeAssist = preset.attitudeAssist ?? 0
-  assistParams.bounceSpeedTax = preset.bounceSpeedTax ?? 0
+  Object.assign(assistParams, assistFrom(profileName))
   controls.forEach(f => f())
   doThrow()
 })

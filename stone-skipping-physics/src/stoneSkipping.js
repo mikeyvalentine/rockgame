@@ -121,7 +121,7 @@ export const Q = {
  * Bump on any change that alters simulation output. Shown in the demo HUD so it is
  * obvious at a glance whether the browser is running current code or a cached module.
  */
-export const VERSION = '0.8.2-anchor-retune'
+export const VERSION = '0.9.0-skill-ladder'
 
 const UP = Object.freeze({ x: 0, y: 1, z: 0 })
 const ZERO = Object.freeze({ x: 0, y: 0, z: 0 })
@@ -420,6 +420,42 @@ export const DEFAULT_ENV = {
    */
   hopSpeedFraction: 0,
   /**
+   * THE HOP-SHAPE KNOB. Target upward speed leaving a bounce, in m/s absolute, driven
+   * from BOTH sides: a flat rebound is lifted to it and a steep one is flattened onto
+   * it. 0 = disabled. Overrides the two knobs above when set.
+   *
+   * ### Why the rebound has to be pulled DOWN as well as up
+   *
+   * The solver rebounds a champion throw at vy ~ 2 m/s, which is a 22 cm apex and a
+   * 0.4 s hop — a 6 m arc. Real record footage is nothing like that: 88 skips over
+   * 76 m is a 0.86 m average hop, i.e. an apex of one to two centimetres. The tall
+   * arc is expensive twice over. It spends the run's distance a few metres at a time,
+   * and because air drag decelerates the stone at ~4 m/s^2 at throw speed, 0.4 s
+   * aloft costs 1.7 m/s of forward speed — more than the water takes at the contact
+   * itself. Measured: a champion throw fell from 20.4 to 2.0 m/s in 18 contacts, and
+   * most of that was drag between hops, not the bounces.
+   *
+   * Flattening the rebound onto a fixed target fixes the arc AND the count at once:
+   *
+   *     hop time   = 2 * target / g          (constant)
+   *     hop length = hop time * v            (shrinks as the stone slows)
+   *     N          ~ ln(v_launch / v_end) / loss_per_bounce
+   *     distance   ~ hop time * v_launch / loss_per_bounce
+   *
+   * A long shallow first hop, then progressively shorter ones at the same height, is
+   * the shape of a real record run — and it is what lets the count reach three
+   * figures without the run also being 300 m long.
+   *
+   * Energy-neutral in both directions: speed removed from vy is given to the
+   * horizontal component and vice versa, so |v| is unchanged and the run still decays
+   * on the water losses alone. Gated on spin authority, and clamped to 0.9 * speed,
+   * so it fades out as the stone dies rather than holding it up forever.
+   */
+  hopSpeedTarget: 0,
+  /** Floor on how far one bounce may flatten a natural rebound, as a fraction of it.
+   *  0 = no limit (flatten straight to the target). See the application site. */
+  hopFlattenLimit: 0,
+  /**
    * Extra fraction of speed removed at each bounce, on top of the physics. 0 = off.
    *
    * `hopSpeedFraction` turned out to control mid-range throws only — a champion throw
@@ -429,6 +465,55 @@ export const DEFAULT_ENV = {
    * never extend a run.
    */
   bounceSpeedTax: 0,
+  /**
+   * THE RUN-LENGTH KNOB. Fraction of the speed the water takes at each contact that
+   * the stone actually keeps losing. 1 = disabled (pure physics). 0.5 halves the
+   * per-bounce speed loss; 0 would make contacts free (never use it).
+   *
+   * This is the parameter the 2026-08-05 audit was pointing at when it said champion
+   * runs reading short is "a physics-envelope task, not an assist knob". The other
+   * three assists shape INDIVIDUAL bounces — how high the stone comes off, how it is
+   * pointed — and none of them changes how many bounces there are, because that is
+   * set by one number: how fast speed decays.
+   *
+   * A run ends when speed reaches the ~2.6 m/s rebound floor, so the count is
+   *
+   *     N  ~  ln(v_launch / v_floor) / loss_per_bounce
+   *
+   * At the model's honest ~8% per contact a 20 m/s throw gets ~25 bounces, which is
+   * exactly where the ladder saturated before this existed — expert and master both
+   * scored 26 no matter how the other knobs were set, because they were arguing about
+   * the shape of hops the stone had already run out of. At 0.36 the loss is ~3% and
+   * the same throw reaches ~100. That is the whole mechanism.
+   *
+   * Three properties make it safe to turn, which the earlier rebound-gain attempt
+   * (documented on `verticalRestitution`) did not have:
+   *
+   *   - **Strictly subtractive-of-a-subtraction.** It refunds part of a loss that has
+   *     already been measured this contact. Speed out can never exceed speed in, so
+   *     there is no gain loop and no runaway.
+   *   - **Monotone and smooth.** N goes as 1/loss, so the curve has no cliff.
+   *   - **Spin-gated**, like every other assist: a stone with no gyroscopic authority
+   *     is refunded nothing and still dies on contact one.
+   *
+   * It does NOT touch attitude. A stone still walks itself out of trim and still dies
+   * early if the throw or the rock was bad — `balanceRetention` is the knob for that,
+   * and the two together are what separate "long run" from "long run you earned".
+   */
+  contactLossScale: 1,
+  /** Live spin (rev/s) below which a contact earns no loss relief at all, and the one
+   *  at which it earns all of it. The band spans the real throw range — a club throw
+   *  sits near the floor, a world-record release near the top — so that the ladder
+   *  keeps resolving right up to the ceiling instead of saturating mid-way.
+   *  See `_contactQuality`. */
+  contactLossSpinFloor: 26,
+  contactLossRefSpin: 52,
+  /** Attack angle the relief is centred on, and the error (deg) at which it reaches
+   *  zero. The centre is the magic angle; the window is deliberately wide enough that
+   *  ordinary throws get partial credit and narrow enough that holding trim reads in
+   *  the score. */
+  contactLossTrimTargetDeg: 20,
+  contactLossTrimWindow: 16,
 
   /**
    * Rate (1/s) at which the stone's attitude is nudged back toward its launch trim
@@ -445,6 +530,10 @@ export const DEFAULT_ENV = {
    */
   attitudeAssist: 0,
   attitudeAssistRefSpin: 40,   // rev/s at which the assist reaches full strength
+  /** Speed (m/s) at which `attitudeAssist` is applied at its face value. The rate
+   *  scales linearly with speed around this — see the note at the application site.
+   *  0 disables the scaling and restores the old speed-blind behaviour. */
+  attitudeAssistRefSpeed: 14,
   /**
    * BALANCE — how well the stone holds its trim across a whole run. 0..1, 0 = off.
    *
@@ -615,17 +704,26 @@ export const PHYSICS_PROFILES = {
   /** Pure model. Matches every measurement in docs/PHYSICS-NOTES.md. ~13 clean hops. */
   documentary: {},
   /**
-   * Measured on 0.8.2 (Steiner-preset ensemble, median of 9 jittered throws):
-   * game ~27 skips over ~30 m, arcade ~40 skips over ~38 m. Earlier comments
-   * here claimed ~61 m and ~115 m — those were true of an older dissipation
-   * envelope and are NOT reachable on the current model by assist tuning
-   * alone (bounceSpeedTax 0.02 -> 0 moves game distance only 30 -> 36 m while
-   * inflating hops to ~39). If champion runs should read longer on screen,
-   * that is a physics-envelope task (rebound/energy retention), not an assist
-   * knob — flagged in docs/audit-2026-08-05.md.
-   */
-  /**
-   * Restrained champion play.
+   * THE GAME PROFILE. Tuned against `test/skill-ladder.mjs`, which scores five
+   * skill tiers as ensembles of jittered throws rather than as single releases.
+   * Measured medians (cleanHops, the daylight-counted score):
+   *
+   *     casual 11 · decent 15 · good 51 · expert 45 · master 47
+   *
+   * against a design ladder of 10 / 30 / 50 / 100 (docs/04-physics.md). The bottom of
+   * the ladder is where it should be; the top three tiers are compressed into the
+   * mid-40s to low-50s and are NOT yet separated. Two measured causes, both real and
+   * neither an assist-tuning problem — see docs/04-physics.md "Skill ladder":
+   *
+   *   1. Air drag between hops is roughly half the run's total speed decay and is
+   *      blind to how well the stone is flown, so grading the CONTACT loss on flight
+   *      quality (`contactLossScale` x `_contactQuality`) can only ever move the
+   *      count by about 2x, not the 3x the top of the ladder needs.
+   *   2. At champion release speed the run is bimodal: 4 of 11 otherwise-identical
+   *      21 m/s throws died on attitude with 10 m/s still on the stone.
+   *      `attitudeAssistRefSpeed` fixed the measured half of that (contacts shorten
+   *      with speed, so a rate-based assist under-corrects exactly when the
+   *      disturbance is largest); the residue is genuine model behaviour.
    *
    * `balanceRetention` here is the value for an AVERAGE rock — the game layer
    * overwrites it per stone from the rock's hidden Balance stat, so a well-balanced
@@ -635,19 +733,35 @@ export const PHYSICS_PROFILES = {
    * must not have it.
    */
   game: {
-    hopSpeedFraction: 0.05,
-    attitudeAssist: 20,
+    hopSpeedTarget: 0.40,
+    hopFlattenLimit: 0.75,
+    contactLossScale: 0.08,
+    attitudeAssist: 900,
     attitudeAssistRefSpin: 40,
-    bounceSpeedTax: 0.02,
+    attitudeAssistRefSpeed: 14,
     balanceRetention: 0.5,
   },
-  /** Showpiece. */
+  /**
+   * Showpiece. Differs from `game` in `contactLossScale` alone — the run-length knob —
+   * so it is the same skill ladder stretched, not a different game.
+   *
+   * It notably does NOT raise `balanceRetention` any more. Since the attitude hold was
+   * put on a per-contact footing (`attitudeAssistRefSpeed`), holding trim harder than
+   * ~0.5 makes runs measurably WORSE, not better: at 0.8 this ensemble drops from 58
+   * clean hops over 56 m to 21 over 41 m. The failure the old comment on
+   * `balanceRetention` describes — an over-held stone losing the ability to end its
+   * run — now starts well below `BALANCE_MAX_BLEND`. In practice nothing hits it,
+   * because `'auto'` tops out near 0.5 for a physically ideal stone, but the constant
+   * is no longer a safe ceiling and should be re-measured before it is leaned on.
+   */
   arcade: {
-    hopSpeedFraction: 0.05,
-    attitudeAssist: 32,
+    hopSpeedTarget: 0.40,
+    hopFlattenLimit: 0.75,
+    contactLossScale: 0.03,
+    attitudeAssist: 900,
     attitudeAssistRefSpin: 40,
-    bounceSpeedTax: 0,
-    balanceRetention: 0.8,
+    attitudeAssistRefSpeed: 14,
+    balanceRetention: 0.5,
   },
 }
 
@@ -688,6 +802,51 @@ export const DEFAULT_SOLVER = {
   /** Airborne longer than this counts as a clean hop (the stone fully left the water,
    *  as opposed to chattering along attached to the surface). */
   minHopTime: 0.012,
+  /**
+   * THE DAYLIGHT THRESHOLD, in metres of apex clearance above the water. This is
+   * docs/04-physics.md's outstanding `TBD` and docs/05-scoring.md's scoring rule,
+   * which is a HEIGHT test, not a contact test:
+   *
+   *   > Judges look for clear daylight between the splashes. If a stone begins to
+   *   > "patter" or glide seamlessly along the surface without rising back into the
+   *   > air, judges stop counting.
+   *
+   * A hop counts only if the stone rises this far clear. Apex is taken from the
+   * vertical speed at liftoff — the stone is by definition exactly clear of the water
+   * at that instant, so apex clearance is `vy^2 / 2g` and the test is one comparison,
+   * with no dependence on when the airborne phase happens to be sampled.
+   *
+   * ### Why this is not a cosmetic threshold
+   *
+   * `minHopTime` alone (0.012 s, i.e. 0.18 mm of daylight) counted the terminal
+   * chatter. Measured on a champion throw: 80 contacts, of which the first ~12 were
+   * the actual skipping and the remaining ~68 were a 0.5 m/s skim at attack angles of
+   * -40 to +32 degrees, contributing ~50 of the 60 "clean hops". That tail is not
+   * skill-expressive — every skill tier grew the same tail — so the score was mostly
+   * measuring it, and the three best tiers landed within a few hops of each other.
+   * It is also, by the rule above, explicitly not counted by real judges.
+   *
+   * ### Where 5 mm comes from
+   *
+   * The real record run is the calibration. 88 skips over 76 m is a 0.86 m mean hop;
+   * at ~19 m/s that is 45 ms aloft, i.e. an apex of about 2.5 mm. Record hops are
+   * MILLIMETRES, not centimetres, so a threshold in the centimetres would rule out
+   * the very runs it is meant to measure. 5 mm is half the default stone's own
+   * thickness — the stone is unambiguously clear of the water, and the splashes read
+   * as separate — while still cutting the sub-millimetre chatter the rule is aimed at.
+   */
+  minHopClearance: 0.005,
+  /**
+   * Consecutive contacts that fail the daylight test before the SCORING RUN ends —
+   * the second half of the same Mackinac rule ("judges stop counting"). Without it
+   * the score stops rising but the run drags on for another 60 contacts of skim,
+   * which reads as the stone refusing to die and makes every throw the same length.
+   *
+   * Not 1: a single flat contact mid-run is a recoverable stumble, and ending on it
+   * would make the score a coin flip. Three is enough to be sure the stone has
+   * genuinely stopped rising.
+   */
+  patterLimit: 3,
   /**
    * THE VISIBLE-RIPPLE THRESHOLD. A bounce counts when the centre of mass's vertical
    * velocity reverses (downward to upward) while touching water AND the approach
@@ -1075,6 +1234,8 @@ export class StoneSkipSim {
     this._initialAttack = 0
     this._distanceTravelled = 0
     this._pendingHop = false
+    /** Consecutive contacts that failed the daylight test. See `solver.patterLimit`. */
+    this._patterRun = 0
     this._resetBounceDetector()
   }
 
@@ -1405,6 +1566,8 @@ export class StoneSkipSim {
     this._lastLiftoffTime = -Infinity
     this._airborne = true
     this._pendingHop = false
+    /** Consecutive contacts that failed the daylight test. See `solver.patterLimit`. */
+    this._patterRun = 0
     this._resetBounceDetector()
     this._launchPos = V.clone(pos)
     this._distanceTravelled = 0
@@ -1435,6 +1598,56 @@ export class StoneSkipSim {
     const wobble = V.length(V.sub(w, V.scale(faceNormalWorld, V.dot(w, faceNormalWorld))))
     const coherence = spin / (spin + wobble + 1e-6)
     return base * coherence
+  }
+
+  /**
+   * How cleanly this contact was flown, 0..1. Scales `env.contactLossScale`.
+   *
+   * The two things the game asks a player to do (docs/03-throwing.md) are: spin it
+   * hard, and hold ~20 degrees. This is the number that pays them, and it is the only
+   * reason a great throw outscores a good one.
+   *
+   * It has to be this rather than `_assistAuthority` because that one saturates at
+   * `attitudeAssistRefSpin` and takes no view on attack angle, so a 44 rev/s throw and
+   * a 50 rev/s throw score identically — measured: the three best skill tiers all
+   * landed within a few hops of each other whatever the assists were set to. This
+   * spans the real throw band instead of topping out inside it.
+   *
+   * Three factors, all read off the contact the stone actually flew, none of them a
+   * property of the throw command:
+   *
+   *   - **Spin**, live rather than launch, between `contactLossSpinFloor` and
+   *     `contactLossRefSpin`. Live is the point: spin bleeds away over a run, so the
+   *     relief fades as the stone tires and the run still ends. It also means a
+   *     high-spin launch buys a longer *sustained* run, not a flat bonus.
+   *   - **Trim**, a cosine falloff on the attack-angle error at contact, zero at
+   *     `contactLossTrimWindow` degrees off. Being at the magic angle is worth
+   *     something on every single bounce, which is what makes attack-angle control a
+   *     continuous skill rather than a pass/fail gate.
+   *   - **Coherence**, spin against wobble, so a stone that has lost the plot stops
+   *     being paid.
+   */
+  _contactQuality(c) {
+    const env = this.env
+    const floor = env.contactLossSpinFloor
+    const ref = Math.max(floor + 1e-6, env.contactLossRefSpin)
+    const spinTerm = clamp((Math.abs(c.spinRPSIn) - floor) / (ref - floor), 0, 1)
+    if (spinTerm <= 0) return 0
+
+    const err = Math.abs((c.attackDegIn ?? 0) - env.contactLossTrimTargetDeg)
+    const w = Math.max(1e-6, env.contactLossTrimWindow)
+    // cos^2 falloff: flat-topped near the target (a degree off costs almost nothing)
+    // and reaching zero exactly at the window edge, with no kink at either end.
+    const trimTerm = err >= w ? 0 : Math.pow(Math.cos((err / w) * (Math.PI / 2)), 2)
+    if (trimTerm <= 0) return 0
+
+    const n = Q.rotate(this.state.orientation, { x: 0, y: 1, z: 0 })
+    const wv = this.state.angularVelocity
+    const spin = Math.abs(V.dot(wv, n))
+    const wobble = V.length(V.sub(wv, V.scale(n, V.dot(wv, n))))
+    const coherence = spin / (spin + wobble + 1e-6)
+
+    return spinTerm * trimTerm * coherence
   }
 
   /**
@@ -1958,7 +2171,18 @@ export class StoneSkipSim {
           const sinA = V.length(axis)
           if (sinA > 1e-6) {
             const angle = Math.atan2(sinA, clamp(V.dot(Ldir, tgt), -1, 1))
-            const frac = clamp(env.attitudeAssist * authority * immersedFrac * dt, 0, 0.5)
+            // Rate scaled by SPEED. A contact lasts roughly a stone-length divided
+            // by the approach speed, so a rate-per-second delivers correction in
+            // proportion to contact DURATION — which shrinks with speed, exactly when
+            // the hydrodynamic disturbance it is fighting grows. Measured: a 21 m/s
+            // champion throw blew up on attitude, with 10 m/s still on the stone, in
+            // 4 of 11 otherwise-identical releases, while the same setup at 17 m/s
+            // never did. Scaling by speed makes the correction per CONTACT
+            // speed-independent, which is the quantity that has to be.
+            const spd = V.length(st.velocity)
+            const rate = env.attitudeAssist *
+              (env.attitudeAssistRefSpeed > 0 ? spd / env.attitudeAssistRefSpeed : 1)
+            const frac = clamp(rate * authority * immersedFrac * dt, 0, 0.5)
             const corr = Q.fromAxisAngle(V.scale(axis, 1 / sinA), angle * frac)
             // rotate orientation, omega and L by the SAME rotation: rigid re-aim
             st.orientation = Q.normalize(Q.mul(corr, st.orientation))
@@ -2026,19 +2250,59 @@ export class StoneSkipSim {
       const c = this._contact
       c.duration = st.time - c.startTime
 
+      // GAME ASSIST: give back part of the speed the water took at this contact. See
+      // `env.contactLossScale`. Runs BEFORE the hop assist, because that one sizes the
+      // hop from the stone's current speed and should size it from the post-relief
+      // one. Gated on spin authority like every other assist, so a tumbling stone
+      // gets nothing, and strictly a partial refund of a loss that already happened,
+      // so it can never return more speed than the stone arrived with.
+      if (env.contactLossScale < 1 && !this.runEnded && c.speedIn > 1e-6) {
+        const spOut = V.length(st.velocity)
+        if (spOut < c.speedIn) {
+          const q = this._contactQuality(c)
+          if (q > 0) {
+            const keep = 1 - (1 - clamp(env.contactLossScale, 0, 1)) * q
+            const want = c.speedIn - (c.speedIn - spOut) * keep
+            const k = want / spOut
+            st.velocity.x *= k; st.velocity.y *= k; st.velocity.z *= k
+          }
+        }
+      }
+
       // GAME ASSIST: hold vertical restitution up to the target, so hop height decays
       // slowly enough to give a long run. Gated on spin authority, and never raises
       // vy above the speed it came in with, so the stone still loses altitude.
       const eTarget = env.verticalRestitution
       const hopFrac = env.hopSpeedFraction
-      if ((eTarget > 0 || hopFrac > 0) && !this.runEnded) {
+      const hopTarget = env.hopSpeedTarget
+      if ((eTarget > 0 || hopFrac > 0 || hopTarget > 0) && !this.runEnded) {
         const auth = this._assistAuthority(Q.rotate(st.orientation, { x: 0, y: 1, z: 0 }))
         if (auth > 0) {
           const sp = V.length(st.velocity)
           const byRatio = eTarget > 0 ? -this._vyContactApproach * eTarget : 0
           const bySpeed = hopFrac > 0 ? sp * hopFrac : 0
-          const want = Math.min(Math.max(byRatio, bySpeed) * auth, sp * 0.9)
-          if (st.velocity.y < want && sp > 1e-6) {
+          // Knee gate, not a linear scale. Scaling the TARGET HEIGHT by authority
+          // means a club throw's hops are too low to clear the daylight threshold at
+          // all and it scores a flat zero — measured, and far harsher than the
+          // physics it is standing in for. The knee (same one `_applyBalance` uses,
+          // set below the weakest playable throw) withholds the assist from a stone
+          // with no gyroscopic authority and gives every viable throw the same hop
+          // SHAPE. What separates the tiers is then how long they can sustain it.
+          const gate = clamp(auth / BALANCE_AUTHORITY_KNEE, 0, 1)
+          let want = Math.min(Math.max(byRatio, bySpeed, hopTarget) * gate, sp * 0.9)
+          // Cap how much of a natural rebound one bounce may be flattened by. The
+          // first bounces of a fast throw rebound at ~2 m/s, and slamming that to the
+          // 0.4 m/s target in one step is a large attitude disturbance at exactly the
+          // speed the stone is least able to absorb one: 21 m/s releases went bimodal,
+          // dying on attitude at ~13 hops in half of otherwise-identical runs. Easing
+          // the early flattening lets the target take over once the natural rebound
+          // has decayed to meet it, which is where it was always meant to bite.
+          if (env.hopFlattenLimit > 0 && st.velocity.y > 0) {
+            want = Math.max(want, st.velocity.y * clamp(env.hopFlattenLimit, 0, 1))
+          }
+          // `hopSpeedTarget` drives from both sides; the older knobs only ever lift.
+          const twoSided = hopTarget > 0 && want >= hopTarget * gate - 1e-9
+          if ((twoSided ? st.velocity.y !== want : st.velocity.y < want) && sp > 1e-6) {
             // ENERGY-NEUTRAL: buy the extra hop height out of forward speed rather
             // than adding it. Total speed can then never increase, so the stone
             // still decays and the run still ends.
@@ -2063,6 +2327,11 @@ export class StoneSkipSim {
       }
 
       c.speedOut = V.length(st.velocity)
+      /** Vertical speed at the instant the stone came clear. The stone is exactly at
+       *  the surface here, so apex clearance is vyOut^2 / 2g — that is the daylight
+       *  test (`solver.minHopClearance`). */
+      c.vyOut = st.velocity.y
+      c.apexClearance = c.vyOut > 0 ? (c.vyOut * c.vyOut) / (2 * env.gravity) : 0
       c.energyLoss = 1 - (c.speedOut * c.speedOut) / Math.max(1e-9, c.speedIn * c.speedIn)
       c.attackDegOut = d.attackAngleDeg
       c.endTime = st.time
@@ -2118,7 +2387,9 @@ export class StoneSkipSim {
     // into a string of hops.
     if (this._pendingHop && !this.runEnded) {
       if (!this._airborne) {
+        // Re-touched before it ever cleared: a patter by definition.
         this._pendingHop = false
+        this._patterRun++
       } else if (st.time - this._lastLiftoffTime >= this.solver.minHopTime) {
         this._pendingHop = false
         // Only count it if that contact also registered as a bounce. Micro-grazes
@@ -2126,6 +2397,12 @@ export class StoneSkipSim {
         // let cleanHops run to 1214 against a tap count of 42.
         const last = this.contacts[this.contacts.length - 1]
         if (!last || this._lastBounceTime < last.startTime) return
+        // THE DAYLIGHT TEST. See `solver.minHopClearance`.
+        if ((last.apexClearance ?? 0) < this.solver.minHopClearance) {
+          this._patterRun++
+          return
+        }
+        this._patterRun = 0
         this.cleanHops++
         events.push({
           type: 'hop',
@@ -2134,6 +2411,7 @@ export class StoneSkipSim {
           duration: last.duration,
           speedIn: last.speedIn,
           speedOut: last.speedOut,
+          apexClearance: last.apexClearance,
           energyLoss: last.energyLoss,
           position: last.position,
         })
@@ -2163,6 +2441,13 @@ export class StoneSkipSim {
         distance: this._distanceTravelled,
         contacts: this.contacts.length,
       })
+    }
+
+    // "If a stone begins to patter ... judges stop counting" (docs/05-scoring.md).
+    // Once it has, the scoring run is over. The stone keeps being simulated and keeps
+    // skimming — it just stops scoring. See `solver.patterLimit`.
+    if (this._patterRun >= this.solver.patterLimit && this.cleanHops > 0) {
+      return finish(Outcome.SKIPPING_TROUT)
     }
 
     // tumbled: the face normal has fallen far from where it started AND the stone

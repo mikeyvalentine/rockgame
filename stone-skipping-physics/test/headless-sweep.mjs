@@ -365,7 +365,7 @@ console.log('\n=== 9c. Game profile (deliberately not physics) ===')
   // throw as `perfect` — they no longer separate. The champion tier is the Truscott
   // theoretical ceiling.
   const champ = gEns(THROW_PRESETS.truscottLimit)
-  // arcade differs from game only by bounceSpeedTax, which governs run LENGTH.
+  // arcade differs from game only by contactLossScale, which governs run LENGTH.
   // Skip counts are chaotic enough that a single pair can invert; distance is not.
   const profDist = (profile) => {
     seed = 12345
