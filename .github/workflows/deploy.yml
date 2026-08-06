@@ -29,7 +29,15 @@ name: Deploy site
 on:
   push:
     branches: [main]
-  # Deploy on demand too, so a failed run can be retried without an empty commit.
+    # docs/ and markdown are not part of the site — build-site.mjs never copies
+    # them — so a documentation merge should not spend a runner republishing an
+    # identical dist. Runners are the scarce resource here; see ci.yml.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+  # Deploy on demand too, so a failed run can be retried without an empty commit,
+  # and so a docs-only change can still be pushed live if one ever needs to be.
   workflow_dispatch:
 
 # One deploy at a time. Two overlapping runs would race to publish and the
