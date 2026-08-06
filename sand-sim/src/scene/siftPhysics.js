@@ -55,6 +55,7 @@
 import "@babylonjs/core/Physics/joinedPhysicsEngineComponent.js";
 import { Vector3, Quaternion } from "@babylonjs/core/Maths/math.vector.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody.js";
 import { PhysicsMotionType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsShapeBox, PhysicsShapeConvexHull } from "@babylonjs/core/Physics/v2/physicsShape.js";
@@ -135,6 +136,27 @@ export function createHulls(scene, opts = {}) {
 }
 
 /**
+ * Fetch Havok and build everything the crouch needs, in one await.
+ *
+ * Called from the app's loading sequence, never from the crouch — that is the
+ * whole arrangement. The wasm is a network fetch and the hulls are ~850 ms of
+ * geometry; both belong behind the loading screen, so that pressing E later
+ * costs only the ~100 ms swap.
+ *
+ * Dynamically imported so a build that never sifts never pulls Havok in.
+ */
+export async function loadSiftPhysics(scene, opts = {}) {
+    const [{ HavokPlugin }, { default: HavokPhysics }, { default: wasmUrl }] = await Promise.all([
+        import("@babylonjs/core/Physics/v2/Plugins/havokPlugin.js"),
+        import("@babylonjs/havok"),
+        import("@babylonjs/havok/lib/esm/HavokPhysics.wasm?url"),
+    ]);
+    const wasmBinary = await fetch(wasmUrl).then((r) => r.arrayBuffer());
+    const plugin = new HavokPlugin(true, await HavokPhysics({ wasmBinary }));
+    return initSiftPhysics(scene, plugin, opts);
+}
+
+/**
  * Turn physics on for the beach scene and pre-build everything the crouch needs.
  *
  * @param scene   the beach scene — the same one the player walks in
@@ -187,7 +209,14 @@ export class SiftPhysics {
         if (!entry) return null;
         const { bed, baseY } = entry;
 
-        beds.setSceneryEnabled(spot.id, false);
+        // The scenery stays ON. An earlier draft hid it and gave the bodies
+        // geometry-less nodes, so crouching showed bare sand — 540 bodies
+        // simulating invisibly. The stones the player digs through are the very
+        // same thin instances they saw from across the beach; `sync()` below
+        // just writes the live transforms into them. Same forty draw calls
+        // awake or asleep, and no pop at the swap because nothing is swapped.
+        const meshes = beds.meshForSpot?.get(spot.id) ?? null;
+        const slots = beds.slotsForSpot?.get(spot.id) ?? null;
 
         // Ground: top face exactly at the crown. Sunk half its own height so the
         // top lands on baseY without arithmetic at every contact.
@@ -219,7 +248,12 @@ export class SiftPhysics {
                 bed.quaternions[i * 4 + 2], bed.quaternions[i * 4 + 3]
             );
 
-            const node = new Mesh(`stone_${spot.id}_${i}`, this.scene);
+            // TransformNode, not Mesh: these carry no geometry — the thin
+            // instances draw — and a Mesh would drag the whole render
+            // bookkeeping in for 540 nodes. Measured in the browser, the Mesh
+            // version took ~1.9 s to wake, which is longer than the transition
+            // it was supposed to hide behind.
+            const node = new TransformNode(`stone_${spot.id}_${i}`, this.scene);
             node.position.copyFrom(pos);
             node.rotationQuaternion = rot.clone();
             // Third argument is startsAsleep, and it has to be true: the bed is
@@ -233,8 +267,33 @@ export class SiftPhysics {
             rocks.push({ node, body, archetype: name, index: i });
         }
 
-        this.awake = { spot, rocks, ground, groundBody, groundShape };
+        this.awake = { spot, rocks, ground, groundBody, groundShape, meshes, slots };
         return this.awake;
+    }
+
+    /**
+     * Push the live body transforms into the instance buffers.
+     *
+     * Called once a frame while crouched. 540 matrix writes and one buffer
+     * upload per archetype — against 540 scene nodes, which is what the
+     * alternative costs.
+     */
+    sync() {
+        if (!this.awake) return;
+        const { rocks, meshes, slots } = this.awake;
+        if (!meshes || !slots) return;
+
+        const touched = new Set();
+        for (const r of rocks) {
+            const at = slots[r.index];
+            if (!at) continue;
+            const mesh = meshes.get(at.name);
+            const buf = mesh?.metadata?.matrixBuffer;
+            if (!buf) continue;
+            r.node.computeWorldMatrix(true).copyToArray(buf, at.slot * 16);
+            touched.add(mesh);
+        }
+        for (const mesh of touched) mesh.thinInstanceBufferUpdated("matrix");
     }
 
     /**
@@ -264,12 +323,13 @@ export class SiftPhysics {
             }
         }
 
+        // One last sync so the instances hold exactly where the stones stopped,
+        // then the bodies go and the same instances carry on as scenery.
+        this.sync();
         for (const r of rocks) { r.body.dispose(); r.node.dispose(); }
         groundBody.dispose();
         ground.dispose();
         // The hulls are shared across wakes and deliberately outlive this.
-
-        beds.setSceneryEnabled(spot.id, true);
         const was = this.awake;
         this.awake = null;
         return was;

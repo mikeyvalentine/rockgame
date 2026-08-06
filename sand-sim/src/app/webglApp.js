@@ -51,7 +51,9 @@ import {
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
 import { buildSiftingBeds } from "../scene/siftingBeds.js";
-import { openSift, spotAt, createCrouchPrompt } from "../scene/siftSession.js";
+import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { Crouch, spotAt } from "../scene/crouch.js";
+import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import * as loading from "../core/loading.js";
 
 /** Grid density for the visible beach. 256² over 512 m = 2 m spacing. */
@@ -162,6 +164,12 @@ export async function run(canvas) {
     const beds = await buildSiftingBeds(scene, terrain);
     if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
 
+    // Physics is built HERE, not at the crouch, and that is the whole reason
+    // crouching is a camera move: the wasm fetch and the forty convex hulls are
+    // the expensive part, and they are paid once, behind this loading screen.
+    await loading.phase("waking the stones", 0.74);
+    const physics = beds ? await loadSiftPhysics(scene) : null;
+
     const character = new CharacterController(terrain);
     character.position.set(SPAWN.x, 0, SPAWN.z);
     character.position.y = terrain.heightAt(SPAWN.x, SPAWN.z);
@@ -224,25 +232,20 @@ export async function run(canvas) {
     let prev = performance.now();
 
     // ------------------------------------------------------------ the crouch
-    // Standing on a pile and pressing E swaps to rock-sift's sift world, and
-    // the beach stops dead until you stand up again. See scene/siftSession.js
-    // for why sifting is a separate scene rather than part of this one.
+    // One scene. Crouching is a camera move with the bed waking behind it —
+    // see scene/crouch.js.
     const prompt = createCrouchPrompt();
-    let sift = null;        // the open session, or null
+    const crouch = physics ? new Crouch({ rig, character, physics, beds }) : null;
     let nearSpot = null;    // the pile under the player, or null
 
-    window.addEventListener("keydown", async (e) => {
-        if (e.code !== "KeyE" || sift || !nearSpot) return;
-        const spot = nearSpot;
-        prompt.show(false);
-        // Claimed before the await so a second press during the (one-off, Havok
-        // wasm) load cannot open two worlds.
-        sift = { scene: null, close: () => {} };
-        sift = await openSift(engine, scene, spot, () => {
-            sift = null;
-            // The pointer went to the bed; give it back to the beach.
-            canvas.focus();
-        });
+    window.addEventListener("keydown", (e) => {
+        if (!crouch) return;
+        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
+            prompt.show(false);
+            crouch.enter(nearSpot);
+        } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
+            crouch.leave();
+        }
     });
 
     engine.runRenderLoop(() => {
@@ -252,25 +255,25 @@ export async function run(canvas) {
         if (dtMs > 100) dtMs = 100;
         const dt = S.freezeTime ? 0 : dtMs / 1000;
 
-        // Paused, not merely hidden: no input, no character, no deformation,
-        // no water, no beach render. docs/10 — the sand sim only steps while
-        // the player is disturbing it, and while crouched they are not.
-        if (sift) {
-            if (sift.scene) sift.scene.render();
-            endFrame();
-            return;
-        }
-
         pollInput();
         const tFrame = performance.now();
 
-        character.update(dt, rig);
-        clampToPlayRect(character.position);
-        if (contact) contact.update(dt);
+        // Crouched, the walker is frozen and everything the stones touch keeps
+        // running — which is the point of being in this scene. The sand sim is
+        // still only stepping because something is disturbing it; while sifting
+        // that something is the bed rather than the boots.
+        const knelt = crouch ? crouch.update(dt) : false;
+        if (!knelt) {
+            character.update(dt, rig);
+            clampToPlayRect(character.position);
+            if (contact) contact.update(dt);
+        }
 
         // Proximity for the crouch prompt. spotAt uses the crown rather than
         // the rim — standing on the bank's face is not standing at the bed.
-        nearSpot = spotAt(character.position.x, character.position.z);
+        nearSpot = crouch && !crouch.engaged
+            ? spotAt(character.position.x, character.position.z)
+            : null;
         prompt.show(!!nearSpot);
 
         rig.update(dt, character.position);
@@ -300,8 +303,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble, beds,
-        get sift() { return sift; },
+        deform, contact, scribble, beds, physics, crouch,
         S, input, perfStats: stats,
     };
 }

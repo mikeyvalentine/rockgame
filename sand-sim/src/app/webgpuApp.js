@@ -42,6 +42,9 @@ import { initMaskBrush } from "../tools/maskBrush.js";
 import { DigTool } from "../tools/dig.js";
 import { buildWater } from "../scene/water.js";
 import { buildSiftingBeds } from "../scene/siftingBeds.js";
+import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { Crouch, spotAt } from "../scene/crouch.js";
+import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { DepthPass } from "../render/depthPass.js";
 import { PostChain } from "../post/postChain.js";
 import { createScribblePass } from "../post/scribblePass.js";
@@ -209,6 +212,23 @@ export async function run(canvas) {
     const beds = await buildSiftingBeds(scene, terrain);
     if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
 
+    // Behind the loading screen, so the crouch is a camera move and not a load.
+    await loading.phase("waking the stones", 0.75);
+    const physics = beds ? await loadSiftPhysics(scene) : null;
+    const prompt = createCrouchPrompt();
+    const crouch = physics ? new Crouch({ rig, character, physics, beds }) : null;
+    let nearSpot = null;
+
+    window.addEventListener("keydown", (e) => {
+        if (!crouch) return;
+        if (e.code === "KeyE" && nearSpot && !crouch.engaged) {
+            prompt.show(false);
+            crouch.enter(nearSpot);
+        } else if (e.key === "Escape" && crouch.spot && !crouch.isMoving) {
+            crouch.leave();
+        }
+    });
+
     await loading.phase("compiling pipelines", 0.78);
     shadows.update(rig.camera, sky.sunDir);
     sky.render(rig, 0);
@@ -253,10 +273,20 @@ export async function run(canvas) {
         // of it — the overlay labels them `cpu` for that reason.
         const tFrame = performance.now();
 
-        character.update(dt, rig);
-        terrain.heightfield.clampToPlayArea(character.position);
-        contact.update(dt);
-        dig.update();
+        // Crouched, the walker is frozen and everything the stones touch keeps
+        // running — see scene/crouch.js on why "pausing the sim" means freezing
+        // the walker rather than the world.
+        const knelt = crouch ? crouch.update(dt) : false;
+        if (!knelt) {
+            character.update(dt, rig);
+            terrain.heightfield.clampToPlayArea(character.position);
+            contact.update(dt);
+            dig.update();
+        }
+        nearSpot = crouch && !crouch.engaged
+            ? spotAt(character.position.x, character.position.z)
+            : null;
+        prompt.show(!!nearSpot);
         // While a dig stroke is held the ground is *changing* every 60 ms;
         // TAA history reprojected across that shows the previous crater
         // shapes as layered translucent facet-ghosts. No history while
@@ -313,6 +343,7 @@ export async function run(canvas) {
         renderer: "webgpu",
         engine, scene, rig, character, contact, dig, spray, grains, water,
         maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble, beds,
+        physics, crouch,
         S, input, perfStats: stats,
     };
 }

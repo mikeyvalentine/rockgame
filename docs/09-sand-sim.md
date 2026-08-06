@@ -2,7 +2,7 @@
 
 Adapt [SNOWFLOW](https://snowflow-lilac.vercel.app/) — a WebGPU snow particle study — restyled as **sand** instead of powdery snow.
 
-**Status:** decided in principle, implementation open.
+**Status:** rendering and movement decided; the rock-field LOD is built (piles, beds, crouch). The particle sim and the sand leaderboard remain open.
 
 ## Rendering target — decided
 
@@ -65,34 +65,30 @@ Two costs that had to be measured rather than assumed:
 - **Scenery LOD.** rock-sift draws at icosphere level 3 (1280 tris) because the player is crouched over the bed. At standing distance level 2 is indistinguishable and four times cheaper. This is the rock-field LOD above, in its cheapest form — the detailed bed is what the crouch swaps in.
 - **One mesh per (archetype, spot).** Babylon frustum-tests a thin-instanced mesh by the bounds of *all* its instances, so merging the four spots per archetype means nothing ever culls. Measured: 2,764,800 triangles submitted from anywhere on the beach, against a 131k beach. Split per spot and dropped to scenery LOD: **172,800 with a bed in view, 0 with none.**
 
-### The crouch — being rebuilt in place
+### The crouch — built
 
-The scene-swap below is superseded. It failed three requirements: the transition was a load rather than a camera move, the bed stood on rock-sift's own ground instead of the beach, and nothing a stone did could reach the sand. All three come back if the bed simply wakes where it already is, in the beach's own scene.
+Stand on a pile, press E, and the camera kneels to the stones while that spot's bed wakes into physics behind the move. Escape stands you back up. **One scene throughout** — there is nothing to build, nothing to fetch, and no scene to swap.
 
-**1:1 metres works — measured.** rock-sift models at 4x to stay clear of Havok's collision margins, so this had to be tested. Running its own suite at `U = 1`: sweeping, carrying, bucket and winding all pass; only settling a *poured* bed regresses (6 stones creeping against ~0). The game never pours — it restores baked beds, and pouring is `npm run bake`, offline, still at 4x. So the 4x world is a bake-time convenience, not a runtime requirement.
+That last point is the whole design. Because it is the beach's own scene:
 
-`sand-sim/src/scene/siftPhysics.js` holds the bed's two states and the swap between them, covered by `tools/sift-physics-check.mjs`. Measured: **482 ms to preload 40 convex hulls** (paid while the beach loads) and **93 ms to wake 540 bodies** — which is what lets the crouch be a camera move with nothing to hide behind a loading screen.
+- the bed rests on the beach's terrain, not on a lab floor;
+- the sand under it is the sand the player walked over;
+- anything a stone does can reach the deformation field, so a stone thrown aside can dent the sand the way a footstep does.
+
+**1:1 metres works — measured.** rock-sift models at 4x to stay clear of Havok's collision margins, so this had to be tested rather than assumed. Running its own suite at `U = 1`: sweeping, carrying, bucket and winding all pass; only settling a *poured* bed regresses (6 stones creeping against ~0). The game never pours — it restores baked beds, and pouring is `npm run bake`, offline, still at 4x. So the 4x world is a bake-time convenience, not a runtime requirement.
+
+**Why there is no loading.** Havok's wasm and the forty convex hulls are built during the beach's own load — measured at ~850 ms, once. Crouching then costs only the swap: **~100 ms for 540 bodies**, against a transition of 1.1 s. `rock-sift/src/shore.js` reached the same conclusion about its own swap: "comfortably inside one frame of a transition that lasts about a second, so there is nothing to hide behind a loading screen."
+
+**"Pausing the sim" means freezing the walker, not the world.** Input, locomotion and footfall contact stop, because the player is knelt down. Everything the stones touch keeps running — which is the entire reason for being in this scene. The performance note asks for a sand sim that only steps while the player disturbs it; while crouched, the disturbance is the bed rather than the boots.
 
 The ground collider is a single static box with its top face exactly at the crown, and *exact* is the word: levelling the crown made it a true horizontal plane. rock-sift's note on why a trimesh is wrong here still applies — convex hulls catch on the internal edges between triangles and the bed never rests.
 
+Files: `scene/crouch.js` (the transition), `scene/siftPhysics.js` (the two bed states and the swap), tested by `tools/sift-physics-check.mjs`. Both renderers carry it.
+
 **Two things designed for but not yet built:**
 
-- **Divots must persist.** The `DeformationField` is the wrong home for the same reason the piles were: it is player-centred over 80 m, toroidal, and it relaxes, so a hole fades and then vanishes when you walk away. Permanent stone divots — and the bed's own baked-in imprint on the sand it is resting in — want a separate world-anchored layer per spot, which never relaxes and never scrolls. At 3.9 cm texels the existing field is stone-scale, so resolution is not the obstacle; persistence is.
-- **Spots will not stay circular.** The intent is to spread the stones along the beach rather than sift in a disc. Nothing new should compute `distance < radius` inline; spot coverage belongs behind the spot itself, so a strip slots in where a disc is today.
-
-### The crouch — superseded scene swap
-
-Stand on a pile, press E, and you are sifting. Escape stands you back up on the beach where you left off.
-
-**Sifting is its own environment.** The sift world is a second Babylon scene — rock-sift's, physics and all, built by `rock-sift/src/world.js` — sharing the page's engine and nothing else. While it is up the beach is *paused*: not rendered, not stepped, not listening. That is the arrangement this doc's performance note asks for, and it is what makes a full Havok bed affordable, because the two never run at once.
-
-It is a handoff rather than a merge because the two worlds do not share a scale: the beach is 512 m of terrain in metres, the bed is 80 cm of stones modelled at 4x. Holding both in one scene means reconciling two world scales and two lighting rigs for a view that only ever shows one of them.
-
-**rock-sift moved to Babylon 9.18** to make this possible — it was on 8.56, and two majors in one page is two Scene registries and two sets of class identities. Its five Havok tests pass on 9.18 unchanged. sand-sim's vite config dedupes `@babylonjs/core`, because rock-sift's bare import otherwise resolves to a second copy of the same version.
-
-`main.js` gave up everything below the engine to `world.js`, so the lab page and sand-sim build the *same* sift mode rather than two of them.
-
-Measured in the browser: open and close at two different spots, scene count 1 → 2 → 1 each time, no leak.
+- **Divots must persist.** The `DeformationField` is the wrong home for the same reason the piles were: it is player-centred over 80 m, toroidal, and it relaxes, so a hole fades and then vanishes when you walk away. Permanent stone divots — and the bed's own baked-in imprint on the sand it is resting in, which is derivable because every stone's resting position is in the bed file — want a separate world-anchored layer per spot that never relaxes and never scrolls. At 3.9 cm texels the existing field is already stone-scale, so resolution is not the obstacle; persistence is.
+- **Spots will not stay circular.** The intent is to spread stones along the beach rather than sift in a disc. Nothing new should compute `distance < radius` inline; spot coverage belongs behind the spot itself, so a strip slots in where a disc is today. `shared/pileField.js` is the one place that still assumes circles.
 
 ### 2. Movement trails
 

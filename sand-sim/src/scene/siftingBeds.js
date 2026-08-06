@@ -191,7 +191,12 @@ export async function fetchBedVariants(manifestUrl = "/assets/beds/shore.json") 
  * @param origin     {x, z} spot centre, metres
  * @param baseY      crown height at that spot, metres
  * @param names      archetype names, in the order the caller will index them
- * @returns Map of archetype name -> Float32Array of 16-float matrices
+ * Returns the buffers plus, for every stone in bed order, which archetype
+ * buffer it landed in and at which slot. The crouch needs that mapping to write
+ * live body transforms back into the same instances, so a woken bed keeps
+ * drawing through the very same forty draw calls it drew as scenery.
+ *
+ * @returns {{buffers: Map<string, Float32Array>, slots: Array<{name: string, slot: number}>}}
  */
 export function bedInstanceMatrices(bed, origin, baseY, names) {
     const missing = bed.names.filter((n) => !names.includes(n));
@@ -222,6 +227,7 @@ export function bedInstanceMatrices(bed, origin, baseY, names) {
     const scale = Vector3.One();
     const pos = new Vector3();
     const rot = new Quaternion();
+    const slots = new Array(bed.count);
 
     for (let i = 0; i < bed.count; i++) {
         const name = bed.names[bed.archIndex[i]];
@@ -237,10 +243,11 @@ export function bedInstanceMatrices(bed, origin, baseY, names) {
         Matrix.ComposeToRef(scale, rot, pos, m);
         const at = cursor.get(name);
         m.copyToArray(buffers.get(name), at * 16);
+        slots[i] = { name, slot: at };
         cursor.set(name, at + 1);
     }
 
-    return buffers;
+    return { buffers, slots };
 }
 
 /**
@@ -278,6 +285,10 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
     // bodies in its place — the LOD swap, which needs to touch one spot and
     // leave the other three alone.
     const perSpotMeshes = new Map(SIFT_SPOTS.map((s) => [s.id, []]));
+    // Per spot: which archetype mesh and which instance slot each stone lives
+    // in, so a woken body can write straight back into its own instance.
+    const meshForSpot = new Map(SIFT_SPOTS.map((s) => [s.id, new Map()]));
+    const slotsForSpot = new Map();
     const bedForSpot = new Map();
     let stones = 0;
 
@@ -295,7 +306,8 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
         };
         const baseY = terrain.heightAt(spot.x, spot.z);
         bedForSpot.set(spot.id, { bed, baseY });
-        const buffers = bedInstanceMatrices(bed, spot, baseY, names);
+        const { buffers, slots } = bedInstanceMatrices(bed, spot, baseY, names);
+        slotsForSpot.set(spot.id, slots);
 
         for (const [name, buf] of buffers) {
             const arch = byName.get(name);
@@ -317,10 +329,18 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
             mesh.material = arch.material;
             mesh.isPickable = false;
             mesh.receiveShadows = true;
-            mesh.thinInstanceSetBuffer("matrix", buf, 16, true);
+            // NOT a static buffer: while this spot is crouched at, the live
+            // body transforms are written straight back into `buf` every frame
+            // and re-uploaded. Static would pin it and the stones would never
+            // appear to move.
+            mesh.thinInstanceSetBuffer("matrix", buf, 16, false);
             mesh.thinInstanceRefreshBoundingInfo(true);
             mesh.freezeWorldMatrix();
-            mesh.metadata = { spotId: spot.id, archetype: name };
+            // The buffer is kept on the mesh so the crouch can write into the
+            // array it already owns, rather than reaching into Babylon's
+            // private instance storage.
+            mesh.metadata = { spotId: spot.id, archetype: name, matrixBuffer: buf };
+            meshForSpot.get(spot.id).set(name, mesh);
             drawnMeshes.push(mesh);
             perSpotMeshes.get(spot.id).push(mesh);
             stones += buf.length / 16;
@@ -354,6 +374,8 @@ export async function buildSiftingBeds(scene, terrain, opts = {}) {
         // two states, and only one spot is ever in the body state.
         archetypeList: archetypes,
         bedForSpot,
+        meshForSpot,
+        slotsForSpot,
         /** Show or hide one spot's scenery, leaving the other spots alone. */
         setSceneryEnabled(spotId, on) {
             for (const m of perSpotMeshes.get(spotId) ?? []) m.setEnabled(on);

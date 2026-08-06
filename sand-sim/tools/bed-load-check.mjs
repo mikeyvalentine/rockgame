@@ -95,7 +95,7 @@ let highest = -Infinity;
 for (const spot of SIFT_SPOTS) {
     const bed = beds[spot.variant % beds.length];
     const baseY = shoreProfileJS(spot.x, spot.z, 1);
-    const buffers = bedInstanceMatrices(bed, spot, baseY, names);
+    const { buffers } = bedInstanceMatrices(bed, spot, baseY, names);
 
     let n = 0;
     for (const [, buf] of buffers) {
