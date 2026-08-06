@@ -1,6 +1,13 @@
 /**
  * The sand a bed is pressed into — permanent, world-anchored, one layer per spot.
  *
+ * NOT WIRED YET. This module is built and tested (`tools/imprint-check.mjs`)
+ * and nothing in `sand-sim/src` imports it, so no sand is dented in the running
+ * app. It is the data structure and the maths, waiting on two things: the bake
+ * called when a spot's bed is placed, and stone contacts fed in while sifting.
+ * Said plainly here because a tested module with no consumer reads exactly like
+ * a working feature from the outside.
+ *
  * Two things want this and they turn out to be the same thing:
  *
  *   1. A bed of 540 stones has been sitting there. The sand under it should

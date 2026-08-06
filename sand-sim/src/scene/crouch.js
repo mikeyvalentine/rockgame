@@ -12,8 +12,13 @@
  *
  *   - the bed rests on the beach's terrain, not on a lab floor;
  *   - the sand under it is the sand the player walked over;
- *   - anything a stone does can reach the deformation field, so a stone thrown
- *     aside can dent the sand exactly the way a footstep does.
+ *   - anything a stone does *can* reach the sand — the deformation field and
+ *     `shared/spotImprint.js` are both in this scene's reach.
+ *
+ * That last one is potential, not behaviour: nothing yet feeds stone contacts
+ * into either. Being in one scene is what makes it possible; the wiring is
+ * still to come, and this comment says so rather than describing a beach that
+ * dents when you throw a stone across it.
  *
  * What "pausing the sim" means here
  * ---------------------------------
@@ -137,8 +142,14 @@ export class Crouch {
         // Sifting is live only once the camera has arrived: dragging the bed
         // around while the view is still travelling reads as the scene
         // fighting you. rock-sift gates its own the same way.
-        this.interaction?.setEnabled(this.spot !== null && !this.tween);
-        this.examine?.update(dt);
+        //
+        // Only touched while the crouch is engaged. Walking the beach is the
+        // common case by a wide margin, and it has no business calling into the
+        // sweep sixty times a second to tell it something it already knows.
+        if (this.engaged) {
+            this.interaction?.setEnabled(this.spot !== null && !this.tween);
+            this.examine?.update(dt);
+        }
 
         if (!this.tween) return this.spot !== null;
 

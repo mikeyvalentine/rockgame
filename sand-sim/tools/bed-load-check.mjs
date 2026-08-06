@@ -13,15 +13,15 @@ import { fileURLToPath } from "node:url";
 
 import { decodeBed } from "../../shared/bedFormat.js";
 import { SIFT_SPOTS, CROWN_RADIUS, pileCoverage } from "../../shared/pileField.js";
+import { bedInstanceMatrices, U, ROCK_SEED, ARCHETYPE_COUNT } from "../src/scene/siftingBeds.js";
+import { bakeLibrary } from "../../rock-forge/src/forge/bake.js";
+import { ARCHETYPES } from "../../rock-forge/src/forge/archetypes.js";
+import { shoreProfileJS } from "../src/terrain/beachParams.js";
 
 // One spot is deliberately the scattered A/B — no mound, no crown, no baked
 // bed. The pile checks below are about piles, so they say so rather than
 // quietly asserting something the scattered spot was never meant to satisfy.
 const PILE_SPOTS = SIFT_SPOTS.filter((s) => s.style !== "scattered");
-import { bedInstanceMatrices, U, ROCK_SEED, ARCHETYPE_COUNT } from "../src/scene/siftingBeds.js";
-import { bakeLibrary } from "../../rock-forge/src/forge/bake.js";
-import { ARCHETYPES } from "../../rock-forge/src/forge/archetypes.js";
-import { shoreProfileJS } from "../src/terrain/beachParams.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BEDS = join(ROOT, "public", "assets", "beds");
