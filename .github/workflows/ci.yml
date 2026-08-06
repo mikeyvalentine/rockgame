@@ -70,8 +70,21 @@ jobs:
           - name: rock-sift
             dir: rock-sift
             timeout: 25
+          # Needs rock-forge installed as well, and that is not an accident of the
+          # runner. Three of sand-sim's checks (rock-material, bed-load, sift-pad)
+          # import rock-forge SOURCE directly, and Node resolves a bare specifier
+          # from the importing FILE's directory upward — so
+          # `rock-forge/src/babylon/rockMaterial.js` looks in `rock-forge/
+          # node_modules`, never in sand-sim's. Installing sand-sim alone leaves
+          # those imports unresolvable, which is how this was found.
+          #
+          # Worth knowing while it stands: sand-sim pins Babylon 9.18 and rock-forge
+          # 8.56, so those shared files run against 8.56 no matter what sand-sim
+          # asks for. Flagged in docs/audit-2026-08-05.md; not this file's problem
+          # to fix, but this is where you will next trip over it.
           - name: sand-sim
             dir: sand-sim
+            alsoInstall: rock-forge
             timeout: 15
 
     steps:
@@ -80,6 +93,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # Sibling labs whose source this lab's suite imports. Separate step so a
+      # missing cross-lab install reads as exactly that in the log.
+      - name: Install sibling (${{ matrix.alsoInstall }})
+        if: matrix.alsoInstall != ''
+        working-directory: ${{ matrix.alsoInstall }}
+        run: npm ci
 
       - name: Install
         working-directory: ${{ matrix.dir }}
