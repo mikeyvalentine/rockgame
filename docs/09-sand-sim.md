@@ -50,6 +50,10 @@ Three consequences worth knowing before touching it:
 - **The crown must stay flat**, and it is flat by construction rather than by luck — the mound suppresses micro relief under itself. rock-sift pours its bed on flat ground, so a domed crown floats stones on one side and buries them on the other.
 - **The mask goes in the aux bake's B channel**, the old pebble band, which already drives voronoi cobble shading. That is what keeps the bank reading as stone from standing distance — the direct answer to the pop risk above.
 
+**The piles are visible on WebGPU only — decided.** Measured in the browser: the WebGL beach is one 256² grid over 512 m, so a 2.4 m mound gets **4 vertices** and the bank is effectively not drawn. Grounding is exact on both paths (it reads `shoreProfileJS` directly), so on the fallback the walker steps up onto a bank that isn't really there. Making it visible would mean local dense patches *and* a GLSL port of the pebble shading — the fallback has no aux texture and no cobble path — and that is not worth doing before the throw is proven fun. Note the cost honestly: docs/10 records that on the floor spec WebGL is the Safari and Firefox path, so this is most browsers on that machine, not an edge case.
+
+The broader "how much fidelity the fallback keeps" question stays open; this settles the piles only.
+
 Still open at the swap: spawning the bed's stones as static instances on the crown, and the crouch handoff itself.
 
 ### 2. Movement trails

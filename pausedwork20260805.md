@@ -176,6 +176,51 @@ renderers read the same four numbers.
 Pile height sits **outside** `macroHeightScale`: the piles are where the player
 sifts, so their geometry is level design rather than an art-direction tunable.
 
+### Verified in a browser, and what it turned up
+
+Driven headlessly through the app's own `SANDSIM` hook on `?webgl=1`. The live
+`terrain.heightAt` around the eastern spot:
+
+| | |
+|---|---|
+| crown | 0.594 m |
+| crown edge, 0.8 m | 0.622 m (the foreshore's own ramp, not a dome) |
+| mid-face, 1.65 m | 0.419 m |
+| rim, 2.4 m | 0.2445 m |
+| open beach, 9 m | 0.2445 m |
+
+Rim and open beach agree to four decimals — the mound closes exactly where it
+should. The walker climbs it with no controller work, as predicted: `player
+11.50 0.59 -8.40` on the crown against `player 2.50 0.26 -8.40` at the same z
+on open sand.
+
+**The WGSL bake is still not compile-verified.** WebGPU cannot run in a
+container: SwiftShader's Vulkan refuses the bake's 4 MB allocations
+(`createBuffer failed, size (4194304) is too large for the implementation`) and
+the adapter drops out. The generated include does parse clean as WGSL under
+`wgsl_reflect`, which rules out syntax but not Babylon's preprocessor or Dawn.
+First run on real hardware is still the real check.
+
+**The piles are WebGPU-only, by decision.** The WebGL beach is a single 256²
+grid over 512 m, so a 2.4 m mound gets **4 vertices** (nearest 0.64 m from the
+crown, measured off the live mesh) and the bank is not meaningfully drawn —
+while grounding stays exact, so the fallback walks you up a step that isn't
+there. Fixing it needs local dense patches *and* a GLSL port of the pebble
+shading, since the fallback has neither an aux texture nor the voronoi cobble
+path. Deliberately not done. See docs/09.
+
+### Before slice 3: the Babylon versions do not match
+
+`rock-sift` is on `@babylonjs/core` **8.56**; `sand-sim` is on **9.18**. The
+crouch handoff eventually puts both in one page. Worth resolving before the
+handoff is designed rather than during it.
+
+Unrelated good news for that slice: `rock-sift/src/main.js:61` constructs a
+plain `Engine`, i.e. **WebGL2**. The sifting minigame never used WebGPU, so
+Havok, the bed, examine and bucket are renderer-agnostic and work everywhere.
+The fallback question only ever touches the approach to a spot, never the
+sifting itself.
+
 ---
 
 ## 3. Missing texture assets
