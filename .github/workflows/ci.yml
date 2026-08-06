@@ -21,9 +21,10 @@
 #
 # ## Adding a lab
 #
-# Add a row to the matrix. The install step keys off whether the lab has a lockfile,
-# so a dependency-free lab (`stone-skipping-physics` is one today) needs no special
-# case, and one that later grows dependencies starts installing them on its own.
+# Add a row to the matrix, and add the directory to `workspaces` in the root
+# package.json. Dependencies come from the single root install either way, so a
+# dependency-free lab (`stone-skipping-physics` is one, and should stay one) needs
+# no special case.
 
 name: CI
 
@@ -70,21 +71,11 @@ jobs:
           - name: rock-sift
             dir: rock-sift
             timeout: 25
-          # Needs rock-forge installed as well, and that is not an accident of the
-          # runner. Three of sand-sim's checks (rock-material, bed-load, sift-pad)
-          # import rock-forge SOURCE directly, and Node resolves a bare specifier
-          # from the importing FILE's directory upward — so
-          # `rock-forge/src/babylon/rockMaterial.js` looks in `rock-forge/
-          # node_modules`, never in sand-sim's. Installing sand-sim alone leaves
-          # those imports unresolvable, which is how this was found.
-          #
-          # Worth knowing while it stands: sand-sim pins Babylon 9.18 and rock-forge
-          # 8.56, so those shared files run against 8.56 no matter what sand-sim
-          # asks for. Flagged in docs/audit-2026-08-05.md; not this file's problem
-          # to fix, but this is where you will next trip over it.
+          # Imports rock-forge source directly (rock-material, bed-load, sift-pad).
+          # That needed an explicit sibling install back when each lab had its own
+          # node_modules; under workspaces the root install covers it.
           - name: sand-sim
             dir: sand-sim
-            alsoInstall: rock-forge
             timeout: 15
 
     steps:
@@ -94,24 +85,15 @@ jobs:
         with:
           node-version: 22
 
-      # Sibling labs whose source this lab's suite imports. Separate step so a
-      # missing cross-lab install reads as exactly that in the log.
-      - name: Install sibling (${{ matrix.alsoInstall }})
-        if: matrix.alsoInstall != ''
-        working-directory: ${{ matrix.alsoInstall }}
+      # One install, at the workspace root, for every job. The labs are npm
+      # workspaces now, so there is exactly one lockfile and one hoisted
+      # node_modules — installing per-lab is not just unnecessary, it is what
+      # produced the duplicate-Babylon problem in the first place.
+      #
+      # Each job still runs only its own suite and still fails on its own, which
+      # is what keeps the labs independently tunable. Only the install is shared.
+      - name: Install workspace
         run: npm ci
-
-      - name: Install
-        working-directory: ${{ matrix.dir }}
-        # Written as a real `if` rather than `[ -f x ] && npm ci || echo`, because in
-        # that form a genuine `npm ci` failure falls through to the `||` and the job
-        # goes green on a lab whose dependencies never installed.
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            echo "No lockfile in ${{ matrix.dir }} — dependency-free lab, nothing to install."
-          fi
 
       - name: Test
         working-directory: ${{ matrix.dir }}

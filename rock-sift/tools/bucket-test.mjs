@@ -8,6 +8,7 @@
 // walls that a stone can squeeze through. This drops stones down the middle and
 // checks they are still in there afterwards.
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { HavokPlugin, NullEngine, Scene, Vector3 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
@@ -17,7 +18,7 @@ import { addRock, boundingRadius } from "../src/field.js";
 import { loadBucket } from "../src/bucket.js";
 import { BED_RADIUS, GRAVITY, PHYSICS_SUBSTEP_MS, U, ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 
-const wasm = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+const wasm = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const scene = new Scene(new NullEngine());
 scene.enablePhysics(new Vector3(0, GRAVITY, 0), new HavokPlugin(true, await HavokPhysics({ wasmBinary: wasm })));
 scene.getPhysicsEngine().setSubTimeStep(PHYSICS_SUBSTEP_MS);

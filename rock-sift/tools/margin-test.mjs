@@ -9,6 +9,7 @@
 // each archetype onto flat static ground and reports how far above it they stop.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import {
   HavokPlugin, NullEngine, PhysicsBody, PhysicsMotionType, PhysicsShapeBox,
   Quaternion, Scene, Vector3,
@@ -21,7 +22,10 @@ import { ARCHETYPE_COUNT, ROCK_SEED } from "../src/config.js";
 const U = Number(process.argv[2]) || 4;
 const GRAVITY = -9.81 * U;
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const havok = await HavokPhysics({ wasmBinary });
 
 const engine = new NullEngine();

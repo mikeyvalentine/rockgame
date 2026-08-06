@@ -36,7 +36,12 @@ src/babylon/   the renderer binding
 ## Running it
 
 ```bash
-npm install && npm run dev
+# from the REPO ROOT — the labs are npm workspaces, one install covers all
+# from the REPO ROOT — the labs are npm workspaces, one install covers all.
+# Running `npm install` in here creates a nested node_modules and a second
+# copy of Babylon, which is the bug the workspace exists to prevent.
+npm install
+npm run dev --workspace rock-forge
 ```
 
 Then <http://localhost:5184>. `npm test` runs the headless geometry checks.

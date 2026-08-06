@@ -139,7 +139,13 @@
   </div>
 </div>
 
-<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<!-- Babylon is PINNED. It used to be cdn.babylonjs.com/babylon.js, which serves
+     *latest* — this page could change behaviour overnight with no commit, which is
+     not a property a game whose leaderboard promises "identical inputs, identical
+     results" can have. The version tracks @babylonjs/core in the workspace root;
+     bump both together. tools/pinned-cdn-check.mjs fails the build if this reverts
+     to an unpinned URL. -->
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@9.18.0/babylon.js"></script>
 <script type="module">
 import { StoneSkipSim, THROW_PRESETS, PRESET_LABELS, PHYSICS_PROFILES, DEFAULT_ENV, VERSION, Outcome } from '../src/stoneSkipping.js'
 import { makeGerstnerWater } from '../src/babylonAdapter.js'
@@ -148,7 +154,7 @@ const $ = id => document.getElementById(id)
 
 if (typeof BABYLON === 'undefined') {
   $('err').style.display = 'grid'
-  $('err').innerHTML = 'Babylon.js could not load from the CDN.<br>' +
+  $('err').innerHTML = 'Babylon.js could not load from the pinned CDN.<br>' +
     'Check your network, or drop babylon.js next to this file and change the script tag.'
   throw new Error('no babylon')
 }

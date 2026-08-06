@@ -40,22 +40,20 @@ const run = (cmd, cwd = ROOT) => {
 
 // ------------------------------------------------------------------- builds
 //
-// Each lab's dependencies are installed here rather than assumed. They used to
-// be assumed, and that is a quiet way to ship a stale site: a lab whose
-// package.json has moved on builds against whatever `node_modules` happens to
-// be lying about, and on a clean machine — CI, or a fresh clone — it simply
-// fails on the first missing import. `npm ci` when there is a lockfile, so what
-// deploys is what the lockfile pins.
+// The labs are npm WORKSPACES, so one install at the root installs every one of
+// them, into one hoisted `node_modules`. That is the whole point: the labs used
+// to install separately and ended up on different Babylon versions without
+// anyone deciding to, and sand-sim — which imports rock-forge source directly —
+// was silently loading two Babylon copies in one process.
+//
+// This used to walk the labs calling `npm ci` in each. Doing that now would be
+// worse than redundant: the per-lab lockfiles are gone (a workspace has one
+// lockfile, at the root), so it would fall through to `npm install` inside each
+// lab, create nested `node_modules`, and reintroduce exactly the duplicate
+// copies the workspace exists to remove.
 const LABS = ["rock-sift", "rock-forge", "sand-sim"];
 
-function install(dir) {
-  const at = join(ROOT, dir);
-  if (!existsSync(join(at, "package.json"))) return;
-  run(existsSync(join(at, "package-lock.json")) ? "npm ci" : "npm install", at);
-}
-
-install(".");
-for (const lab of LABS) install(lab);
+run(existsSync(join(ROOT, "package-lock.json")) ? "npm ci" : "npm install");
 
 run("npx vite build");
 

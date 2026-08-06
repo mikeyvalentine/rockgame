@@ -30,6 +30,7 @@
 //   under sand   stones that tunnelled through the terrain
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { HavokPlugin, NullEngine, PhysicsMotionType, Scene, Vector3 } from "@babylonjs/core";
 import HavokPhysics from "@babylonjs/havok";
 import "@babylonjs/loaders/glTF/index.js";
@@ -57,7 +58,10 @@ const STROKES = [
   { dig: 0.030, from: [-0.15, 0.15], to: [0.15, -0.15] },
 ];
 
-const wasmBinary = fs.readFileSync(new URL("../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url));
+// Resolved through Node, not a hard-coded `../node_modules`: the labs are npm
+// workspaces, so dependencies hoist to the repo root. Where npm puts a package
+// is npm's business, not a script's.
+const wasmBinary = fs.readFileSync(createRequire(import.meta.url).resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"));
 const havok = await HavokPhysics({ wasmBinary });
 
 const engine = new NullEngine();

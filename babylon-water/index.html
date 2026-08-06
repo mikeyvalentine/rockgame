@@ -73,7 +73,13 @@
     <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
 </div>
 
-<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<!-- Babylon is PINNED. It used to be cdn.babylonjs.com/babylon.js, which serves
+     *latest* — this page could change behaviour overnight with no commit, which is
+     not a property a game whose leaderboard promises "identical inputs, identical
+     results" can have. The version tracks @babylonjs/core in the workspace root;
+     bump both together. tools/pinned-cdn-check.mjs fails the build if this reverts
+     to an unpinned URL. -->
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@9.18.0/babylon.js"></script>
 <script>
 // =============================================================================
 // Height-field water — a direct port of Evan Wallace's WebGL Water simulation.
