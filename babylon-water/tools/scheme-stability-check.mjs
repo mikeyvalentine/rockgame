@@ -147,6 +147,66 @@ check("today's damping is in the safe region",
   gridModePeak(WAVE_C, DAMPING) < 4,
   `${gridModePeak(WAVE_C, DAMPING).toFixed(2)}x at ${DAMPING}`);
 
+/**
+ * Does ONE impact launch a TRAIN of rings, or a single ring?
+ *
+ * A real splash resolves into 3-5 visible concentric rings within the first
+ * half-second, because water is dispersive and different wavelengths leave the
+ * impact at different speeds. This scheme is dispersive too — short waves
+ * travel slower on the grid than long ones — so the train is not something that
+ * has to be drawn, it is what the integrator does with a crater.
+ *
+ * But only with a CRATER. Wallace's original drop is a smooth positive mound
+ * with no structure to disperse, and a mound is what this page stamped until
+ * the profile was replaced. If the crater-plus-rim shape were ever reverted the
+ * water would go back to one ring per bounce and nothing else here would
+ * notice, which is what this check is for.
+ *
+ * 1D slice through the middle of the domain, so the source is not pinned
+ * against a boundary — with the crater at index 0 the update loop never touches
+ * it, it acts as a driven wall, and nothing radiates at all.
+ */
+{
+  const RIM = Number((html.match(/const RIM_NEUTRAL\s*=\s*([^;]+);/) || [])[1]
+    ? eval(html.match(/const RIM_NEUTRAL\s*=\s*([^;]+);/)[1].replace("CRATER_KAPPA", "(0.5 - 2/(Math.PI*Math.PI))"))
+    : NaN);
+  const CELLS = num(/const MIN_DROP_CELLS\s*=\s*([0-9]+)/, "MIN_DROP_CELLS");
+  const N = 1400, MID = 700;
+  const h = new Float64Array(N), v = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const u = Math.min(1, Math.abs(i - MID) / CELLS);
+    const w = 0.5 - 0.5 * Math.cos((1 - u) * Math.PI);
+    const ring = Math.sin(u * Math.PI);
+    h[i] = -w + RIM * ring * ring;
+  }
+  const C = waveCFor(RES_DEFAULT);
+  const lobesAfter = (frames) => {
+    for (let s = 0; s < frames; s++) {
+      const hp = h.slice();
+      for (let i = 1; i < N - 1; i++) {
+        const avg = (hp[i - 1] + hp[i + 1]) * 0.5;
+        v[i] = DAMPING * (v[i] + (avg - hp[i]) * C);
+        h[i] = hp[i] + v[i];
+      }
+    }
+    const half = h.slice(MID);
+    const pk = Math.max(...half.map(Math.abs));
+    let n = 0, prev = 0;
+    for (const x of half) {
+      const s = Math.abs(x) > pk * 0.10 ? Math.sign(x) : 0;
+      if (s !== 0 && s !== prev) n++;
+      prev = s;
+    }
+    return n;
+  };
+  const quarter = lobesAfter(15);
+  const half = lobesAfter(15);   // cumulative: 30 frames total
+  check("one impact launches a ring TRAIN, not a single ring",
+    quarter >= 3 && half > quarter,
+    `${quarter} rings at 0.25 s, ${half} at 0.5 s` +
+    (quarter < 3 ? " — a smooth mound disperses into one ring; is the crater profile still there?" : ""));
+}
+
 // Ripples have to actually last, or the whole point of the damping value is lost.
 const perSec = Math.pow(DAMPING, 60 * STEPS);
 const at10s = Math.pow(perSec, 10);
