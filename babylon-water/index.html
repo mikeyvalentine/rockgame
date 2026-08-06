@@ -84,7 +84,7 @@
     <button id="plungeBtn">Plunge</button>
     <button id="followBtn">Camera: follow</button>
     <button id="slowBtn">Slow motion: off</button>
-    <b>space</b> throw &nbsp;·&nbsp; <b>click / drag</b> the water &nbsp;·&nbsp;
+    <b>space</b> throw &nbsp;·&nbsp; <b>drag</b> to orbit &nbsp;·&nbsp;
     <b>R</b> reset &nbsp;·&nbsp; <b>D</b> auto-rain &nbsp;·&nbsp; <b>P</b> pause
 </div>
 
@@ -994,34 +994,20 @@ function queueDrop(worldX, worldZ, strength, radius) {
     });
 }
 
-let pointerDown = false;
-scene.onPointerObservable.add((pi) => {
-    const t = pi.type;
-    if (t === BABYLON.PointerEventTypes.POINTERDOWN) pointerDown = true;
-    if (t === BABYLON.PointerEventTypes.POINTERUP)   pointerDown = false;
-    if (t !== BABYLON.PointerEventTypes.POINTERDOWN &&
-        !(t === BABYLON.PointerEventTypes.POINTERMOVE && pointerDown)) return;
+// Clicking the water no longer makes a ripple.
+//
+// It was the original way to poke the sim, from when this page was only a water
+// toy. On the skip lab it is now actively wrong: a click both stamped a drop AND
+// snapped the interaction window to wherever you clicked — and a window snap
+// clears the field, so an idle click in the middle of watching a run wiped the
+// trail it had just laid down. That is the exact behaviour the run-placement
+// work exists to prevent, reachable by accident with the mouse.
+//
+// The pointer belongs to the camera now: drag orbits, wheel zooms, and nothing
+// you do with it can destroy a run. Ripples come from the stone (Throw / space)
+// and from Plunge; auto-rain (D) still works for testing the sim on its own.
 
-    // Pick against the FLAT plane, not the displaced mesh: Babylon's picking
-    // uses the CPU-side geometry, which never moved, since the displacement
-    // lives entirely in the vertex shader. Intersecting y = 0 analytically is
-    // both cheaper and honest about that.
-    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, BABYLON.Matrix.Identity(), camera);
-    if (Math.abs(ray.direction.y) < 1e-4) return;
-    const dist = -ray.origin.y / ray.direction.y;
-    if (dist <= 0) return;
-    const p = ray.origin.add(ray.direction.scale(dist));
-
-    // Anywhere on the pond: the window snaps to the click (one scroll pass)
-    // and the ripple lands there. This is the same path a skip run drives.
-    if (Math.abs(p.x) < POND_HALF && Math.abs(p.z) < POND_HALF) {
-        windowTarget.x = p.x;
-        windowTarget.z = p.z;
-        queueDrop(p.x, p.z, DROP_S);
-    }
-});
-
-// --- controls ----------------------------------------------------------------
+// --- controls ------------// --- controls ----------------------------------------------------------------
 let paused = false, raining = false;
 addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
