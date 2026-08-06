@@ -58,14 +58,26 @@ The broader "how much fidelity the fallback keeps" question stays open; this set
 
 `sand-sim/src/scene/siftingBeds.js` draws rock-sift's baked beds on the crowns: 2160 stones across four spots, one bed variant each, no physics. `tools/bed-load-check.mjs` covers it.
 
-Nothing crosses the Babylon boundary. rock-sift is on `@babylonjs/core` 8.56 and sand-sim on 9.18, so sand-sim regenerates the cast from `rock-forge` (pure JS) and decodes the bed with `shared/bedFormat.js` (DataView only), then builds meshes with its own Babylon. The forge is deterministic, so same seed and count gives the same forty stones — and the bed's stored *names* are what proves it, resolved stone by stone in the check.
+Nothing crosses the Babylon boundary: sand-sim regenerates the cast from `rock-forge` (pure JS) and decodes the bed with `shared/bedFormat.js` (DataView only), then builds meshes with its own Babylon. That was forced at the time — rock-sift was on `@babylonjs/core` 8.56 against sand-sim's 9.18 — and it is worth keeping now the two are both on 9.18, because it means the beach carries no physics engine to draw scenery. The forge is deterministic, so same seed and count gives the same forty stones — and the bed's stored *names* are what proves it, resolved stone by stone in the check.
 
 Two costs that had to be measured rather than assumed:
 
 - **Scenery LOD.** rock-sift draws at icosphere level 3 (1280 tris) because the player is crouched over the bed. At standing distance level 2 is indistinguishable and four times cheaper. This is the rock-field LOD above, in its cheapest form — the detailed bed is what the crouch swaps in.
 - **One mesh per (archetype, spot).** Babylon frustum-tests a thin-instanced mesh by the bounds of *all* its instances, so merging the four spots per archetype means nothing ever culls. Measured: 2,764,800 triangles submitted from anywhere on the beach, against a 131k beach. Split per spot and dropped to scenery LOD: **172,800 with a bed in view, 0 with none.**
 
-Still open at the swap: the crouch handoff itself.
+### The crouch — built
+
+Stand on a pile, press E, and you are sifting. Escape stands you back up on the beach where you left off.
+
+**Sifting is its own environment.** The sift world is a second Babylon scene — rock-sift's, physics and all, built by `rock-sift/src/world.js` — sharing the page's engine and nothing else. While it is up the beach is *paused*: not rendered, not stepped, not listening. That is the arrangement this doc's performance note asks for, and it is what makes a full Havok bed affordable, because the two never run at once.
+
+It is a handoff rather than a merge because the two worlds do not share a scale: the beach is 512 m of terrain in metres, the bed is 80 cm of stones modelled at 4x. Holding both in one scene means reconciling two world scales and two lighting rigs for a view that only ever shows one of them.
+
+**rock-sift moved to Babylon 9.18** to make this possible — it was on 8.56, and two majors in one page is two Scene registries and two sets of class identities. Its five Havok tests pass on 9.18 unchanged. sand-sim's vite config dedupes `@babylonjs/core`, because rock-sift's bare import otherwise resolves to a second copy of the same version.
+
+`main.js` gave up everything below the engine to `world.js`, so the lab page and sand-sim build the *same* sift mode rather than two of them.
+
+Measured in the browser: open and close at two different spots, scene count 1 → 2 → 1 each time, no leak.
 
 ### 2. Movement trails
 

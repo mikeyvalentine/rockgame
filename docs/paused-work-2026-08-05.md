@@ -77,12 +77,12 @@ That is why the sift screenshots read pale and flat next to the forge lab.
 
 ---
 
-## 2. sand-sim × rock-sift integration — scoped, not started
+## 2. sand-sim × rock-sift integration — built
 
 **Goal:** rock piles visible in the sand sim, walkable in first person, click to crouch
 into sifting.
 
-**Status:** slice 1 built and tested. Slices 2 and 3 still want a live scene.
+**Status:** all three slices built, tested and seen running.
 
 ### The DeformationField is the wrong tool
 
@@ -125,9 +125,8 @@ Piles follow the same twin pattern.
 1. **Pile field.** ✅ Built. `shared/pileField.js` + the mound term in the height bake.
 2. **Rock instances.** ✅ Built. `sand-sim/src/scene/siftingBeds.js` — 2160 stones
    across four spots, drawn and culled, no physics.
-3. **Crouch transition.** Proximity prompt → camera move → hand off to rock-sift's
-   sift mode, which is where the physics bed wakes. `spotAt()` is the proximity
-   test and is tested; nothing calls it yet.
+3. **Crouch transition.** ✅ Built. Stand on a pile, press E, sift; Escape comes
+   back. The beach pauses while the sift world is up.
 
 ### Slice 1, as built
 
@@ -221,6 +220,28 @@ there. Fixing it needs local dense patches *and* a GLSL port of the pebble
 shading, since the fallback has neither an aux texture nor the voronoi cobble
 path. Deliberately not done. See docs/09.
 
+### Slice 3, as built
+
+`rock-sift/src/main.js` gave up everything below the engine to a new
+`world.js`, so the lab page and sand-sim build the *same* sift mode instead of
+two of them. sand-sim's `scene/siftSession.js` opens it as a second scene and
+stops the beach dead — no render, no character, no deformation, no input —
+which is the pausable-sand-sim arrangement docs/10 asks for and what makes a
+full Havok bed affordable.
+
+A handoff rather than a merge, because the two worlds do not share a scale: 512
+m of terrain in metres against 80 cm of stones modelled at 4x.
+
+**Escape was being swallowed.** `shore.leave()` returns early while a tween is
+running, so a press during the crouch transition did nothing and the player had
+to notice and press again. It is not a narrow window — the transition is 1.1 s
+of tween time and `world.js` clamps dt to 50 ms, so at 5 fps it stretches past
+four seconds. The intent is remembered now and acted on when the camera settles.
+Found by instrumenting the live scene, not by reading it.
+
+Verified in the browser: crouch and stand at two different spots, scene count
+1 → 2 → 1 each time, so the sift scene really is disposed.
+
 ### Slice 2, as built
 
 `siftingBeds.js` draws each spot's baked bed on its crown. The plan said "spawn
@@ -268,11 +289,14 @@ those spanned 55 m of shore. Split per spot and dropped to icosphere level 2
 triangles with a bed in view, 0 with none.** Measured both ways in the browser,
 not estimated.
 
-### Before slice 3: the Babylon versions do not match
+### The Babylon version gap — resolved
 
-`rock-sift` is on `@babylonjs/core` **8.56**; `sand-sim` is on **9.18**. The
-crouch handoff eventually puts both in one page. Worth resolving before the
-handoff is designed rather than during it.
+`rock-sift` was on `@babylonjs/core` **8.56**, `sand-sim` on **9.18**, and the
+crouch puts both in one page. It upgraded cleanly: all five Havok tests pass on
+9.18 with no source changes at all. sand-sim's vite config now dedupes
+`@babylonjs/core`, since rock-sift's bare import otherwise resolves to a second
+copy of the same version — two ShaderStores, two Engine classes, and an
+`instanceof` that quietly answers false.
 
 Unrelated good news for that slice: `rock-sift/src/main.js:61` constructs a
 plain `Engine`, i.e. **WebGL2**. The sifting minigame never used WebGPU, so

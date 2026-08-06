@@ -30,6 +30,8 @@
   "license": "MIT",
   "dependencies": {
     "@babylonjs/core": "^9.18.0",
+    "@babylonjs/havok": "^1.3.14",
+    "@babylonjs/loaders": "^9.18.0",
     "@babylonjs/materials": "^9.18.0"
   },
   "devDependencies": {
