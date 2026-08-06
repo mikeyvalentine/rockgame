@@ -266,7 +266,23 @@ playable bounce is clipped, and that the softest-to-hardest spread survives
 **Energy is the fallback, not the driver.** A skip retains nearly all its
 kinetic energy — that is what makes it a skip — so sizing its crater by energy
 over-reads it by two orders of magnitude. The energy form is only correct for an
-impact that actually spends itself, which on this page means Plunge.
+impact that actually spends itself, which on this page means Plunge. Its
+efficiency constant is **calibrated, not derived** (0.0046), and that figure
+looks wrong until you notice what it absorbs: a band-limited crater 60 mm deep
+over a 9.4 cm radius holds 0.084 J, so a 24.5 J plunge puts a few tenths of a
+percent of itself into the hole. The first value tried was 0.15, at which every
+caller down to a 2.7 J drop saturated the cap — the same "every impact looks
+identical" failure, on the other path.
+
+**Crater WIDTH is pinned by the grid, and that is not a compromise to fix by
+widening.** Craters keep a roughly constant depth-to-width ratio, so R ∝ V^⅓ is
+the right law — but it starts from the real 1.0–2.2 cm contact radius, and the
+grid floor is already 9.4 cm. Applying it on top of a radius that is itself
+clamped four times too wide double-counts, and volume conservation charges for
+it in slope, which is the only thing the surface shader shows: spread 0 gives
+5.88 mm depth at slope 0.063, spread 4.5 gives 0.95 mm at slope 0.004. A 15×
+loss of the visible signal to buy 2.5× of width. `craterSpread` therefore
+defaults to **0**, and only becomes meaningful if cells ever drop below ~7 mm.
 
 ### Water reacts to the whole run, not just the bounces — decided
 

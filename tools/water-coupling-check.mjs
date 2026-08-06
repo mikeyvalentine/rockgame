@@ -331,7 +331,10 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
   const CRATER_KAPPA = eval(constant('CRATER_KAPPA'));
   const RIM_NEUTRAL = eval(constant('RIM_NEUTRAL'));
   const MIN_DROP_CELLS = eval(constant('MIN_DROP_CELLS'));
-  const SIZE = eval(constant('SIZE'));
+  const SIZE = eval(constant('SPAN_BASE'));
+  const SPAN_MAX = eval(constant('SPAN_MAX'));
+  const SPAN_MARGIN = eval(constant('SPAN_MARGIN'));
+  const craterSpread = Number(html.match(/craterSpread:\s*([0-9.]+)/)[1]);
   // The page's DEFAULT resolution, which sets the cell size and so the depth
   // every crater comes out at. Parsed rather than assumed: `?res=` can change
   // it at runtime, but what ships is what this table has to describe.
@@ -400,7 +403,7 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
   // Real throws, real penetrations, the page's real formula. This is the
   // measurement the "static ripples" report needed and nothing produced.
   const PRESETS = ['casual', 'decent', 'strong', 'steinerThrow'];
-  const depths = [];
+  const depths = [], widths = [];
   console.log(`\n  crater depth per bounce, volume-true ` +
     `(RES ${RES_DEFAULT}, ${(CELL * 1000).toFixed(1)} mm cells):\n`);
   console.log(`    ${pad('throw', 15)} ${lpad('bounces', 8)} ${lpad('softest', 10)} ${lpad('hardest', 10)}`);
@@ -416,7 +419,12 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
         const sinA = Math.sin(Math.atan2(Math.max(0, e.approachSpeed), h));
         const elong = Math.min(elongMax, Math.max(1.6, 1 / Math.max(0.05, sinA)));
         const volume = 0.8 * Math.PI * sim.effRadius ** 2 * e.penetration;
-        d.push(craterDepth(volume, MIN_ACROSS, elong));
+        // Width scales with volume too — see craterSpread. Depth follows from
+        // whatever width that gives, so this is the depth the page actually
+        // writes, not the depth at a fixed radius.
+        const across = Math.max(MIN_ACROSS, (craterSpread * Math.cbrt(volume)) / SIZE);
+        d.push(craterDepth(volume, across, elong));
+        widths.push(across * SIZE);
       }
     }
     if (!d.length) continue;
@@ -512,6 +520,106 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
         `${peak.toExponential(2)} — a hole that never shuts`);
     });
   }
+
+  /* ---------------------------------------------------------------- *
+   * The ENERGY fallback, for callers that stop dead (Plunge).
+   * ---------------------------------------------------------------- *
+   *
+   * Same saturation trap as the impact path, on a different road. The first
+   * efficiency tried here was 0.15, at which a 2.7 J drop computed a 104 mm
+   * crater against a 60 mm cap — so every plunge from a gentle one to a
+   * cannonball produced the identical maximum hole. It was caught by hand,
+   * after the volume path had already been fixed for exactly this.
+   */
+  const PLUNGE_EFFICIENCY = eval(constant('PLUNGE_EFFICIENCY'));
+  const CRATER_KAPPA2 = eval(constant('CRATER_KAPPA2'));
+  const elongMin = Number(html.match(/elongMin:\s*([0-9.]+)/)[1]);
+  const depthFromEnergy = (J, across, elong) => {
+    const R = across * SIZE;
+    return Math.sqrt(2 * PLUNGE_EFFICIENCY * J /
+      (1000 * 9.81 * Math.PI * R * R * elong * CRATER_KAPPA2));
+  };
+
+  {
+    // Straight down, so elongation is at its floor — the deepest case.
+    const at = (m, v) => depthFromEnergy(0.5 * m * v * v, MIN_ACROSS, elongMin);
+    const gentle = at(0.15, 6);      // a stone dropped in
+    const plunge = at(0.25, 14);     // the Plunge button
+    const cannon = at(1.20, 25);     // "a huge rock thrown straight in at speed"
+
+    test('a gentle drop is a dimple, not a maximum crater', () => {
+      assert.ok(gentle < rippleMax * 0.5,
+        `${(gentle * 1000).toFixed(0)} mm against a ${rippleMax * 1000} mm cap`);
+    });
+
+    test('the plunge button lands under the cap rather than through it', () => {
+      assert.ok(plunge < rippleMax && plunge > rippleMax * 0.5,
+        `${(plunge * 1000).toFixed(0)} mm against a ${rippleMax * 1000} mm cap — ` +
+        `over it and every plunge looks identical, far under it and Plunge is limp`);
+    });
+
+    test('a cannonball still outruns an ordinary plunge', () => {
+      assert.ok(cannon > plunge,
+        `${(cannon * 1000).toFixed(0)} mm vs ${(plunge * 1000).toFixed(0)} mm`);
+      console.log(`      (gentle ${(gentle * 1000).toFixed(0)} mm · plunge ` +
+        `${(plunge * 1000).toFixed(0)} mm · cannonball ` +
+        `${(Math.min(cannon, rippleMax) * 1000).toFixed(0)} mm at the cap)`);
+    });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * The window has to HOLD the run it is placed for.
+   * ---------------------------------------------------------------- *
+   *
+   * A drop queued outside the interaction window is silently skipped — there
+   * is no deviation field out there to write into — so a run that outgrows its
+   * window loses the far end of its trail with nothing to say so.
+   *
+   * Placement used to be a guess: drop the window 0.72 of a half-span
+   * downrange of the first impact. Measured against the presets, `strong`
+   * needed 30.3 m from that centre against 29.4 m usable, and `truscottLimit`
+   * needed 81.6 m. Both clipped.
+   *
+   * placeRun() replaces the guess with the run itself, since the solver is
+   * deterministic and can be run to completion first. This asserts the fit for
+   * every preset in the picker, which is the only way to know the widening
+   * rule and SPAN_MAX are actually big enough.
+   */
+  console.log('\n  window span chosen per throw (placeRun):\n');
+  console.log(`    ${pad('throw', 15)} ${lpad('path', 9)} ${lpad('span', 8)} ` +
+    `${lpad('usable', 9)} ${lpad('worst', 8)}`);
+
+  for (const name of Object.keys(THROW_PRESETS)) {
+    const sim = new StoneSkipSim({ profile: 'game', water: makeAmbientWater() });
+    sim.throwStone({ ...THROW_PRESETS[name], headingDeg: 0, origin: { x: -42, z: 0 } });
+    const r = sim.simulate({ maxTime: 40, dt: 1 / 240, collectPath: true, pathEvery: 1 / 60 });
+    if (!r.path.length) continue;
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const s of r.path) {
+      minX = Math.min(minX, s.p.x); maxX = Math.max(maxX, s.p.x);
+      minZ = Math.min(minZ, s.p.z); maxZ = Math.max(maxZ, s.p.z);
+    }
+    // The page's own rule, verbatim.
+    const need = Math.max(maxX - minX, maxZ - minZ) + 2 * SPAN_MARGIN;
+    const span = Math.min(SPAN_MAX, Math.max(SIZE, need / 0.84));
+    const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+    const worst = Math.max(Math.abs(minX - cx), Math.abs(maxX - cx),
+      Math.abs(minZ - cz), Math.abs(maxZ - cz));
+    const usable = (span / 2) * 0.92;
+
+    console.log(`    ${pad(name, 15)} ${lpad((maxX - minX).toFixed(1) + 'm', 9)} ` +
+      `${lpad(span.toFixed(0) + 'm', 8)} ${lpad(usable.toFixed(1) + 'm', 9)} ` +
+      `${lpad(worst.toFixed(1) + 'm', 8)}${worst > usable ? '  CLIPS' : ''}`);
+
+    test(`${name} fits the window placed for it`, () => {
+      assert.ok(worst <= usable,
+        `the run reaches ${worst.toFixed(1)} m from the window centre but only ` +
+        `${usable.toFixed(1)} m is usable — the far end of the trail is dropped ` +
+        `silently. Raise SPAN_MAX (currently ${SPAN_MAX} m).`);
+    });
+  }
+  console.log('');
 
   // Every one of them still has to be a ripple rather than a rounding error.
   test('even the softest bounce leaves a crater the grid can carry', () => {

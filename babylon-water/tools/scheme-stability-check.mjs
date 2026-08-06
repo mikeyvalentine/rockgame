@@ -47,8 +47,9 @@ const num = (re, label) => {
 };
 
 const DAMPING = num(/RIPPLE\s*=\s*window\.RIPPLE\s*=\s*\{\s*damping:\s*([0-9.]+)/, "RIPPLE.damping");
-const SIZE    = num(/const SIZE\s*=\s*([0-9.]+)/, "SIZE");
-const STEPS   = num(/const STEPS\s*=\s*([0-9]+)/, "STEPS");
+const SIZE     = num(/const SPAN_BASE\s*=\s*([0-9.]+)/, "SPAN_BASE");
+const SPAN_MAX = num(/const SPAN_MAX\s*=\s*([0-9.]+)/, "SPAN_MAX");
+const STEPS    = num(/const STEPS\s*=\s*([0-9]+)/, "STEPS");
 const WAVE_SPEED = num(/const WAVE_SPEED\s*=\s*([0-9.]+)/, "WAVE_SPEED");
 /**
  * RES is a URL flag now, so there is no single value to check — every option
@@ -60,8 +61,20 @@ const RES_OPTIONS = (html.match(/\[512,\s*1024,\s*2048\]/) ? [512, 1024, 2048] :
 const RES_DEFAULT = num(/\?\s*q\s*:\s*(\d+);/, "default RES");
 /** The page's own derivation, duplicated here on purpose — if the two drift,
  *  the wave-speed check below catches it. */
-const waveCFor = (res) => 2 * Math.pow(WAVE_SPEED / ((SIZE / res) * STEPS * 60), 2);
+const waveCFor = (res, span = SIZE) =>
+  2 * Math.pow(WAVE_SPEED / ((span / res) * STEPS * 60), 2);
 const WAVE_C = waveCFor(RES_DEFAULT);
+
+/**
+ * The window is sized per throw now (placeRun), so the span is not one number
+ * either — it runs from SPAN_BASE up to SPAN_MAX. WAVE_C rises as cells shrink,
+ * so the NARROWEST window is the dangerous one, and SPAN_BASE is it.
+ *
+ * That is the check worth having: it is what says the page may only ever widen
+ * the window, and it is the reason placeRun() does not shrink it for short
+ * throws even though smaller cells would look better.
+ */
+const SPANS = [SIZE, (SIZE + SPAN_MAX) / 2, SPAN_MAX];
 
 /**
  * Peak excursion of the checkerboard mode over `n` steps.
@@ -98,7 +111,8 @@ function cellsPerStep(C, n = 400) {
   return (best - 63) / n;
 }
 
-console.log(`\n  WAVE_SPEED ${WAVE_SPEED} m/s · damping ${DAMPING} · SIZE ${SIZE} m · STEPS ${STEPS}`);
+console.log(`\n  WAVE_SPEED ${WAVE_SPEED} m/s · damping ${DAMPING} · STEPS ${STEPS}`);
+console.log(`  window span ${SIZE}-${SPAN_MAX} m (placeRun widens, never narrows)`);
 console.log(`  RES options ${RES_OPTIONS.join(", ")} (default ${RES_DEFAULT})\n`);
 
 // THE ONE THAT MATTERS. Across the whole slider range, not just today's value:
@@ -106,24 +120,27 @@ console.log(`  RES options ${RES_OPTIONS.join(", ")} (default ${RES_DEFAULT})\n`
 // every RES the page will accept, because each picks a different WAVE_C.
 const SLIDER_MAX = 0.9999;
 for (const res of RES_OPTIONS) {
-  const C = waveCFor(res);
-  let worst = 0, worstAt = 0;
-  for (const d of [0.99, 0.995, 0.999, 0.9992, 0.9995, SLIDER_MAX]) {
-    const p = gridModePeak(C, d);
-    if (p > worst) { worst = p; worstAt = d; }
-  }
-  check(`RES ${res}: grid-scale mode bounded across the damping slider`,
-    worst < 4, `WAVE_C ${C.toFixed(4)}, worst ${worst.toFixed(2)}x at damping ${worstAt}` +
-    (worst >= 4 ? ` — too close to the CFL limit; 2.0 gives 49x` : ""));
+  for (const span of SPANS) {
+    const C = waveCFor(res, span);
+    let worst = 0, worstAt = 0;
+    for (const d of [0.99, 0.995, 0.999, 0.9992, 0.9995, SLIDER_MAX]) {
+      const p = gridModePeak(C, d);
+      if (p > worst) { worst = p; worstAt = d; }
+    }
+    const at = `RES ${res} / ${span} m`;
+    check(`${at}: grid-scale mode bounded across the damping slider`,
+      worst < 4, `WAVE_C ${C.toFixed(4)}, worst ${worst.toFixed(2)}x at damping ${worstAt}` +
+      (worst >= 4 ? ` — too close to the CFL limit; 2.0 gives 49x` : ""));
 
-  // Waves must still travel at a physical speed. This is also what catches the
-  // derivation drifting from the page's: the formula is small-C only, so a RES
-  // that pushed WAVE_C toward the CFL limit would predict one speed and
-  // measure another.
-  const cps = cellsPerStep(C);
-  const mps = (SIZE / res) * cps * STEPS * 60;
-  check(`RES ${res}: wave speed inside the physical 0.7-1.0 m/s band`,
-    mps >= 0.7 && mps <= 1.0, `${mps.toFixed(2)} m/s (${cps.toFixed(3)} cells/step)`);
+    // Waves must still travel at a physical speed. This is also what catches
+    // the derivation drifting from the page's: the formula is small-C only, so
+    // a span/RES pair that pushed WAVE_C toward the CFL limit would predict one
+    // speed and measure another.
+    const cps = cellsPerStep(C);
+    const mps = (span / res) * cps * STEPS * 60;
+    check(`${at}: wave speed inside the physical 0.7-1.0 m/s band`,
+      mps >= 0.7 && mps <= 1.0, `${mps.toFixed(2)} m/s (${cps.toFixed(3)} cells/step)`);
+  }
 }
 
 check("today's damping is in the safe region",
