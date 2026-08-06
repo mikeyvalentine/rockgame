@@ -20,7 +20,21 @@
 import { Vector3 } from "@babylonjs/core";
 import { CARRY, GRAVITY, U } from "./config.js";
 
-export function createCarrier(scene) {
+export function createCarrier(scene, { unitScale = U, gravity = GRAVITY } = {}) {
+  // Both of these are here because sand-sim carries stones at 1:1 metres while
+  // this lab models at 4x, and getting them wrong is not subtle.
+  //
+  // `gravity` MUST be the gravity of the scene the stone is actually in. The
+  // spring cancels the stone's weight so a heavy stone and a light one follow
+  // the pointer alike; cancelling by 4x the weight the scene applies leaves
+  // +29 m/s^2 of NET LIFT, and a clicked stone launches. That is what it did.
+  //
+  // `maxAccel` is an acceleration, which is a length over a time squared, so it
+  // scales with the world. `stiffness` (1/T^2) and `damping` (1/T) do not, and
+  // scaling them would be the opposite mistake — a carry that feels sluggish at
+  // 1:1 for no reason anyone could name.
+  const accelScale = unitScale / U;
+  const maxAccel = CARRY.maxAccel * accelScale;
   const target = new Vector3();
   const accel = new Vector3();
   const vel = new Vector3();
@@ -87,10 +101,10 @@ export function createCarrier(scene) {
       accel.x -= vel.x * CARRY.damping;
       accel.y -= vel.y * CARRY.damping;
       accel.z -= vel.z * CARRY.damping;
-      accel.y -= GRAVITY; // GRAVITY is negative, so this cancels the stone's weight
+      accel.y -= gravity; // negative, so this cancels the stone's weight
 
       const a = accel.length();
-      if (a > CARRY.maxAccel) accel.scaleInPlace(CARRY.maxAccel / a);
+      if (a > maxAccel) accel.scaleInPlace(maxAccel / a);
 
       accel.scaleInPlace(rockMass);
       // At the centre of mass: applied off-centre this would spin the stone up

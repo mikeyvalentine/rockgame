@@ -21,6 +21,7 @@
 import { createSiftHand } from "../../../rock-sift/src/hand.js";
 import { createExamineStage } from "../../../rock-sift/src/examine.js";
 import { createInteraction } from "../../../rock-sift/src/interaction.js";
+import { GRAVITY } from "./siftPhysics.js";
 
 /** A HUD that says nothing — the beach has no sift HUD yet. */
 const nullHud = {
@@ -41,6 +42,11 @@ export function createSiftInteraction(scene, camera, physics, opts = {}) {
         camera, hand, examine,
         hud: opts.hud ?? nullHud,
         unitScale: 1,
+        // The beach's gravity, not rock-sift's. Its constant is -9.81 * U for a
+        // 4x world; the carry spring cancels the stone's weight with it, so
+        // handing it -39.24 in a -9.81 scene left +29 m/s^2 of net lift and a
+        // clicked stone launched. See rock-sift/src/carry.js.
+        gravity: GRAVITY,
         // Read live rather than captured: which bed is awake changes as the
         // player walks the beach and crouches somewhere else.
         getRocks: () => physics.awake?.rocks ?? [],

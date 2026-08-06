@@ -222,9 +222,10 @@ export async function run(canvas) {
         },
         note: "Pastel only — sand-sim keeps its own tonemap in the overlay.",
     });
-    // The game's look defaults ON; the store only overrides if the user
-    // switched it off somewhere.
-    if (!("on" in loadScribbleSettings())) scribble.set("enabled", true);
+    // OFF by default, by request, and matching the WebGL path — a look that
+    // differs by renderer is a look nobody can judge. The dial is untouched and
+    // a saved "on" still wins.
+    if (!("on" in loadScribbleSettings())) scribble.set("enabled", false);
 
     const overlay = new Overlay({ rig, character });
     overlay.attach({ deform: terrain.deform, grains });
