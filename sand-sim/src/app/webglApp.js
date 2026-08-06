@@ -228,7 +228,15 @@ export async function run(canvas) {
         },
         note: "Pastel only — sand-sim keeps its own tonemap in the overlay.",
     });
-    if (!("on" in loadScribbleSettings())) scribble.enable(true);
+    // OFF by default, by request. The dial itself is untouched: the panel still
+    // has it and a saved "on" still wins, so turning it back on is one click and
+    // survives a reload.
+    //
+    // Local to sand-sim on purpose. `shared/scribble-dials.js` is cross-lab —
+    // babylon-water and the physics demo read the same defaults — so zeroing the
+    // amount there would have turned it off everywhere to answer a question
+    // asked about this beach.
+    if (!("on" in loadScribbleSettings())) scribble.enable(false);
 
     // ------------------------------------------------------------- run loop
     let prev = performance.now();

@@ -21,8 +21,8 @@ import { createCarrier } from "./carry.js";
 import { surfaceTopNear, teleport } from "./field.js";
 import { clamp } from "./noise.js";
 import {
-  BED_RADIUS, CARRY, DIG_MAX, DIG_MIN, HAND, PHYSICS_SUBSTEP_MS, SWEEP_PROBE_RADIUS,
-  SWEEP_REACH, U,
+  BED_RADIUS, CARRY, DIG_MAX, DIG_MIN, GRAVITY, HAND, PHYSICS_SUBSTEP_MS,
+  SWEEP_PROBE_RADIUS, SWEEP_REACH, U,
 } from "./config.js";
 
 // Movement under this many pixels counts as a click rather than a drag. Kept
@@ -43,6 +43,9 @@ export function createInteraction(scene, {
   // which is what made this a parameter rather than a rewrite — except HAND,
   // which config.js already scaled, so it is re-scaled by the ratio instead.
   unitScale = U,
+  // The gravity of the scene the stones are in — NOT this lab's constant, which
+  // is scaled for its 4x world. See createCarrier.
+  gravity = GRAVITY,
 }) {
   const handScale = unitScale / U;
   // Where the sweep is riding, in metres. Owned here because the pointer wheel
@@ -56,7 +59,7 @@ export function createInteraction(scene, {
   // crouched view, and the markers own the pointer the rest of the time.
   let enabled = true;
 
-  const carrier = createCarrier(scene);
+  const carrier = createCarrier(scene, { unitScale, gravity });
   // Where the carried stone was last aimed, so the aiming plane can be chosen
   // from where it is rather than from where the pointer happens to hit first.
   const carriedAt = new Vector3();
