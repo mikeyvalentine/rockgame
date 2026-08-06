@@ -160,7 +160,10 @@
 // the cell size to roughly 25 mm. Everything below follows from that:
 //
 //   SIZE 64 m / RES 1024  ->  62.5 mm cells
-//   STEPS 1, WAVE_C 0.09  ->  0.78 m/s waves, inside the physical 0.7-1.0 band
+//   STEPS 1, WAVE_C 0.087 ->  0.78 m/s waves, inside the physical 0.7-1.0 band
+//
+// WAVE_C is now DERIVED from that relation rather than typed, so `?res=2048`
+// re-solves it instead of silently doubling the wave speed. See WAVE_C.
 //
 // SIZE went 24 -> 64 to hold a WHOLE RUN's ripples at once (see placeWindow).
 // That is free in memory and bandwidth — RES is unchanged, so it is the same
@@ -180,7 +183,31 @@
 // ambient, which is continuous everywhere and needs no memory. The deviation
 // fades to zero at the window edge, and what remains is ambient, so there is
 // no join to hide. A skip run's ripples ride along with the stone.
-const RES     = 1024;    // simulation texture size
+/**
+ * Simulation texture size. `?res=2048` to A/B it.
+ *
+ * THIS IS THE KNOB THAT DECIDES HOW A RIPPLE READS, and it is worth
+ * understanding why before touching anything else.
+ *
+ * A stone's real contact patch is 3-15 cm^2 — a tenth of one 62.5 mm cell. The
+ * grid cannot represent it, so a crater is band-limited to MIN_DROP_CELLS
+ * across and its depth drops to keep the volume honest. That trade is quadratic
+ * in cell size: at RES 2048 the same displaced volume gets a crater a quarter
+ * the area and FOUR TIMES the depth. Nothing else on this page moves ripple
+ * amplitude that far.
+ *
+ * It is not free. The ping-pong pair is RGBA32F, so 1024 costs 33 MB and 2048
+ * costs 134 MB, on a floor machine (docs/10) whose GPU memory is shared with
+ * the system. 2048 is the default because at 1024 the champion throw's hardest
+ * bounce is a 0.5 mm crater and most of its run is under 0.1 mm — physically
+ * honest, and under what the surface shader can show. `?res=1024` is the
+ * fallback, and the A/B belongs on the 2020 MacBook rather than in this
+ * comment.
+ */
+const RES = (() => {
+    const q = Number(new URLSearchParams(location.search).get("res"));
+    return [512, 1024, 2048].includes(q) ? q : 2048;
+})();
 const SIZE    = 64;      // interaction WINDOW span in metres (was the whole pond)
 const HALF    = SIZE / 2;
 // The pond the player sees. docs/01 asks for ~200 m "pending feasibility
@@ -267,9 +294,85 @@ const SKIP = window.SKIP = {
  *
  * tools/scheme-stability-check.mjs asserts both halves of that on every test run.
  */
-const WAVE_C = 0.09;
+/**
+ * Ripples of the size a stone makes travel 0.7-1.0 m/s by deep-water
+ * dispersion. This is the number WAVE_C exists to hit.
+ */
+const WAVE_SPEED = 0.78;
+/**
+ * DERIVED, not typed. In the small-C limit the update step is a discrete wave
+ * equation whose speed is sqrt(WAVE_C / 2) cells per step — measured 0.208
+ * against a predicted 0.212 at the value this page shipped — so
+ *
+ *     WAVE_C = 2 * (WAVE_SPEED / (cell * STEPS * 60))^2
+ *
+ * Deriving it is what lets RES be a URL flag at all. Cell size and wave speed
+ * trade directly, and the pair had already been got wrong once by hand: raising
+ * the damping at Wallace's WAVE_C 2.0 amplified the grid-scale mode 49x and
+ * rendered as a full-screen two-pixel hatch across the pond. A literal here is
+ * a value someone has to remember to re-derive, and this file is the evidence
+ * that nobody does.
+ *
+ * The approximation is only good well below the CFL limit, which is exactly
+ * where this needs to be anyway; scheme-stability-check.mjs re-measures the
+ * true wave speed from the scheme and fails if it leaves the physical band.
+ */
+const WAVE_C = 2 * Math.pow(WAVE_SPEED / ((SIZE / RES) * STEPS * 60), 2);
 const DROP_R  = 0.2 / SIZE;  // 0.2 m impact crater, expressed in UV
 const DROP_S  = 0.01;    // his drop strength, in metres of displacement
+/** One simulation cell, in metres. 62.5 mm at SIZE 64 / RES 1024. */
+const CELL = SIZE / RES;
+
+// --- turning a displaced VOLUME into a crater depth --------------------------
+//
+// THE UNIT PROBLEM THIS SOLVES. Every ripple on this page used to be a hand-set
+// "strength" in metres, tuned by eye against Wallace's 0.01. That is why the
+// stone's own numbers could not drive it: `ploughGain * displacedVolume * ...`
+// multiplied a gain by a raw m^3, which for a 172 g stone is ~1e-5, and landed
+// four orders of magnitude below anything visible. The knob was not too small —
+// the equation had no units.
+//
+// A crater is a VOLUME of water moved. The solver knows that volume exactly, so
+// the conversion is arithmetic, not taste:
+//
+//     depth = volume / (pi * R^2 * elongation * CRATER_KAPPA)
+//
+// CRATER_KAPPA is the mean of the shader's radial profile over its own disc,
+// integral(0..1) w(u) * 2u du with w(u) = 0.5 - 0.5*cos(pi*(1-u)), which is
+// exactly 0.5 - 2/pi^2. Any R gives the same volume, which is the point: R is
+// chosen for LEGIBILITY and the depth follows.
+const CRATER_KAPPA = 0.5 - 2 / (Math.PI * Math.PI);   // 0.29736
+/**
+ * Smallest crater the grid can carry, in cells.
+ *
+ * A real skipping-stone contact patch is 3-15 cm^2 — under a tenth of one 62.5
+ * mm cell. Stamping it at true size writes a single texel, which is not a
+ * ripple, it is noise: the scheme cannot propagate anything shorter than a few
+ * cells, so the energy goes straight into the grid-scale mode the stability
+ * check exists to keep out.
+ *
+ * So the crater is band-limited to what the grid can actually represent, and
+ * volume is conserved while it is widened. That is an honest statement of the
+ * sim's resolution, not a fudge — and it is the single reason RES matters to
+ * how these read. At RES 2048 the same volume gets a crater a quarter the area
+ * and four times the depth.
+ */
+const MIN_DROP_CELLS = 3;
+const MIN_DROP_R = (MIN_DROP_CELLS * CELL) / SIZE;   // in Evan's UV
+/**
+ * Rim height, as a multiple of crater depth, that makes a drop VOLUME-NEUTRAL.
+ *
+ * Water is incompressible: what leaves the hole has to go somewhere, and it
+ * goes into a ring around it. The annulus profile sin^2(pi*u) integrates to 0.5
+ * over its disc against the crater lobe's CRATER_KAPPA, so this ratio is what
+ * makes the two cancel exactly.
+ *
+ * Not cosmetic. A pure Wallace bump adds height to the pond every time it
+ * fires, and at damping 0.9992 — ripples that never clear, by design — a run
+ * with fifty bounces would leave a standing mound behind. Zero net volume means
+ * the mean level cannot drift however long the field runs.
+ */
+const RIM_NEUTRAL = CRATER_KAPPA / 0.5;   // 0.59472
 
 // Babylon's shader processor rewrites the source it is handed and mishandles a
 // line comment containing a semicolon, leaving the tail of the sentence in the
@@ -302,9 +405,14 @@ const float PI = 3.141592653589793;
 varying vec2 vUV;
 uniform sampler2D prev;
 uniform float dropCount;
-uniform vec4 drops[${DROP_BATCH}];   /* center.xy in [-1,1], radius, strength */
+uniform vec4 drops[${DROP_BATCH}];   /* center.xy in [-1,1], radius, depth */
 /* travel direction .xy (unit, window space), elongation .z, lateral skew .w */
 uniform vec4 dropAxis[${DROP_BATCH}];
+/* Rim height as a multiple of crater depth. RIM_NEUTRAL makes a drop displace
+   zero net volume; 0 restores Wallace's plain bump. One value for the whole
+   batch — it is a property of how this page models a splash, not of any one
+   splash. */
+uniform float dropRim;
 void main(void) {
     vec4 info = texture2D(prev, vUV);
     for (int i = 0; i < ${DROP_BATCH}; i++) {
@@ -331,9 +439,26 @@ void main(void) {
         float acrossD = dot(rel, side) + alongD * ax.w;
         float r = length(vec2(alongD / max(ax.z, 0.001), acrossD));
 
-        float drop = max(0.0, 1.0 - r / d.z);
-        drop = 0.5 - cos(drop * PI) * 0.5;
-        info.r += drop * d.w;
+        /* A CRATER WITH A RIM, not a mound.
+           Wallace's shader adds a smooth positive bump, because a bump is what
+           you want when you are poking a demo pool. It is not what an impact
+           makes. Something entering water leaves a HOLE, and the water that was
+           in the hole piles up in a ring around it — which is where most of the
+           visible splash actually lives, and why a bump reads as stamped-on.
+
+           u is the normalised distance in the stretched frame. w is Wallace's
+           profile, used unchanged as the crater lobe; the annulus sin^2(pi*u)
+           peaks halfway out and vanishes at both ends, so the rim sits outside
+           the hole and the two meet at zero.
+
+           Sign convention: d.w is DEPTH, positive = water pushed down. Every
+           caller on this page — impact, plough, sink, raindrop, spray landing —
+           means the same thing by it now. */
+        float u = clamp(r / d.z, 0.0, 1.0);
+        float w = 0.5 - cos((1.0 - u) * PI) * 0.5;
+        float ring = sin(u * PI);
+        float shape = -w + dropRim * ring * ring;
+        info.r += shape * d.w;
     }
     gl_FragColor = info;
 }
@@ -851,7 +976,7 @@ function makePass(name, source, uniforms) {
     });
 }
 const clearPass  = makePass("waterClear",  CLEAR_FRAG,  []);
-const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops", "dropAxis"]);
+const dropPass   = makePass("waterDrop",   DROP_FRAG,   ["dropCount", "drops", "dropAxis", "dropRim"]);
 const updatePass = makePass("waterUpdate", UPDATE_FRAG, ["delta", "damp"]);
 const normalPass = makePass("waterNormal", NORMAL_FRAG, ["delta"]);
 const scrollPass = makePass("waterScroll", SCROLL_FRAG, ["offset"]);
@@ -884,6 +1009,7 @@ dropPass.onApplyObservable.add(() => {
     eff.setFloat("dropCount", dropsInBatch);
     eff.setFloatArray4("drops", dropData);
     eff.setFloatArray4("dropAxis", dropAxisData);
+    eff.setFloat("dropRim", SPLASH.rim);
     if (passSrc) eff.setTexture("prev", passSrc);
 });
 scrollPass.onApplyObservable.add(() => {
@@ -1129,26 +1255,82 @@ const SPLASH = window.SPLASH = {
     // stone lands repeatedly and the bursts OVERLAP — six skips in flight hit
     // 41k particles and 19.6ms, i.e. under 60fps, before this cap existed.
     maxLive:    6000,
-    rippleGain: 0.0030,        // impact energy to Evan's drop strength
-    rippleMax:  0.050,         // hard cap, keeps drops near his tuned scale
+    // --- ripple amplitude, in VOLUME rather than in vibes ---------------
+    //
+    // Every number below scales a real displaced volume. `rippleGain` is a
+    // master multiplier on all of it and 1.0 means "exactly what the solver
+    // says" — so the honest tuning position is 1.0, and anything else is a
+    // deliberate departure with the size of the lie on the slider.
+    rippleGain: 1.0,
+    /** Hard cap on a single crater's depth, metres. Only a cannonball-class
+     *  plunge should ever reach it. */
+    rippleMax:  0.060,
+    /** Rim height as a multiple of crater depth. RIM_NEUTRAL displaces zero net
+     *  volume — the physical answer, and the one that keeps the pond's mean
+     *  level from drifting over a run that never clears. */
+    rim: RIM_NEUTRAL,
 
     // --- crater SHAPE, from the impact geometry -------------------------
     /** Cap on how long a gouge gets. Length goes as 1/sin(attack), so a very
-     *  shallow arrival would run away; 4 is about a 14 degree impact. */
-    elongMax: 4.0,
+     *  shallow arrival would run away. 5 is about an 11.5 degree impact — the
+     *  top of the 3-5x range oblique impacts actually produce. */
+    elongMax: 5.0,
+    /** Floor on elongation for anything moving horizontally. A contact patch
+     *  dragged across the surface is never circular, however steeply the stone
+     *  came in, so a moving crater never collapses all the way to a dot. */
+    elongMin: 1.6,
     /** How far spin leans the crater sideways. Real — it is the same asymmetry
-     *  that gives a run its lateral drift — but subtle by design. */
-    spinSkew: 0.35,
+     *  that gives a run its lateral drift. */
+    spinSkew: 0.55,
+    /**
+     * How far BEHIND the contact point the crater sits, as a fraction of the
+     * extra length elongation gives it.
+     *
+     * A gouge is a scar, and a scar is left behind. Centring the ellipse on the
+     * impact put half the furrow in water the stone had not reached yet, which
+     * is exactly the "stamped on" read: nothing about it said which way the
+     * thing was going. 0.5 puts the leading edge on the contact point and
+     * trails the rest.
+     */
+    craterTrail: 0.5,
+    /**
+     * How much the stone's roll narrows its contact patch.
+     *
+     * A stone landing flat presents its whole face. One tipped onto an edge
+     * presents a sliver, and digs a narrow gouge at the same volume — deeper,
+     * because the volume has nowhere else to go. 1 is the full geometric
+     * cos(bank) narrowing, 0 ignores attitude.
+     */
+    rollNarrow: 1.0,
 
     // --- the stone PLOUGHING, not bouncing ------------------------------
-    /** Continuous displacement while the stone is in contact: ploughing,
-     *  wobbling, coasting, sinking. 0 disables it and the pond goes back to
-     *  reacting only to clean bounces. Small — this fires every frame of a
-     *  contact, where an impact fires once. */
-    ploughGain: 0.010,
+    /**
+     * Master switch on continuous displacement: ploughing through a contact,
+     * chattering, coasting, wobbling and sinking. 1.0 is volume-true.
+     *
+     * This is driven by the RATE OF CHANGE of the solver's displaced volume,
+     * not by the volume itself. That distinction is the whole fix: a constant
+     * volume is a stone floating still, which makes no waves, while dV/dt is
+     * water actually being pushed out of the way, which is what a wave IS.
+     */
+    ploughGain: 1.0,
     /** A furrow is longer than a crater. This is what reads as "dragging
      *  through" rather than "landing on". */
-    ploughElong: 6.0,
+    ploughElong: 7.0,
+    /**
+     * Ram-pressure dimple under a stone that is CLOSE to the water but has not
+     * touched it — the air cushion a fast flat plate rides on in ground effect.
+     *
+     * Real, and it is what makes a run read as one continuous event instead of
+     * a row of stamps: a moving pressure source is exactly what draws a wake
+     * between the bounces. The magnitude is stagnation pressure over rho*g,
+     * attenuated by gap; this gain scales the whole thing, because the fraction
+     * of stagnation pressure that actually reaches the surface at a given gap
+     * is not something this page can derive.
+     */
+    groundEffect: 0.35,
+    /** Gaps beyond this many stone radii get no ground effect at all. */
+    groundEffectRadii: 3.0,
 
     // Converts the stone's real-world m/s into this pool's units. Without it,
     // emit power inherits metres-per-second directly while the whole pool is
@@ -1167,6 +1349,16 @@ const SPLASH = window.SPLASH = {
     // submerged particles — so this only decides which landings earn a ripple.
     // The cap is the load-bearing part: every drop is its own full render pass
     // in Evan's design, so N landings means N extra passes that frame.
+    /**
+     * Base droplet size band, metres. The LIVE band on sprayPS is this scaled
+     * by the impact, so a hard strike throws bigger droplets as well as more of
+     * them — a burst that only ever changes in count reads as the same splash
+     * turned up, not as a harder one.
+     */
+    spraySize: [0.02, 0.06],
+    /** How far the size band stretches between the weakest and hardest impact. */
+    spraySizeRange: 2.2,
+
     landing: {
         enabled: true,
         // Low enough that ordinary droplets ring too, not just the giants. A
@@ -1458,7 +1650,11 @@ function shapeSpray() {
 
         const d = p.direction;
         const speed = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-        const sizeN = (p.size - mn) / span;          // 0 mist, 1 globule
+        // Clamped: the band moves between bursts now (see spraySizeRange), so a
+        // droplet from a harder impact can be outside the band a later, softer
+        // one installed. Unclamped that reads as negative or >1 "size" and the
+        // deformation terms below invert.
+        const sizeN = clamp01((p.size - mn) / span); // 0 mist, 1 globule
 
         // Ringing. Frequency falls with size, amplitude rises with it.
         const w = SHAPE.oscFreq * Math.pow(Math.max(p.size, 1e-4) / mx, -1.5);
@@ -1582,6 +1778,97 @@ const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 const windowed = (v, w) => clamp01((v - w[0]) / (w[1] - w[0]));
 
+// =============================================================================
+// From the stone's geometry to a crater. One place, so an impact, a plough, a
+// wobble and a sink cannot disagree about what a given volume of water looks
+// like when it is pushed out of the way.
+// =============================================================================
+
+/** Water, for the energy fallback below. */
+const RHO_W = 1000, GRAV = 9.81;
+/** Air, for the ground-effect dimple. */
+const RHO_A = 1.2;
+
+/**
+ * Footprint and orientation of the mark the stone is about to leave.
+ *
+ *   patchR    true wetted-patch radius, METRES
+ *   elongWant length/width the geometry asks for, before clamping
+ *   o.bankRad roll. A stone on its edge presents a sliver, not a face.
+ *   o.aspect  the stone's own长/短 ratio — an oblong pebble leaves an oblong
+ *             mark even landing flat, which is the whole reason rock shape is
+ *             allowed to show up in the water at all.
+ *   o.spinRPS signed spin, for the sideways lean.
+ *
+ * Returns the ACROSS-travel radius in Evan's UV, the elongation along travel,
+ * the lateral skew, and how far back along travel the mark should sit.
+ */
+function shapeCrater(patchR, elongWant, o) {
+    // Band-limit first (see MIN_DROP_CELLS), then shape. The true patch is far
+    // under one cell, so shaping the true patch and then flooring it would
+    // throw the shape away — every crater would come out the same circle,
+    // which is exactly what the last pass shipped.
+    const baseR = Math.max(MIN_DROP_R, patchR / SIZE);
+    // cos(bank) is the projected width of a tilted face. Floored, because a
+    // crater one texel wide is not a narrow gouge, it is aliasing.
+    const narrow = Math.max(0.45,
+        1 - SPLASH.rollNarrow * (1 - Math.abs(Math.cos(o.bankRad || 0))));
+    const across = baseR * narrow;
+    // What roll takes off the width it puts back into the length: the water
+    // still has to go somewhere. Same volume, thinner and longer.
+    const elong = clamp((elongWant * (o.aspect || 1)) / narrow, 1, SPLASH.elongMax);
+    return {
+        across,
+        elong,
+        skew: clamp(-(o.spinRPS || 0) / 120, -1, 1) * SPLASH.spinSkew,
+        /** Metres to shift the centre BACKWARD along travel, so the leading
+         *  edge sits on the contact point and the furrow trails. */
+        trail: across * SIZE * (elong - 1) * SPLASH.craterTrail,
+    };
+}
+
+/**
+ * Depth of a crater that holds `volume` cubic metres.
+ *
+ * The inverse of the shader's own profile integral, so what comes out of the
+ * texture is the volume that went in — whatever radius legibility forced.
+ */
+function craterDepth(volume, across, elong) {
+    const R = across * SIZE;
+    return volume / (Math.PI * R * R * elong * CRATER_KAPPA);
+}
+
+/**
+ * Depth of a crater that ABSORBS `joules`, for callers that know an energy but
+ * not a volume (Plunge, the demo buttons).
+ *
+ * The potential energy of a depression of depth D over that footprint is
+ * rho*g*D^2*pi*R^2*kappa2/2, so D falls out as a square root. Deliberately NOT
+ * used for skip bounces: a stone that bounces keeps nearly all its energy, so
+ * an energy-driven crater over-reads a glancing skip by two orders of
+ * magnitude. This form is only right when the impact actually SPENDS itself.
+ */
+const CRATER_KAPPA2 = 0.172358;   // integral of w(u)^2 * 2u du over the unit disc
+function craterDepthFromEnergy(joules, across, elong, efficiency) {
+    const R = across * SIZE;
+    const denom = RHO_W * GRAV * Math.PI * R * R * elong * CRATER_KAPPA2;
+    return Math.sqrt(Math.max(0, 2 * efficiency * joules) / Math.max(1e-9, denom));
+}
+
+/**
+ * Queue a crater the stone made: shape it, place it behind the contact, clamp
+ * it, fire it. Returns the depth actually used, in metres.
+ */
+function craterDrop(x, z, depth, dirX, dirZ, shape) {
+    const d = Math.min(Math.abs(depth), SPLASH.rippleMax) * Math.sign(depth);
+    if (!(Math.abs(d) > 1e-7)) return 0;
+    const dl = Math.hypot(dirX, dirZ) || 1;
+    const ux = dirX / dl, uz = dirZ / dl;
+    queueDrop(x - ux * shape.trail, z - uz * shape.trail, d, shape.across,
+        { dirX: ux, dirZ: uz, elong: shape.elong, skew: shape.skew });
+    return d;
+}
+
 /// The stone hook. Everything an impact does to the water goes through here, so
 /// the ripple and the splash cannot disagree about how hard the hit was.
 ///
@@ -1673,27 +1960,34 @@ function stoneImpact(x, z, opts) {
         foamCount  = Math.floor(foamCount * k);
     }
 
-    // --- ripple, through Evan's untouched addDrop ---------------------------
-    // Vertical momentum drives the wave: a stone skimming flat barely disturbs
-    // the height field however fast it is going.
-    const rippleStrength = Math.min(
-        SPLASH.rippleGain * energy * (0.25 + 0.75 * sinA),
-        SPLASH.rippleMax
-    );
-    // THE CRATER'S SHAPE, from the impact geometry rather than assumed round.
+    // --- the crater ---------------------------------------------------------
     //
-    // Contact patch length goes as 1/sin(attack): the shallower the arrival, the
-    // longer the gouge. ~2.9x at the 20 degree magic angle, 1x on a vertical
-    // plunge, which is the circle Plunge and rain still get. Capped, because
-    // sin -> 0 runs away and a stone that shallow is skimming, not gouging.
-    const elong = Math.min(SPLASH.elongMax, 1 / Math.max(0.12, sinA));
-    // Spin leans it. Same asymmetry that gives a run its lateral drift — the
-    // sign of spin decides which way. Deliberately small: it is a lean, not a
-    // banana.
-    const skew = clamp(-(opts.spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew;
-    queueDrop(x, z, rippleStrength,
-        Math.max(radius, DROP_R * (0.6 + 1.4 * iKE)),
-        { dirX, dirZ, elong, skew });
+    // Contact patch length goes as 1/sin(attack): the shallower the arrival,
+    // the longer the gouge. ~2.9x at the 20 degree magic angle, floored at
+    // elongMin because a patch dragged sideways is never round, and capped
+    // because sin -> 0 runs away.
+    const elongWant = clamp(1 / Math.max(0.05, sinA), SPLASH.elongMin, SPLASH.elongMax);
+    const shape = shapeCrater(radius * SIZE, elongWant, {
+        bankRad: opts.bankRad,
+        aspect: opts.aspect,
+        spinRPS: opts.spinRPS,
+    });
+
+    // DEPTH FROM WHAT THE WATER ACTUALLY LOST, not from a gain times an energy.
+    //
+    // `opts.volume` is the solver's own displaced volume for this strike, so
+    // when it is there it wins: it is a measurement of the water, where energy
+    // is a fact about the stone and mostly leaves again with it. A bounce that
+    // retains 95% of its kinetic energy has no business making a crater sized
+    // by all of it — that mismatch is why the old gain had to be 0.003 and why
+    // nothing about the stone could be felt through it.
+    //
+    // The energy form is the fallback for callers that stop dead (Plunge), and
+    // it assumes exactly that.
+    const depth = SPLASH.rippleGain * (opts.volume !== undefined
+        ? craterDepth(opts.volume, shape.across, shape.elong)
+        : craterDepthFromEnergy(energy * sinA, shape.across, shape.elong, 0.15));
+    const rippleStrength = craterDrop(x, z, depth, dirX, dirZ, shape);
 
     // --- spray --------------------------------------------------------------
     if (sprayCount > 0) {
@@ -1712,6 +2006,14 @@ function stoneImpact(x, z, opts) {
         sprayBurst.fwd = cosA * (0.6 + 0.9 * iKE);
         sprayBurst.vert = 0.30 + 0.95 * sinA;
         sprayBurst.spread = 0.30 + 0.45 * iKE;
+        // Size scales with the impact as well as count. Applied to the emitter
+        // band rather than to individual particles, because shapeSpray() draws
+        // a new droplet's size out of this band the frame it is recycled — so
+        // this affects the burst being fired and leaves everything already in
+        // the air alone.
+        const grade = 1 + (SPLASH.spraySizeRange - 1) * iKE;
+        sprayPS.minSize = SPLASH.spraySize[0] * grade;
+        sprayPS.maxSize = SPLASH.spraySize[1] * grade;
         sprayPS.emitter.copyFromFloats(x, 0, z);
         sprayPS.minEmitPower = SPLASH.emitScale * 0.25 * speed * (0.4 + 0.6 * iKE);
         sprayPS.maxEmitPower = SPLASH.emitScale * 0.75 * speed * (0.4 + 0.6 * iKE);
@@ -1737,37 +2039,137 @@ window.stoneImpact = stoneImpact;
  * CONTINUOUS DISPLACEMENT — the water reacting to a stone that is not skipping.
  *
  * stoneImpact() fires on bounces. A run is far more than its bounces: the stone
- * ploughs while it is in contact, wobbles, coasts, skims and finally sinks, and
- * every one of those is water being pushed out of the way. None of it made a
- * mark, so the pond went glassy the instant a run stopped scoring, with a stone
- * still visibly dragging through it.
+ * ploughs while it is in contact, chatters, wobbles, coasts, and finally sinks,
+ * and every one of those is water being pushed out of the way.
  *
- * Driven from the solver's own `getDisturbance()`: displaced volume, contact
- * flag, bow-wave crest and speed, sampled per frame. Strength is volume x speed
- * so a fast plough shoves more than a slow settle, and it is scaled by dt so the
- * result does not depend on frame rate — this feeds a leaderboard's water.
+ * ### Why the first version of this did nothing at all
  *
- * Deliberately much weaker than an impact, and skipped when the stone is barely
- * moving: a stone at rest floats, it does not keep making waves.
+ * It computed `ploughGain * displacedVolume * speed * dt * 60`. For a 172 g
+ * stone the displaced volume is ~3e-5 m^3, so with the gain at 0.010 that
+ * expression returns about 1e-6 — against a visible drop of 1e-2. Four orders
+ * of magnitude, and the `< 1e-6` guard below it threw away most of the frames
+ * that were left. Nothing was wrong with the idea; the expression had no units.
+ *
+ * ### What replaces it
+ *
+ * The source term for a surface wave is a volume FLUX, not a volume. A stone
+ * resting in the water displaces a constant volume and makes no waves at all;
+ * a stone pushing its way in displaces more of it every instant, and THAT is
+ * the wave. So this tracks dV and converts it to a depth by the same
+ * volume-conserving arithmetic an impact uses:
+ *
+ *     depth = dV / (pi * R^2 * elong * CRATER_KAPPA)
+ *
+ * It is signed on purpose. Water coming back as the stone lifts out is a
+ * NEGATIVE crater — a mound — and it is half of what makes a wake read as
+ * something moving rather than a row of dents.
+ *
+ * `dt` does not appear. A flux integrated over a frame is just the change over
+ * that frame, so this is frame-rate independent by construction rather than by
+ * a correction factor, which matters because it feeds a leaderboard's water.
  */
-function stoneDisplace(d, dt, dirX, dirZ, spinRPS) {
-    if (!SPLASH.ploughGain || !d.contact || d.speed < 0.15) return 0;
-    const strength = Math.min(
-        SPLASH.ploughGain * d.displacedVolume * d.speed * dt * 60,
-        SPLASH.rippleMax * 0.5
-    );
-    if (strength < 1e-6) return 0;
-    // The wake of something moving THROUGH the surface is a long thin furrow,
-    // not a dimple — more elongated than an impact crater, and it is the shape
-    // that reads as "dragging" rather than "landing".
-    queueDrop(d.x, d.z, strength, Math.max(d.radius / SIZE, DROP_R * 0.5), {
-        dirX, dirZ,
-        elong: SPLASH.ploughElong,
-        skew: clamp(-(spinRPS ?? 0) / 120, -0.6, 0.6) * SPLASH.spinSkew,
-    });
-    return strength;
+const plough = { lastVolume: 0 };
+
+/** Forget the running volume — a new throw is not a continuation of the last. */
+function resetDisplace() { plough.lastVolume = 0; }
+
+/**
+ * How much water the SURFACE is holding out of the way, given how deep the
+ * stone is. This is the quantity waves come from, and it is not the one the
+ * solver reports.
+ *
+ * `getDisturbance().displacedVolume` is penetration x face area — the prism the
+ * stone has driven through, which keeps growing for as long as the stone keeps
+ * descending. It reaches 1.6e-3 m^3 during a sink, twenty-five times the volume
+ * of the stone itself, which cannot be a surface depression: by Archimedes a
+ * body can only hold aside its own volume, and once it is well under the
+ * surface it holds aside nothing at all, because the water has closed over it.
+ *
+ * So the prism is converted back to a depth and run through the shape a real
+ * submergence has:
+ *
+ *   - rising while the stone is going under, to at most its own volume;
+ *   - CLOSING again as it sinks past, over a length scale of its own radius.
+ *
+ * The closing half is the "dimple that shuts behind it" — not an effect added
+ * on top, just what the curve does. And for the shallow contacts of an ordinary
+ * skip (1-7 mm against a 10 mm stone) this returns penetration x face area
+ * exactly, i.e. the solver's own number, unchanged.
+ */
+function surfaceVolume(displacedVolume, faceArea, thickness, effRadius) {
+    if (!(faceArea > 0)) return 0;
+    const depth = displacedVolume / faceArea;
+    const held = Math.min(depth, thickness);
+    const under = Math.max(0, depth - thickness);
+    return faceArea * held * Math.exp(-under / Math.max(1e-4, effRadius));
+}
+window.resetDisplace = resetDisplace;
+
+/**
+ * @param d       the solver's getDisturbance()
+ * @param o.dirX/dirZ  travel direction
+ * @param o.spinRPS    signed spin
+ * @param o.bankRad    roll, so a wobbling stone tears rather than smooths
+ * @param o.aspect     the stone's own shape
+ * @param o.faceArea   the stone's face area, m^2
+ * @param o.thickness  the stone's thickness, m
+ * @param o.effRadius  the stone's radius, m
+ * @param o.resync  true on a frame that already fired an impact, so the same
+ *        water is not charged for twice
+ */
+function stoneDisplace(d, o) {
+    const vol = surfaceVolume(d.displacedVolume, o.faceArea, o.thickness, o.effRadius);
+    const dV = vol - plough.lastVolume;
+    plough.lastVolume = vol;
+
+    // A bounce already queued its own crater from this same volume. Take the
+    // new baseline and emit nothing.
+    if (o.resync || !SPLASH.ploughGain) return 0;
+    if (Math.abs(dV) < 1e-9) return 0;
+
+    // A FURROW ONLY EXISTS IF SOMETHING IS MOVING. Ploughing at speed leaves a
+    // long scar; a stone settling in place leaves a round dimple, because
+    // there is no direction for it to be long in. Interpolating on speed is
+    // what makes the sink read as a sink rather than as a very slow gouge.
+    const run = clamp01(d.speed / 3);
+    const elongWant = 1 + (SPLASH.ploughElong - 1) * run;
+    const shape = shapeCrater(d.radius, elongWant, o);
+    const depth = SPLASH.ploughGain * craterDepth(dV, shape.across, shape.elong);
+    return craterDrop(d.x, d.z, depth, o.dirX, o.dirZ, shape);
 }
 window.stoneDisplace = stoneDisplace;
+
+/**
+ * GROUND EFFECT — the dimple a stone drags under itself between bounces.
+ *
+ * A flat plate moving fast a few millimetres above water rides on a cushion of
+ * air it cannot get out of the way in time, and that cushion presses the
+ * surface down. It is the same mechanism that lets the stone plane at all, and
+ * it is the reason a real run reads as one continuous event: there is a moving
+ * pressure source travelling between the impacts, and a moving pressure source
+ * is what draws a wake.
+ *
+ * Depth is stagnation pressure over rho_w * g — the height of water that
+ * pressure holds up — attenuated by gap. The cubic falloff is not derived; the
+ * fraction of stagnation pressure that reaches the surface at a given gap
+ * depends on the flow under the plate, which this page does not solve. That is
+ * what SPLASH.groundEffect is for, and why it is a slider.
+ *
+ * @param gap  height of the stone above the LOCAL water surface, metres
+ */
+function stoneGroundEffect(x, z, gap, speed, effRadius, o) {
+    const g = SPLASH.groundEffect;
+    if (!g || gap <= 0 || speed < 1) return 0;
+    const reach = SPLASH.groundEffectRadii * effRadius;
+    if (gap >= reach) return 0;
+    const atten = Math.pow(effRadius / (effRadius + gap), 3);
+    const localDepth = (0.5 * RHO_A * speed * speed) / (RHO_W * GRAV);
+    const volume = g * localDepth * atten * Math.PI * effRadius * effRadius;
+    const shape = shapeCrater(effRadius, SPLASH.ploughElong, o);
+    return craterDrop(x, z, craterDepth(volume, shape.across, shape.elong),
+        o.dirX, o.dirZ, shape);
+}
+window.stoneGroundEffect = stoneGroundEffect;
 
 // Straight down into the middle of the pond: angle PI/2 is the pure vertical
 // case, so this is the plunge end of the skip/plunge axis — maximum wave,
@@ -2137,10 +2539,6 @@ const CONTROLS = [
     // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
     // automatically, so a longer ripple keeps the sim awake longer to match.
     ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
-    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
-    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
-    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
-    ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
 
     ["Throw", null],
     ["speed",           () => SKIP.throw.speed,           (v) => SKIP.throw.speed = v,           1,   45,  0.5],
@@ -2162,14 +2560,28 @@ const CONTROLS = [
     ["hop flatten cap", () => SKIP.assist.hopFlattenLimit ?? 0,  (v) => SKIP.assist.hopFlattenLimit = v,  0,    1, 0.05],
     ["attitude hold",   () => SKIP.assist.attitudeAssist ?? 0,   (v) => SKIP.assist.attitudeAssist = v,   0, 2000, 25],
     ["balance (rock)",  () => SKIP.assist.balanceRetention ?? 0, (v) => SKIP.assist.balanceRetention = v, 0,    1, 0.05],
-    // How long an impact ring survives. 0.990 is Wallace's original (gone in
-    // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
-    // automatically, so a longer ripple keeps the sim awake longer to match.
-    ["ripple persistence", () => RIPPLE.damping,    (v) => RIPPLE.damping = v,       0.99, 0.9999, 0.0001],
-    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    8,    0.25],
-    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1,    0.05],
-    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    0.05, 0.001],
+    // These five rows used to appear TWICE in this array — once here and once
+    // up in Weather — so the panel showed two of every crater slider and
+    // dragging one left the other reading its old value. Consolidated here,
+    // where the rest of the stone's coupling to the water lives.
+    ["Ripples", null],
+    // 1.0 is volume-true: exactly the crater the solver's displaced volume
+    // says. Anything else is a deliberate exaggeration, on a slider, so the
+    // size of the lie is visible.
+    ["ripple gain",        () => SPLASH.rippleGain, (v) => SPLASH.rippleGain = v,    0,    4,    0.05],
+    ["ripple max (m)",     () => SPLASH.rippleMax,  (v) => SPLASH.rippleMax = v,     0.005, 0.3, 0.005],
+    // RIM_NEUTRAL (0.595) conserves volume. 0 is Wallace's plain mound, which
+    // adds water to the pond on every impact.
+    ["crater rim",         () => SPLASH.rim,        (v) => SPLASH.rim = v,           0,    1.5,  0.02],
+    ["crater elongation",  () => SPLASH.elongMax,   (v) => SPLASH.elongMax = v,      1,    10,   0.25],
+    ["elongation floor",   () => SPLASH.elongMin,   (v) => SPLASH.elongMin = v,      1,    4,    0.1],
+    ["crater trail",       () => SPLASH.craterTrail,(v) => SPLASH.craterTrail = v,   0,    1,    0.05],
+    ["roll narrowing",     () => SPLASH.rollNarrow, (v) => SPLASH.rollNarrow = v,    0,    1,    0.05],
+    ["spin lean",          () => SPLASH.spinSkew,   (v) => SPLASH.spinSkew = v,      0,    1.5,  0.05],
+    ["plough strength",    () => SPLASH.ploughGain, (v) => SPLASH.ploughGain = v,    0,    4,    0.05],
     ["plough furrow",      () => SPLASH.ploughElong,(v) => SPLASH.ploughElong = v,   1,    12,   0.5],
+    ["ground effect",      () => SPLASH.groundEffect, (v) => SPLASH.groundEffect = v, 0,   2,    0.05],
+    ["ground effect reach",() => SPLASH.groundEffectRadii, (v) => SPLASH.groundEffectRadii = v, 0, 8, 0.25],
     ["particles on",    () => SPLASH.particles ? 1 : 0, (v) => SPLASH.particles = v > 0.5, 0, 1, 1],
     ["surface foam",    () => SPLASH.surfaceFoam ? 1 : 0, (v) => { SPLASH.surfaceFoam = v > 0.5; if (!SPLASH.surfaceFoam) foamPS.reset(); }, 0, 1, 1],
 
@@ -2200,17 +2612,20 @@ const CONTROLS = [
     ["colour bleed",    () => SCRIBBLE.bleed,       (v) => SCRIBBLE.bleed = v,       0, 0.03, 0.001],
     ["paper warp",      () => SCRIBBLE.warp,        (v) => SCRIBBLE.warp = v,        0, 0.02, 0.001],
 
-    ["Impact -> ripple", null],
-    ["ripple gain",     () => SPLASH.rippleGain,    (v) => SPLASH.rippleGain = v,    0, 0.02, 0.0001],
-    ["ripple max",      () => SPLASH.rippleMax,     (v) => SPLASH.rippleMax = v,     0, 0.15, 0.001],
+    // Impact -> ripple lives under "Ripples" above; it used to be duplicated
+    // here too, with a different range on each copy.
 
     ["Impact -> spray", null],
     ["spray count",     () => SPLASH.sprayScale,    (v) => SPLASH.sprayScale = v,    0, 20000, 100],
     ["foam count",      () => SPLASH.foamScale,     (v) => SPLASH.foamScale = v,     0, 6000,  50],
     ["throw distance",  () => SPLASH.emitScale,     (v) => SPLASH.emitScale = v,     0.02, 1.5, 0.01],
     ["max live",        () => SPLASH.maxLive,       (v) => SPLASH.maxLive = v,       500, 40000, 500],
-    ["spray size min",  () => sprayPS.minSize,      (v) => sprayPS.minSize = v,      0.002, 0.2, 0.002],
-    ["spray size max",  () => sprayPS.maxSize,      (v) => sprayPS.maxSize = v,      0.002, 0.4, 0.002],
+    // The BASE band. The live band on sprayPS is this scaled by impact energy,
+    // so binding the panel to sprayPS directly would be overwritten by the
+    // next splash.
+    ["spray size min",  () => SPLASH.spraySize[0],  (v) => SPLASH.spraySize[0] = v,  0.002, 0.2, 0.002],
+    ["spray size max",  () => SPLASH.spraySize[1],  (v) => SPLASH.spraySize[1] = v,  0.002, 0.4, 0.002],
+    ["spray size range",() => SPLASH.spraySizeRange,(v) => SPLASH.spraySizeRange = v, 1,    5,   0.1],
     ["globule share",   () => SPLASH.globFraction,  (v) => SPLASH.globFraction = v,  0, 0.6, 0.01],
     ["wobble depth",    () => SHAPE.wobble,         (v) => SHAPE.wobble = v,         0, 1.2, 0.02],
     ["wobble speed",    () => SHAPE.oscFreq,        (v) => SHAPE.oscFreq = v,        0, 80,  1],
@@ -2291,7 +2706,9 @@ const CONTROLS = [
     panel.appendChild(out);
 
     copyBtn.addEventListener("click", async () => {
-        const lines = ["water tuning", "pond " + SIZE + "m  RES " + RES + "  STEPS " + STEPS];
+        const lines = ["water tuning",
+            "window " + SIZE + "m  RES " + RES + "  cell " + (CELL * 1000).toFixed(1) + "mm",
+            "STEPS " + STEPS + "  WAVE_C " + WAVE_C.toFixed(3)];
         for (const c of CONTROLS) {
             if (c[1] === null) { lines.push("", "[" + c[0] + "]"); continue; }
             const v = c[1]();
@@ -2501,6 +2918,11 @@ function doThrow() {
     // Thrown from the near shore, down the lane, so the run crosses the pond
     // rather than starting in the middle of it.
     sim.throwStone({ ...SKIP.throw, headingDeg: 0, origin: { x: -POND_HALF * 0.42, z: 0 } });
+    // The plough integrator carries a running displaced volume across frames.
+    // A new throw is not a continuation of the last one, and leaving the old
+    // volume in place would make the first frame emit the whole difference as
+    // one enormous mound.
+    resetDisplace();
     trailPts = [];
     if (trail) { trail.dispose(); trail = null; }
     $("outcome").textContent = "";
@@ -2534,8 +2956,13 @@ scene.onBeforeRenderObservable.add(() => {
     if (!sim || sim.finished) return;
     const raw = Math.min(engine.getDeltaTime() / 1000, 0.05);
     const dt = SKIP.slow ? raw / 6 : raw;
+    /** The stone's own geometry, for turning the solver's penetration prism
+     *  back into the depression the surface is actually holding. */
+    const faceArea = Math.PI * sim.effRadius * sim.effRadius;
+    let bouncedThisFrame = false;
     for (const e of sim.advance(dt)) {
         if (e.type === "bounce") {
+            bouncedThisFrame = true;
             // Everything the solver measured about this strike, not a
             // reconstruction of it. The first cut of this passed the OUTGOING
             // velocity as the impact angle and no radius at all, so every
@@ -2556,6 +2983,23 @@ scene.onBeforeRenderObservable.add(() => {
                 // pond-span units the drop shader wants.
                 radius: Math.max(sim.effRadius, e.penetration * 3) / SIZE,
                 spinRPS: d.spinRPS,
+                // ATTITUDE, so the mark is the stone's and not a generic dent.
+                // A stone rolled onto an edge digs a narrow gouge; an oblong
+                // pebble leaves an oblong scar landing flat.
+                bankRad: d.bankAngleDeg * Math.PI / 180,
+                aspect: SKIP.stone.aspect,
+                // HOW MUCH WATER THIS STRIKE ACTUALLY MOVED.
+                //
+                // The solver's own peak displaced volume for a contact is
+                // penetration * faceArea, but a contact lasts 5-10 ms and a
+                // frame is 16.7, so sampling getDisturbance() at frame
+                // boundaries misses the peak entirely — that number is usually
+                // back at zero by the time this code runs. Reconstructing it
+                // from the penetration the bounce event carries agrees with the
+                // solver's own peak to within 15% across the whole preset
+                // range, measured, and it is available at exactly the moment it
+                // is needed.
+                volume: 0.8 * Math.PI * sim.effRadius * sim.effRadius * e.penetration,
             });
         }
         if (e.type === "outcome") {
@@ -2563,14 +3007,34 @@ scene.onBeforeRenderObservable.add(() => {
                 " \u2014 " + e.cleanHops + " skips, " + e.distance.toFixed(1) + " m";
         }
     }
-    // EVERY frame the stone is touching water, not just the bounces: ploughing
-    // through a contact, wobbling, coasting after the score has stopped, and
-    // sinking. The pond used to go glassy the moment a run stopped scoring,
-    // with the stone still visibly dragging through it.
+    // EVERY frame the stone is near or in the water, not just the bounces:
+    // ploughing through a contact, chattering, wobbling, coasting after the
+    // score has stopped, sinking — and, between all of that, the ram-pressure
+    // dimple it drags along underneath itself while airborne. The pond used to
+    // go glassy the moment a run stopped scoring, with the stone still visibly
+    // dragging through it.
     {
         const g = sim.getDisturbance();
+        const dg = sim.getDiagnostics();
         const v = sim.state.velocity, h = Math.hypot(v.x, v.z) || 1;
-        stoneDisplace(g, dt, v.x / h, v.z / h, sim.getDiagnostics().spinRPS);
+        const mark = {
+            dirX: v.x / h, dirZ: v.z / h,
+            spinRPS: dg.spinRPS,
+            bankRad: dg.bankAngleDeg * Math.PI / 180,
+            aspect: SKIP.stone.aspect,
+            faceArea,
+            thickness: SKIP.stone.thickness,
+            effRadius: sim.effRadius,
+            resync: bouncedThisFrame,
+        };
+        stoneDisplace(g, mark);
+        if (!g.contact) {
+            // Height above the surface the solver itself is planing on, so the
+            // gap is measured against the same water the physics used.
+            const p0 = sim.state.position;
+            const gap = p0.y - waterAmbient(p0.x, p0.z, sim.state.time);
+            stoneGroundEffect(p0.x, p0.z, gap, g.speed, sim.effRadius, mark);
+        }
     }
 
     const p = sim.state.position, q = sim.state.orientation;

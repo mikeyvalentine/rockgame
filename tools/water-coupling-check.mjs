@@ -33,8 +33,13 @@
 // with the real pond.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { StoneSkipSim, THROW_PRESETS } from '../stone-skipping-physics/src/stoneSkipping.js';
 import { makeAmbientWater, sampleAmbient, POND_CONDITIONS } from '../shared/ambientWater.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed += 1; console.log(`  ok  ${name}`); };
@@ -285,6 +290,235 @@ test("docs/04's flat-water ladder is still valid at POND_CONDITIONS", () => {
       `continuous displacement has nothing left to draw`
     );
     console.log(`      (${contactFrames} contact frames, ${afterRunEnded} of them after scoring stopped)`);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. Volume -> crater. The arithmetic that turns the stone into a ripple.
+ * ------------------------------------------------------------------ *
+ *
+ * ## The bug this exists to prevent, which shipped
+ *
+ * The first version of the plough computed
+ *
+ *     ploughGain * displacedVolume * speed * dt * 60
+ *
+ * with the gain at 0.010. For a 172 g stone the displaced volume is ~3e-5 m^3,
+ * so that expression returns about 1e-6 — against a visible drop of 1e-2. Four
+ * orders of magnitude. Nothing in any suite said so, because nothing checked
+ * that a formula mixing a gain, a volume, a speed and a frame count produced a
+ * LENGTH. It does not; it produces whatever the gain's units happen to be.
+ *
+ * The impact path failed the opposite way at the same time: `rippleGain *
+ * energy * (0.25 + 0.75 sinA)` came to 0.047 m against a 0.050 m cap, so every
+ * bounce in the playable range was clipped to the same maximum crater. That is
+ * the reported symptom — "the ripples are fairly static" — and it is a
+ * DYNAMIC RANGE failure, which no single-value assertion can see.
+ *
+ * So both halves are checked here: the conversion round-trips a volume, and
+ * the spread between the softest and hardest real impact survives it.
+ */
+{
+  const html = readFileSync(join(here, '..', 'babylon-water', 'index.html'), 'utf8');
+  const constant = (name) => {
+    const m = html.match(new RegExp(`const ${name}\\s*=\\s*([^;]+);`));
+    assert.ok(m, `${name} is not declared in index.html`);
+    return m[1];
+  };
+
+  // The page's own numbers, evaluated rather than copied — a duplicated
+  // literal here would drift and this file would then be testing itself.
+  const CRATER_KAPPA = eval(constant('CRATER_KAPPA'));
+  const RIM_NEUTRAL = eval(constant('RIM_NEUTRAL'));
+  const MIN_DROP_CELLS = eval(constant('MIN_DROP_CELLS'));
+  const SIZE = eval(constant('SIZE'));
+  // The page's DEFAULT resolution, which sets the cell size and so the depth
+  // every crater comes out at. Parsed rather than assumed: `?res=` can change
+  // it at runtime, but what ships is what this table has to describe.
+  const RES_DEFAULT = Number(html.match(/\.includes\(q\)\s*\?\s*q\s*:\s*(\d+);/)[1]);
+  const rippleMax = Number(html.match(/rippleMax:\s*([0-9.]+)/)[1]);
+  const elongMax = Number(html.match(/elongMax:\s*([0-9.]+)/)[1]);
+
+  // A twin of the shipped fragment shader's radial profile. Asserting the
+  // source lines first means this cannot quietly test a shader that no longer
+  // exists — the constants above are only meaningful for THIS profile.
+  test('the drop shader still uses the crater+rim profile these constants describe', () => {
+    for (const line of [
+      'float w = 0.5 - cos((1.0 - u) * PI) * 0.5;',
+      'float ring = sin(u * PI);',
+      'float shape = -w + dropRim * ring * ring;',
+    ]) assert.ok(html.includes(line), `drop shader no longer contains: ${line}`);
+  });
+
+  const N = 20000;
+  const integrate = (f) => {
+    let s = 0;
+    for (let i = 0; i < N; i++) { const u = (i + 0.5) / N; s += f(u) * 2 * u / N; }
+    return s;
+  };
+  const wLobe = (u) => 0.5 - Math.cos((1 - u) * Math.PI) * 0.5;
+  const ring = (u) => Math.sin(u * Math.PI) ** 2;
+
+  test('CRATER_KAPPA is the crater lobe\'s own volume coefficient', () => {
+    const measured = integrate(wLobe);
+    assert.ok(Math.abs(measured - CRATER_KAPPA) < 1e-4,
+      `shader profile integrates to ${measured.toFixed(6)}, CRATER_KAPPA is ${CRATER_KAPPA}`);
+  });
+
+  // Water is incompressible. It also matters mechanically: damping is 0.9992
+  // by design, so a drop that adds net volume never gives it back and fifty
+  // bounces leave a standing mound on the pond.
+  test('a drop at RIM_NEUTRAL displaces zero net volume', () => {
+    const net = integrate((u) => -wLobe(u) + RIM_NEUTRAL * ring(u));
+    assert.ok(Math.abs(net) < 1e-4, `net volume ${net.toExponential(2)} per unit depth`);
+  });
+
+  const CELL = SIZE / RES_DEFAULT;
+  const MIN_ACROSS = (MIN_DROP_CELLS * CELL) / SIZE;
+  const craterDepth = (volume, across, elong) => {
+    const R = across * SIZE;
+    return volume / (Math.PI * R * R * elong * CRATER_KAPPA);
+  };
+
+  // THE ROUND TRIP. Whatever radius legibility forces, the crater has to hold
+  // the volume that went in — that is the entire claim the conversion makes,
+  // and it is what makes `rippleGain: 1.0` mean "what the solver said".
+  test('crater depth round-trips a displaced volume at any radius', () => {
+    for (const V of [1e-6, 3e-5, 1e-4, 1e-3]) {
+      for (const across of [MIN_ACROSS, MIN_ACROSS * 2, MIN_ACROSS * 0.5]) {
+        for (const elong of [1, 2.9, elongMax]) {
+          const d = craterDepth(V, across, elong);
+          const R = across * SIZE;
+          const back = d * Math.PI * R * R * elong * CRATER_KAPPA;
+          assert.ok(Math.abs(back - V) / V < 1e-9,
+            `V ${V} -> depth ${d} -> ${back}`);
+        }
+      }
+    }
+  });
+
+  // Real throws, real penetrations, the page's real formula. This is the
+  // measurement the "static ripples" report needed and nothing produced.
+  const PRESETS = ['casual', 'decent', 'strong', 'steinerThrow'];
+  const depths = [];
+  console.log(`\n  crater depth per bounce, volume-true ` +
+    `(RES ${RES_DEFAULT}, ${(CELL * 1000).toFixed(1)} mm cells):\n`);
+  console.log(`    ${pad('throw', 15)} ${lpad('bounces', 8)} ${lpad('softest', 10)} ${lpad('hardest', 10)}`);
+  for (const name of PRESETS) {
+    const sim = new StoneSkipSim({ profile: 'game', water: makeAmbientWater() });
+    sim.throwStone(THROW_PRESETS[name]);
+    const d = [];
+    while (!sim.finished && sim.state.time < 40) {
+      for (const e of sim.advance(1 / 60)) {
+        if (e.type !== 'bounce') continue;
+        const v = sim.state.velocity;
+        const h = Math.hypot(v.x, v.z) || 1;
+        const sinA = Math.sin(Math.atan2(Math.max(0, e.approachSpeed), h));
+        const elong = Math.min(elongMax, Math.max(1.6, 1 / Math.max(0.05, sinA)));
+        const volume = 0.8 * Math.PI * sim.effRadius ** 2 * e.penetration;
+        d.push(craterDepth(volume, MIN_ACROSS, elong));
+      }
+    }
+    if (!d.length) continue;
+    depths.push(...d);
+    console.log(`    ${pad(name, 15)} ${lpad(d.length, 8)} ` +
+      `${lpad((Math.min(...d) * 1000).toFixed(3) + 'mm', 10)} ` +
+      `${lpad((Math.max(...d) * 1000).toFixed(3) + 'mm', 10)}`);
+  }
+  console.log('');
+
+  // THE REPORTED BUG, as an assertion. The old formula clipped every playable
+  // impact to rippleMax, so throw and rock made no visible difference at all.
+  test('no bounce in the playable range is clipped by rippleMax', () => {
+    const clipped = depths.filter((d) => d >= rippleMax).length;
+    assert.equal(clipped, 0,
+      `${clipped} of ${depths.length} bounces hit the ${rippleMax} m cap — ` +
+      `a saturated cap is why ripples read as identical regardless of the throw`);
+  });
+
+  test('crater depth spans a wide range across real throws', () => {
+    const spread = Math.max(...depths) / Math.min(...depths);
+    assert.ok(spread > 4,
+      `softest to hardest is only ${spread.toFixed(1)}x — the water cannot be ` +
+      `showing the difference between a good throw and a bad one`);
+    console.log(`      (${spread.toFixed(0)}x between the softest and hardest bounce)`);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The COASTING AND SINKING half, reported broken twice.
+   * ---------------------------------------------------------------- *
+   *
+   * A stone spends more of a run not-bouncing than bouncing, and both times
+   * this was shipped the non-bouncing half made no mark at all. The second
+   * time was subtler than the first: the volume bound was right (a body can
+   * only hold aside its own volume) but applied to the flux INPUT, so the cap
+   * was reached during the run and by the time the stone started sinking there
+   * was no headroom left to emit.
+   *
+   * So the assertion is not "the function exists" or "a knob is non-zero". It
+   * is that displacement actually comes out DURING THE SINK, which is the only
+   * statement either bug would have failed.
+   */
+  const surfaceVolume = (displaced, faceArea, thickness, effRadius) => {
+    const depth = displaced / faceArea;
+    return faceArea * Math.min(depth, thickness) *
+      Math.exp(-Math.max(0, depth - thickness) / effRadius);
+  };
+
+  {
+    const sim = new StoneSkipSim({ profile: 'game', water: makeAmbientWater() });
+    sim.throwStone(THROW_PRESETS.steinerThrow);
+    const faceArea = Math.PI * sim.effRadius ** 2;
+    const thickness = 0.010;
+    let last = 0, duringRun = 0, duringSink = 0, sinkTotal = 0, peak = 0;
+    while (!sim.finished && sim.state.time < 40) {
+      const bounced = sim.advance(1 / 60).some((e) => e.type === 'bounce');
+      const g = sim.getDisturbance();
+      const v = surfaceVolume(g.displacedVolume, faceArea, thickness, sim.effRadius);
+      const dV = v - last;
+      last = v;
+      peak = Math.max(peak, v);
+      if (bounced || Math.abs(dV) < 1e-9) continue;
+      if (sim.runEnded) { duringSink++; sinkTotal += Math.abs(dV); } else duringRun++;
+    }
+
+    test('the stone displaces water while it is still skipping', () => {
+      assert.ok(duringRun > 20,
+        `only ${duringRun} ploughing frames emitted anything`);
+    });
+
+    test('the stone displaces water while it is SINKING', () => {
+      assert.ok(duringSink > 20,
+        `only ${duringSink} frames of the sink displaced anything — this is the ` +
+        `reported "no water displacement when the stone is coasting/sinking", and ` +
+        `it survived one fix already`);
+      assert.ok(sinkTotal > 1e-6,
+        `the whole sink moved ${sinkTotal.toExponential(2)} m^3`);
+      console.log(`      (${duringRun} ploughing frames, ${duringSink} sinking)`);
+    });
+
+    // The physical bound, and the reason the sink closes rather than digging
+    // forever. Without it the solver's raw prism reaches 1.6e-3 m^3.
+    test('the surface never holds more water aside than the stone displaces', () => {
+      const stoneVolume = faceArea * thickness;
+      assert.ok(peak <= stoneVolume * 1.001,
+        `peak depression ${peak.toExponential(2)} m^3 exceeds the stone's own ` +
+        `${stoneVolume.toExponential(2)} m^3`);
+    });
+
+    test('the dimple closes again once the stone is under', () => {
+      assert.ok(last < peak * 0.2,
+        `the depression finished at ${last.toExponential(2)} m^3 against a peak of ` +
+        `${peak.toExponential(2)} — a hole that never shuts`);
+    });
+  }
+
+  // Every one of them still has to be a ripple rather than a rounding error.
+  test('even the softest bounce leaves a crater the grid can carry', () => {
+    const min = Math.min(...depths);
+    assert.ok(min > 1e-5,
+      `softest crater is ${min.toExponential(2)} m — below anything the surface ` +
+      `shader will show, which is how the plough came to be invisible`);
   });
 }
 
