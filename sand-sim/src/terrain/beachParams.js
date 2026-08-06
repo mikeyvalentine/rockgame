@@ -20,6 +20,15 @@
  */
 
 import { padCoverage, padLevel } from "../../../shared/siftPad.js";
+import {
+    SHORE_HALF_X, SHORE_BACK_Z, WADE_DEPTH, shoreDistance,
+} from "../../../shared/worldBounds.js";
+
+export {
+    POND_SIZE, POND_HALF_X, POND_FAR_Z,
+    SHORE_WIDTH, SHORE_DEPTH, SHORE_HALF_X, SHORE_BACK_Z,
+    WADE_DEPTH, ROCK_FREE_MARGIN, ROCK_EDGE_Z,
+} from "../../../shared/worldBounds.js";
 
 // The deterministic shape constants live in shared/shoreRamp.js — siftPad needs
 // the foreshore slope to level a pad, and this module imports siftPad, so they
@@ -57,10 +66,17 @@ export const HEIGHT_RES = 2048;  // 0.25 m per texel
 export const AUX_RES = 1024;
 
 /**
- * The walkable zone (docs/09: bounded beach strip). +2 m of wading depth past
- * the waterline; everything else is scenery.
+ * The walkable zone (docs/09: bounded beach strip) — now derived from
+ * `shared/worldBounds.js` rather than being four numbers picked by eye. 70 m of
+ * shoreline, 25 m deep, plus the wading allowance past the water's edge.
+ *
+ * It shrank: 90 x 42 became 70 x 27. The old rectangle ran 40 m landward, which
+ * put its back edge in the flat nothing between the beach and the dunes.
  */
-export const PLAY_RECT = { minX: -45, maxX: 45, minZ: -40, maxZ: 2 };
+export const PLAY_RECT = {
+    minX: -SHORE_HALF_X, maxX: SHORE_HALF_X,
+    minZ: SHORE_BACK_Z, maxZ: WATERLINE_Z + WADE_DEPTH,
+};
 
 /** Where the walker spawns, and the initial view bearing (0 = facing the sea). */
 export const SPAWN = { x: 0, z: -15, yaw: 0 };
@@ -118,8 +134,12 @@ function smoothstepJS(a, b, t) {
  * @param {number} [amp] relief multiplier (the `macroHeightScale` setting)
  */
 export function shoreProfileJS(x, z, amp = 1) {
-    // Foreshore ramp: rises landward (-z), descends seaward (+z).
-    let h = -(z - WATERLINE_Z) * FORESHORE_SLOPE;
+    // Foreshore ramp, measured from the NEAREST water edge rather than from
+    // the near waterline — so the same slope that lifts the beach also lifts
+    // the pond's far bank, and the basin between them is dug once. Landward of
+    // the near waterline `shoreDistance` is exactly `WATERLINE_Z - z`, which is
+    // what this line used to say, so nothing on the playable side moved.
+    let h = shoreDistance(x, z) * FORESHORE_SLOPE;
 
     // Soft clamp into the flat seabed.
     const tSea = smoothstepJS(-SEABED_DEPTH - 1.0, -SEABED_DEPTH + 1.0, h);

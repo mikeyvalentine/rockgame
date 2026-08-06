@@ -17,12 +17,20 @@ import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Constants } from "@babylonjs/core/Engines/constants";
 
-import { WATERLINE_Z, WATER_LEVEL_Y } from "../terrain/beachParams.js";
+import { WATERLINE_Z, WATER_LEVEL_Y, POND_SIZE } from "../terrain/beachParams.js";
 
-/** Seaward extent of the quad, metres. Meets the horizon well before maxZ. */
-const REACH = 3600;
-/** Lateral extent, metres. */
-const WIDTH = 4000;
+/**
+ * The pond, not a sea.
+ *
+ * This quad was 4000 x 3600 m and ran to the horizon, which is what you build
+ * when the world has no edge. It has one now (`shared/worldBounds.js`): 200 m
+ * square, its near edge on the waterline. The far bank it ends against is the
+ * beach profile's own, raised by the same foreshore slope measured from the far
+ * water edge — so the two meet at y = 0 by construction rather than by being
+ * lined up here.
+ */
+const REACH = POND_SIZE;
+const WIDTH = POND_SIZE;
 /**
  * The quad sits a hair below the true water level so it cannot z-fight the
  * sand exactly at the waterline; the wet band owns that pixel-wide seam.
