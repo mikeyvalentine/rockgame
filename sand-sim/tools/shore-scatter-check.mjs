@@ -1,0 +1,136 @@
+// The shore rock field's promises — pure math over shared/shoreScatter.js.
+//
+// The field is generated on every client rather than shipped, so "same seed,
+// same stones" is not a nicety: it is CLAUDE.md rule 4, and it is what lets a
+// server validate anything the player says they found.
+
+import { castSequence } from "../src/scene/siftingBeds.js";
+import {
+    scatterShore, densityAt, PEAK_DENSITY, MIN_GAP, SINK_FRACTION, SCATTER_SEED,
+} from "../../shared/shoreScatter.js";
+import {
+    SHORE_HALF_X, SHORE_BACK_Z, ROCK_EDGE_Z, ROCK_FREE_MARGIN, SHORE_DEPTH,
+} from "../../shared/worldBounds.js";
+import { WATERLINE_Z } from "../../shared/shoreRamp.js";
+
+let failures = 0;
+function check(name, ok, detail) {
+    console.log((ok ? "ok   " : "FAIL ") + name + (ok || !detail ? "" : " — " + detail));
+    if (!ok) failures++;
+}
+
+const cast = castSequence();
+check("cast is the forge's forty", cast.length === 40, String(cast.length));
+
+const field = scatterShore({ cast });
+check("field is populated", field.length > 1000, String(field.length) + " stones");
+
+// ---- determinism ------------------------------------------------------------
+const again = scatterShore({ cast });
+check("same seed gives the same field",
+    again.length === field.length
+    && again.every((s, i) => s.x === field[i].x && s.z === field[i].z
+        && s.archetype === field[i].archetype),
+    `${field.length} vs ${again.length}`);
+
+const other = scatterShore({ cast, seed: SCATTER_SEED + 1 });
+check("a different seed gives a different field",
+    other.length !== field.length || other[0].x !== field[0].x);
+
+// ---- the water's edge is clear ---------------------------------------------
+let nearest = -Infinity;
+for (const s of field) nearest = Math.max(nearest, s.z);
+check(`no stone within ${ROCK_FREE_MARGIN} m of the water`, nearest <= ROCK_EDGE_Z,
+    "closest z " + nearest.toFixed(2) + " vs limit " + ROCK_EDGE_Z);
+
+// ---- nothing leaves the strip ----------------------------------------------
+// The whole footprint, not the centre: a stone half over the edge of the field
+// is a stone sticking out of the world.
+const strayed = field.filter((s) =>
+    s.x - s.radius < -SHORE_HALF_X || s.x + s.radius > SHORE_HALF_X
+    || s.z - s.radius < SHORE_BACK_Z || s.z + s.radius > ROCK_EDGE_Z);
+check("every stone sits wholly inside the shore rect", strayed.length === 0,
+    strayed.length + " outside");
+
+// ---- and none of them interpenetrate ---------------------------------------
+//
+// The whole point of placing rather than dropping: with no physics to push
+// them apart, non-overlap has to be true by construction. Checked with a grid
+// so this is not 8,000 squared.
+{
+    const CELL = 0.5;
+    const buckets = new Map();
+    const key = (cx, cz) => cx + "," + cz;
+    for (const s of field) {
+        const k = key(Math.floor(s.x / CELL), Math.floor(s.z / CELL));
+        (buckets.get(k) ?? buckets.set(k, []).get(k)).push(s);
+    }
+    let worst = Infinity;
+    let clashes = 0;
+    for (const s of field) {
+        const cx = Math.floor(s.x / CELL);
+        const cz = Math.floor(s.z / CELL);
+        for (let a = -1; a <= 1; a++) {
+            for (let b = -1; b <= 1; b++) {
+                for (const o of buckets.get(key(cx + a, cz + b)) ?? []) {
+                    if (o === s) continue;
+                    const gap = Math.hypot(s.x - o.x, s.z - o.z) - s.radius - o.radius;
+                    worst = Math.min(worst, gap);
+                    if (gap < MIN_GAP - 1e-9) clashes++;
+                }
+            }
+        }
+    }
+    check("no two stones overlap", clashes === 0,
+        clashes + " pairs, tightest gap " + worst.toFixed(4) + " m");
+    check("the tightest gap respects MIN_GAP", worst >= MIN_GAP - 1e-9,
+        worst.toFixed(4));
+}
+
+// ---- the density actually ramps --------------------------------------------
+check("density is zero at the water", densityAt(WATERLINE_Z) === 0);
+check("density is zero at the margin", densityAt(WATERLINE_Z - ROCK_FREE_MARGIN) === 0);
+check("density peaks at the back",
+    Math.abs(densityAt(WATERLINE_Z - SHORE_DEPTH) - PEAK_DENSITY) < 1e-9);
+
+{
+    // Measured off the field itself, not off `densityAt` — a ramp in the
+    // density function that the sampler failed to honour would pass every
+    // check above and still produce a uniform beach.
+    // Bands run from the rock-free margin landward, not from the water. Cut
+    // from the water instead and the first band straddles the margin, so it is
+    // part empty by definition and says nothing about the ramp.
+    const BANDS = 4;
+    const bandDepth = (SHORE_DEPTH - ROCK_FREE_MARGIN) / BANDS;
+    const counts = new Array(BANDS).fill(0);
+    for (const s of field) {
+        const d = WATERLINE_Z - s.z - ROCK_FREE_MARGIN;
+        counts[Math.max(0, Math.min(BANDS - 1, Math.floor(d / bandDepth)))]++;
+    }
+    let rising = true;
+    for (let i = 1; i < BANDS; i++) if (counts[i] <= counts[i - 1]) rising = false;
+    check("stone count rises with every band landward", rising, counts.join(" < "));
+    check("the back band carries several times the first",
+        counts[BANDS - 1] > counts[0] * 4, counts.join(" / "));
+}
+
+// ---- stones sit IN the sand, not on it -------------------------------------
+{
+    const ground = (x, z) => 1.5 + x * 0.001 - z * 0.02;   // any sloped plane
+    const sunk = scatterShore({ cast, heightAt: ground });
+    const bad = sunk.filter((s) => {
+        const want = ground(s.x, s.z) - s.radius * SINK_FRACTION;
+        return Math.abs(s.y - want) > 1e-9;
+    });
+    check("every stone is sunk into the ground it stands on", bad.length === 0,
+        bad.length + " floating");
+}
+
+// ---- the density multiplier does something ----------------------------------
+const sparse = scatterShore({ cast, density: 0.25 });
+check("the density multiplier thins the field", sparse.length < field.length * 0.5,
+    `${sparse.length} vs ${field.length}`);
+
+console.log(`\n${field.length} stones across the shore`);
+console.log(failures ? `${failures} check(s) failed` : "all shore-scatter checks passed");
+process.exit(failures ? 1 : 0);

@@ -50,8 +50,7 @@ import {
     WORLD_SIZE, SPAWN, shoreProfileJS, clampToPlayRect,
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
-import { buildSiftingBeds } from "../scene/siftingBeds.js";
-import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { buildShoreRocks } from "../scene/shoreRocks.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
@@ -62,6 +61,15 @@ import * as loading from "../core/loading.js";
 const GRID_SUBDIVISIONS = 256;
 
 /** @param {HTMLCanvasElement} canvas */
+/** `?density=1.8` — see the call site. Null when absent or unparseable. */
+function rockDensityFromURL() {
+    if (typeof location === "undefined") return null;
+    const raw = new URLSearchParams(location.search).get("density");
+    if (raw === null) return null;
+    const v = Number.parseFloat(raw);
+    return Number.isFinite(v) && v >= 0 ? v : null;
+}
+
 export async function run(canvas) {
     await loading.phase("creating context", 0.05);
 
@@ -157,20 +165,36 @@ export async function run(canvas) {
     // ----------------------------------------------------------------- water
     const water = buildWater(scene);
 
-    // ------------------------------------------------------- sifting beds
-    // The stones on the piles. Renderer-agnostic — it wants nothing but
-    // `heightAt`, and the stones are ordinary meshes, so the fallback draws
-    // them as well as the WebGPU path does. (The mound they sit on is the part
-    // this renderer loses; see docs/09.)
-    await loading.phase("laying the beds", 0.68);
-    const beds = await buildSiftingBeds(scene, terrain);
-    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
+    // --------------------------------------------------------- shore rocks
+    // Stones across the whole strip, thinning to nothing at the water's edge —
+    // `shared/shoreScatter.js` decides where, `scene/shoreRocks.js` draws them.
+    // Renderer-agnostic: it wants nothing but `heightAt`, and the stones are
+    // ordinary meshes, so the fallback draws them as well as the WebGPU path.
+    await loading.phase("scattering the shore", 0.68);
+    const rocks = await buildShoreRocks(scene, terrain, {
+        // `?density=` overrides the setting. The field is generated once,
+        // behind the loading screen, so the slider cannot move it live — and
+        // how covered the beach should look is a judgement made by standing on
+        // it at several values, which wants a reload knob rather than a
+        // rebuild.
+        density: rockDensityFromURL() ?? S.rockDensity,
+    });
+    console.log(
+        `[sand-sim] ${rocks.stones} stones across the shore ` +
+        `(${rocks.meshes} meshes, ${rocks.tiles} tiles)`
+    );
 
-    // Physics is built HERE, not at the crouch, and that is the whole reason
-    // crouching is a camera move: the wasm fetch and the forty convex hulls are
-    // the expensive part, and they are paid once, behind this loading screen.
-    await loading.phase("waking the stones", 0.74);
-    const physics = beds ? await loadSiftPhysics(scene) : null;
+    // The four sifting beds are unwired, not deleted.
+    //
+    // They are the only thing that can put a stone in your hand, and the field
+    // above cannot yet — a thin instance is not pickable. But four dense
+    // patches with bare sand between them is exactly what the scatter replaces,
+    // so drawing both would be drawing the old world on top of the new one.
+    // `buildSiftingBeds`, `siftPhysics`, `Imprints` and the crouch all still
+    // build and still pass their checks; nothing calls them until inspecting
+    // any stone on the shore is wired up.
+    const beds = null;
+    const physics = null;
 
     const character = new CharacterController(terrain);
     character.position.set(SPAWN.x, 0, SPAWN.z);
@@ -331,6 +355,9 @@ export async function run(canvas) {
         sun.direction.set(-sky.sunDir.x, -sky.sunDir.y, -sky.sunDir.z);
         water.update(dt);
         // After contact staged its brushes, before the render consumes them.
+        // Tiles beyond DRAW_DISTANCE are switched off — frustum culling drops
+        // what is behind you, this drops the far end of a 70 m beach.
+        rocks?.update(character.position.x, character.position.z);
         if (deform) deform.update(dt, character.position);
 
         scene.render();
@@ -352,7 +379,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble, beds, physics, crouch, sift, imprints, imprints,
+        deform, contact, scribble, rocks, beds, physics, crouch, sift, imprints,
         S, input, perfStats: stats,
     };
 }

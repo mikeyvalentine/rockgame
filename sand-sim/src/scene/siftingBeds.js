@@ -88,6 +88,17 @@ export const U = 4;
 const SCENERY_LOD = 2;
 
 /**
+ * Icosphere level for the shore field.
+ *
+ * One below the beds. There are 8,000 stones out there rather than 620 in a
+ * patch you are crouched over, and at 6 cm across from a standing eye a level-1
+ * pebble (80 triangles) is the same silhouette as a level-2 one for a quarter
+ * of the cost. The whole field at level 1 is about 640k triangles before any
+ * culling; at level 2 it would be 2.6M, which is the beach twenty times over.
+ */
+export const FIELD_LOD = 1;
+
+/**
  * The cast, as a sequence — the single place the RNG is walked.
  *
  * The draw order matters and is not incidental: rock-sift advances its RNG once
@@ -130,7 +141,7 @@ export function createBedArchetypes(scene, opts = {}, materials = {}, photo = fa
 
     for (const { name, shape, params, sizeMetres } of castSequence(opts)) {
         const jitter = 0.86 + jrng() * 0.28;
-        const detail = buildDetailMesh(shape, params, SCENERY_LOD, sizeMetres);
+        const detail = buildDetailMesh(shape, params, opts.lod ?? SCENERY_LOD, sizeMetres);
         const positions = Float32Array.from(detail.positions);
         const indices = Array.from(detail.indices);
         const normals = [];
