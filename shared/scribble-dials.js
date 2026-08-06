@@ -35,7 +35,7 @@ export const SCRIBBLE_PARAMS = {
   strokeFreq:    ["stroke density", 4, 140, 2,      10,     "pastel"],
   strokeAngle:   ["stroke angle",   0, 3.14, 0.05,  0.5,    "pastel"],
   paperScale:    ["paper scale",    0.5, 40, 0.25,  37.25,  "pastel"],
-  grain:         ["paper grain",    0, 0.8, 0.02,   0.14,   "pastel"],
+  grain:         ["paper grain",    0, 0.8, 0.02,   0.02,   "pastel"],
   bleed:         ["colour bleed",   0, 0.03, 0.001, 0,      "pastel"],
   warp:          ["paper warp",     0, 0.02, 0.001, 0,      "pastel"],
   ignoreSky:     ["ignore sky",     0, 1, 1,        1,      "pastel"],
