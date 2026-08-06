@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { decodeBed } from "../../shared/bedFormat.js";
 import { SIFT_SPOTS, CROWN_RADIUS } from "../../shared/pileField.js";
 import { SpotImprint, bakeBedImprint, IMPRINT_HALF, BED_PRESS } from "../../shared/spotImprint.js";
+import { Imprints } from "../src/scene/imprints.js";
 import { castSequence } from "../src/scene/siftingBeds.js";
 import { shoreProfileJS } from "../src/terrain/beachParams.js";
 
@@ -86,4 +87,27 @@ check("an impact digs deeper than a resting stone", divot.maxDepth() > resting *
 
 console.log("     imprint: " + (deepest * 1000).toFixed(1) + " mm deepest, " +
     (imp.coverage() * 100).toFixed(1) + "% covered, " + pressed + " stones pressing");
+// ---------------------------------------------------------------------------
+// The layer has to be FELT, not merely stored
+// ---------------------------------------------------------------------------
+//
+// The maths sat here tested and unimported for a while, which looks identical
+// to working. So this asserts the consumer: a terrain wrapped by Imprints
+// returns lower ground where the sand has been pressed, and unchanged ground
+// everywhere else.
+
+const flat = { heightAt: () => 1, normalAt: (x, z, out) => out.set(0, 1, 0) };
+const live = new Imprints(flat, null);
+const wrapped = live.wrapTerrain();
+const s0 = SIFT_SPOTS[0];
+
+check("an untouched beach grounds exactly as before",
+    wrapped.heightAt(s0.x + 40, s0.z) === 1);
+
+live.layers.get(s0.id).press(s0.x, s0.z, 0.06, 0.02);
+const dug = wrapped.heightAt(s0.x, s0.z);
+check("pressed sand grounds lower", dug < 1 - 0.015,
+    "ground at " + dug.toFixed(4) + " after a 20 mm press");
+check("the dent is local", wrapped.heightAt(s0.x + 1.5, s0.z) === 1);
+
 process.exit(failures ? 1 : 0);

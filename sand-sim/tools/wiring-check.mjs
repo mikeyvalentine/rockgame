@@ -49,9 +49,6 @@ const UNWIRED = {
     // run of this check finding it is the point.
     "mat4.js":
         "flat-array bone maths for a skeleton the beach has not grown yet",
-    "spotImprint.js":
-        "built and tested; still needs the bake call when a bed is placed and " +
-        "stone contacts fed in while sifting. See docs/09.",
 };
 
 function walk(dir, out = []) {

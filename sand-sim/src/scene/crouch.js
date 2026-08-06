@@ -57,7 +57,8 @@ export class Crouch {
      * @param physics    a SiftPhysics
      * @param beds       the handle from `buildSiftingBeds`
      */
-    constructor({ rig, character, physics, beds, interaction = null, examine = null }) {
+    constructor({ rig, character, physics, beds, interaction = null, examine = null, imprints = null }) {
+        this.imprints = imprints;
         this.interaction = interaction;
         this.examine = examine;
         this.rig = rig;
@@ -149,6 +150,9 @@ export class Crouch {
         if (this.engaged) {
             this.interaction?.setEnabled(this.spot !== null && !this.tween);
             this.examine?.update(dt);
+            // Stones landing press the sand, permanently. Only while crouched:
+            // it is the only time anything is moving stones around.
+            this.imprints?.pressImpacts(this.physics.awake);
         }
 
         if (!this.tween) return this.spot !== null;

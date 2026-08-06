@@ -55,6 +55,7 @@ import { loadSiftPhysics } from "../scene/siftPhysics.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
+import { Imprints } from "../scene/imprints.js";
 import * as loading from "../core/loading.js";
 
 /** Grid density for the visible beach. 256² over 512 m = 2 m spacing. */
@@ -238,11 +239,20 @@ export async function run(canvas) {
     const prompt = createCrouchPrompt();
     // rock-sift's own sweep, carry and examine, constructed against this
     // camera and this bed — see scene/siftInteraction.js.
+    // The sand the beds have been resting in, and the holes sifting leaves.
+    // Built after the beds because it is derived from the transforms they were
+    // placed with.
+    const imprints = beds ? new Imprints(terrain, beds) : null;
+    // The walker grounds on the DUG terrain from here on, so a bed that has
+    // been sifted is one you stand lower in. Reassigned rather than passed at
+    // construction because the imprints are derived from bed transforms that do
+    // not exist until after the controller is built.
+    if (imprints) character.terrain = imprints.wrapTerrain();
     const sift = physics ? createSiftInteraction(scene, rig.camera, physics) : null;
     const crouch = physics
         ? new Crouch({
             rig, character, physics, beds,
-            interaction: sift?.interaction, examine: sift?.examine,
+            interaction: sift?.interaction, examine: sift?.examine, imprints,
         })
         : null;
     let nearSpot = null;    // the pile under the player, or null
@@ -312,7 +322,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground,
-        deform, contact, scribble, beds, physics, crouch, sift,
+        deform, contact, scribble, beds, physics, crouch, sift, imprints, imprints,
         S, input, perfStats: stats,
     };
 }
