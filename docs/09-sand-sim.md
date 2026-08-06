@@ -95,7 +95,11 @@ Not wired yet: the bucket and a sift HUD. Sweeping, carrying and examining are w
 
 **Two things designed for but not yet built:**
 
-- **Divots must persist.** The `DeformationField` is the wrong home for the same reason the piles were: it is player-centred over 80 m, toroidal, and it relaxes, so a hole fades and then vanishes when you walk away. Permanent stone divots — and the bed's own baked-in imprint on the sand it is resting in, which is derivable because every stone's resting position is in the bed file — want a separate world-anchored layer per spot that never relaxes and never scrolls. At 3.9 cm texels the existing field is already stone-scale, so resolution is not the obstacle; persistence is.
+- **Divots persist — the layer is built, not yet drawn.** `shared/spotImprint.js` is a small fixed grid per spot, anchored in world space, that never relaxes and never scrolls; `tools/imprint-check.mjs` covers it. The `DeformationField` was the wrong home for the same reason the piles were — player-centred over 80 m, toroidal, relaxing — and resolution was never the obstacle (3.9 cm texels are already stone-scale); persistence was. 256² over 4 m is 1.6 cm texels and 256 KB a spot.
+
+  The bed's own imprint falls out of the same layer: every stone's resting position is in the bed file, so the sand it has been sitting in is *derived* rather than authored, and deterministic for a given bed. Measured on `shore-0`: 308 of 540 stones touch the sand, pressing it 16.3 mm at the deepest over 5.7% of the layer — only the bottom layer presses, since a stone resting on three others is holding up the pile rather than denting the beach. Presses combine with `max` and not `+=`, so two stones in one dip make one dip and the bake is order-independent.
+
+  Still to do: sample it in the sand material so the dents are visible, and stamp it from stone impacts so a thrown stone leaves its own hole.
 - **Spots will not stay circular.** The intent is to spread stones along the beach rather than sift in a disc. Nothing new should compute `distance < radius` inline; spot coverage belongs behind the spot itself, so a strip slots in where a disc is today. `shared/pileField.js` is the one place that still assumes circles.
 
 ### 2. Movement trails
