@@ -57,7 +57,7 @@ for (const app of ["app/webglApp.js", "app/webgpuApp.js"]) {
 // the gate ever moved, the beach would print boots while nobody is walking.
 for (const app of ["app/webglApp.js", "app/webgpuApp.js"]) {
     const src = read(app);
-    const gate = src.slice(src.indexOf("if (!knelt) {"), src.indexOf("if (!knelt) {") + 400);
+    const gate = src.slice(src.indexOf("if (!knelt) {"), src.indexOf("if (!knelt) {") + 800);
     check(app + " keeps footfall contact behind the knelt gate",
         gate.includes("contact.update(dt)") || gate.includes("contact) contact.update(dt)"));
 }

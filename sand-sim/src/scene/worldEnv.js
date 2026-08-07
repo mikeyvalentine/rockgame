@@ -85,9 +85,20 @@ export async function buildWorldEnv(scene, opts = {}) {
 
     const container = await LoadAssetContainerAsync(ENV_URL, scene);
 
-    // The export carries its own water plane and a DCC camera; the game has
-    // both already. Name everything else out of the global namespace — the
-    // scene's real water mesh is also called "water".
+    // The export's DCC camera (`RS Camera`) marks where the player should spawn
+    // and which way they face. Capture its transform before disposing it — the
+    // game supplies its own camera. Local here (nothing is parented yet); it is
+    // turned into a world spawn once the root's offset+yaw exist, below.
+    let camLocalPos = null, camLocalFwd = null;
+    const cam0 = container.cameras[0];
+    if (cam0) {
+        // The node's TRS may sit on a parent transform, so `cam0.position` is
+        // local (often 0,0,0) — read the resolved world matrix instead. This is
+        // env-local (the export's own space); the root maps it to world below.
+        cam0.computeWorldMatrix(true);
+        camLocalPos = cam0.getWorldMatrix().getTranslation();
+        camLocalFwd = cam0.getForwardRay(1).direction.clone();
+    }
     for (const cam of [...container.cameras]) {
         container.cameras.splice(container.cameras.indexOf(cam), 1);
         cam.dispose();
@@ -124,6 +135,21 @@ export async function buildWorldEnv(scene, opts = {}) {
 
     container.addAllToScene();
     for (const node of container.rootNodes) node.parent = root;
+
+    // The player spawn, from the export's camera, put through the root's
+    // offset+yaw so it lands in world space. Position feeds the walker's feet
+    // (grounded on the terrain); the camera's horizontal heading becomes the
+    // rig yaw (yaw 0 faces +Z, per FpsRig). Null if the export had no camera.
+    let spawn = null;
+    if (camLocalPos) {
+        root.computeWorldMatrix(true);
+        const wm = root.getWorldMatrix();
+        const wp = Vector3.TransformCoordinates(camLocalPos, wm);
+        const wd = Vector3.TransformNormal(camLocalFwd, wm);
+        spawn = { x: wp.x, z: wp.z, yaw: Math.atan2(wd.x, wd.z) };
+        console.log(`[worldEnv] spawn from camera: ${wp.x.toFixed(1)}, ${wp.z.toFixed(1)} ` +
+            `yaw ${(spawn.yaw * 180 / Math.PI).toFixed(0)}°`);
+    }
 
     // The authored pond terrain — the C4D Landscape: a pond basin (deepening
     // toward the middle) with a shore rising to the waterline around its rim.
@@ -196,6 +222,9 @@ export async function buildWorldEnv(scene, opts = {}) {
         // export carried no Landscape (`?env=0`, or a stripped glb). The app
         // uses this as the world's terrain when present.
         terrain: ground,
+        // `{ x, z, yaw }` from the export's camera, or null. Where the player
+        // spawns and which way they face.
+        spawn,
         setYaw,
         dispose() { container.dispose(); root.dispose(); },
     };

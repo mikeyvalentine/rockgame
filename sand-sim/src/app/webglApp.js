@@ -47,7 +47,7 @@ import { SandDeformPlugin } from "../render/sandDeformPlugin.js";
 import { Overlay } from "../ui/overlay.js";
 import { HdriEnvironment } from "../render/environment.js";
 import {
-    WORLD_SIZE, SPAWN, shoreProfileJS, clampToPlayRect,
+    WORLD_SIZE, SPAWN, shoreProfileJS, WATER_LEVEL_Y,
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
 import { buildShoreRocks } from "../scene/shoreRocks.js";
@@ -240,10 +240,20 @@ export async function run(canvas) {
     const beds = null;
     const physics = null;
 
+    // Spawn from the glb camera when the export has one, else the placeholder
+    // SPAWN. Feet on the terrain either way (the camera only gives x/z + yaw).
+    const spawn = worldEnv?.spawn ?? SPAWN;
     const character = new CharacterController(terrain);
-    character.position.set(SPAWN.x, 0, SPAWN.z);
-    character.position.y = terrain.heightAt(SPAWN.x, SPAWN.z);
-    rig.yaw = SPAWN.yaw; // facing the sea
+    character.position.set(spawn.x, 0, spawn.z);
+    character.position.y = terrain.heightAt(spawn.x, spawn.z);
+    rig.yaw = spawn.yaw;
+
+    // Walk bound, inferred from the glb — not the old 70 m arc. The player may
+    // roam the whole authored shore but not swim into the pond: a step that
+    // lands in water deeper than a wade is rejected back to the last dry-enough
+    // spot, so you slide along the water's edge instead of walking in.
+    const WADE = 0.6;
+    let lastWalkX = character.position.x, lastWalkZ = character.position.z;
 
     // ------------------------------------------------------------ deformation
     // The same DeformationField class and the same brush model as the WebGPU
@@ -379,7 +389,15 @@ export async function run(canvas) {
         const knelt = crouch ? crouch.update(dt) : false;
         if (!knelt) {
             character.update(dt, rig);
-            clampToPlayRect(character.position);
+            // Keep out of the deep pond (glb-inferred, replaces the arc clamp).
+            if (terrain.heightAt(character.position.x, character.position.z)
+                < WATER_LEVEL_Y - WADE) {
+                character.position.x = lastWalkX;
+                character.position.z = lastWalkZ;
+            } else {
+                lastWalkX = character.position.x;
+                lastWalkZ = character.position.z;
+            }
             if (contact) contact.update(dt);
         }
 
