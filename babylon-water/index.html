@@ -716,6 +716,15 @@ uniform vec2 windowCenter;
 // literal, because the window is now sized to fit the run it is about to hold
 // (see placeRun) and a 106 m arcade throw needs a wider one than a 20 m casual.
 uniform float worldSize;
+// Vertical exaggeration of the windowed DEVIATION only (not ambient). The
+// fragment shader shows ripple detail through the normal at SLOPE_GAIN (64x),
+// but the geometry moved by the raw deviation — a few millimetres for a skip —
+// so the surface never visibly rose and every impact read as the same height.
+// This lifts the actual vertices so a hard strike genuinely raises the water
+// and a soft one barely does, since crater depth is ~linear in displaced
+// volume. It scales DISPLAY only; the solver and volume conservation are
+// untouched, exactly as SLOPE_GAIN is a display exaggeration of the normal.
+uniform float heightGain;
 varying vec2 vRel;
 varying vec3 vWorld;
 
@@ -730,7 +739,7 @@ void main(void) {
     // hands off to pure ambient with no seam. Outside the window the clamp
     // reads an edge texel and the fade multiplies it away.
     vRel = (flatW.xz - windowCenter) / worldSize + 0.5;
-    float dev = texture2D(sim, clamp(vRel, 0.0, 1.0)).r * winFade(vRel);
+    float dev = texture2D(sim, clamp(vRel, 0.0, 1.0)).r * winFade(vRel) * heightGain;
     // Heights are already in the plane's own units, exactly as in the original,
     // so there is no height scale to apply.
     // No footprint in the vertex stage: geometry is not what aliases, and there
@@ -903,7 +912,17 @@ try {
 // frame. The sparkle it was fighting is already handled analytically by the
 // footprint-based filtering in the shader, which costs nothing per extra pixel.
 // Raise this only if aliasing reappears at a viewing angle the filtering misses.
-const RENDER = window.RENDER = { supersample: 1.0 };
+const RENDER = window.RENDER = {
+    supersample: 1.0,
+    // Vertical exaggeration of the windowed deviation, so the water visibly
+    // rises and falls and does so MORE for a harder impact (crater depth is
+    // ~linear in displaced volume at this cell size). 1.0 is the honest height
+    // the solver computes — a few mm for a skip, invisible as geometry against a
+    // 200 m pond — so this lifts it into the visible range. Display only; it
+    // does not touch the sim or volume conservation. RENDER.heightGain = 1 to
+    // see the true amplitude. Tune to taste; a plunge is clamped by rippleMax.
+    heightGain: 14.0,
+};
 // AUDIT #1 (docs/10 "resolution is the biggest lever"): dpr is pinned to 1 —
 // on a Retina panel the old Math.min(devicePixelRatio, 2) rendered 4x the
 // pixels of the CSS canvas before the supersample slider even moved. The
@@ -1135,7 +1154,7 @@ const waterMat = new BABYLON.ShaderMaterial("waterMat", scene,
         attributes: ["position", "uv"],
         uniforms: ["world", "viewProjection", "cameraPos", "sunDir", "tint",
                    "time", "windStrength", "windDir", "detailScale", "waveScale",
-                   "blurGain", "windowCenter", "worldSize"],
+                   "blurGain", "windowCenter", "worldSize", "heightGain"],
         samplers: ["sim", "envTex"],
     }
 );
@@ -1160,7 +1179,15 @@ const WIND = window.WIND = {
     // already guards the octave table against AMBIENT_GLSL.
     strength: 0.01,
     dirDeg: 93,
-    detail: 3.0,       // full detail, now that supersampling handles the aliasing
+    // detailScale for the shader's footprint-based anti-alias filter. It divides
+    // the TRUE pixel footprint (see `fp` in the fragment shader), so >1 tells the
+    // filter each pixel is smaller than it is and keeps finer slope detail alive.
+    // It sat at 3.0 with a note that "supersampling handles the aliasing" — but
+    // RENDER.supersample is 1.0 (off), so nothing was resolving that kept detail
+    // and it aliased into an all-over diagonal cross-hatch. 1.0 is the honest
+    // footprint: fade what the pixel genuinely cannot resolve. Raise it only if
+    // supersample is also raised.
+    detail: 1.0,
     waveScale: 8.0,    // 1 is the original fine chop; higher is longer swell
     // 45 per the same dump — at near-glass the reflection carries the frame,
     // so the variance-driven blur earns its four detailWeight terms per pixel
@@ -1993,6 +2020,51 @@ function craterDrop(x, z, depth, dirX, dirZ, shape) {
     return d;
 }
 
+/** Most sub-stamps a single stroke may lay. The drop queue is bounded and two
+ *  continuous-displacement sources stroke every frame, so a very fast frame must
+ *  not flood it; past this the stamps are already dense enough to read solid. */
+const STROKE_MAX = 8;
+
+/**
+ * Lay a crater as a STROKE along the segment the stone covered this frame,
+ * instead of a single stamp at the end of it.
+ *
+ * A stamp per frame is a stamp per ~16 ms, and a stone moving several metres a
+ * second covers many crater-lengths in that time — so the stamps land with gaps
+ * and a wake reads as a row of separate rings (the "dividing lines" a real
+ * furrow does not have). Spreading the SAME displaced volume along the path
+ * closes those gaps into one continuous scar.
+ *
+ * Volume-conserving by construction. craterDepth() inverts the drop shader's own
+ * volume integral, so a stamp of depth craterDepth(v) deposits exactly v into
+ * the additive height field. N stamps each given volume/N therefore deposit v in
+ * total however much they overlap — the furrow carries the right displacement
+ * spread along its length rather than piled at one point, which is also why a
+ * fast wake comes out correctly shallower than a dead-stop plunge of equal
+ * volume. At N = 1 (a slow or first frame) this is bit-identical to a single
+ * craterDrop at the segment's centre.
+ *
+ * @param x0,z0  where the stone was last frame; equals x1,z1 on a throw's first
+ *               frame, collapsing the stroke to one stamp.
+ * @param volume signed displaced volume for the frame (a mound is negative).
+ * @param gain   caller's amplitude multiplier (SPLASH.ploughGain, or 1).
+ */
+function craterStroke(x0, z0, x1, z1, volume, dirX, dirZ, shape, gain) {
+    const dist = Math.hypot(x1 - x0, z1 - z0);
+    // Space stamps about a crater half-width apart, so consecutive marks overlap
+    // rather than touch. shape.across is in Evan's UV; * SIZE puts it in metres.
+    const step = Math.max(1e-3, shape.across * SIZE);
+    const n = Math.max(1, Math.min(STROKE_MAX, Math.round(dist / step)));
+    const depth = gain * craterDepth(volume, shape.across, shape.elong) / n;
+    let used = 0;
+    for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n;   // sub-segment centres; n === 1 gives 0.5
+        used += craterDrop(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t,
+            depth, dirX, dirZ, shape);
+    }
+    return used;
+}
+
 /// The stone hook. Everything an impact does to the water goes through here, so
 /// the ripple and the splash cannot disagree about how hard the hit was.
 ///
@@ -2341,8 +2413,13 @@ function stoneDisplace(d, o) {
     const flat = clamp01(1 - Math.abs(o.attackRad || 0) / (Math.PI / 3));
     const elongWant = 1 + (SPLASH.ploughElong - 1) * run * (0.35 + 0.65 * flat);
     const shape = shapeCrater(d.radius, elongWant, { ...o, volume: Math.abs(dV) });
-    const depth = SPLASH.ploughGain * craterDepth(dV, shape.across, shape.elong);
-    return craterDrop(d.x, d.z, depth, o.dirX, o.dirZ, shape);
+    // Stroke the furrow from where the stone was last frame to where it is now,
+    // so a fast ploughing contact leaves one continuous scar instead of a row of
+    // separate dents. o.fromX/fromZ default to the current point (a single stamp)
+    // when the caller has no previous position, e.g. a throw's first frame.
+    const x0 = o.fromX !== undefined ? o.fromX : d.x;
+    const z0 = o.fromZ !== undefined ? o.fromZ : d.z;
+    return craterStroke(x0, z0, d.x, d.z, dV, o.dirX, o.dirZ, shape, SPLASH.ploughGain);
 }
 window.stoneDisplace = stoneDisplace;
 
@@ -2373,8 +2450,12 @@ function stoneGroundEffect(x, z, gap, speed, effRadius, o) {
     const localDepth = (0.5 * RHO_A * speed * speed) / (RHO_W * GRAV);
     const volume = g * localDepth * atten * Math.PI * effRadius * effRadius;
     const shape = shapeCrater(effRadius, SPLASH.ploughElong, { ...o, volume });
-    return craterDrop(x, z, craterDepth(volume, shape.across, shape.elong),
-        o.dirX, o.dirZ, shape);
+    // Same stroke as the plough: the ram-pressure dimple is a source that MOVES
+    // with the airborne stone, so between bounces it must draw a line, not stamp
+    // a dot at each frame. That is what makes the wake read as one wake.
+    const x0 = o.fromX !== undefined ? o.fromX : x;
+    const z0 = o.fromZ !== undefined ? o.fromZ : z;
+    return craterStroke(x0, z0, x, z, volume, o.dirX, o.dirZ, shape, 1);
 }
 window.stoneGroundEffect = stoneGroundEffect;
 
@@ -2741,6 +2822,10 @@ const CONTROLS = [
     ["wave size",       () => WIND.waveScale,       (v) => WIND.waveScale = v,       0.4, 8,  0.1],
     ["detail range",    () => WIND.detail,          (v) => WIND.detail = v,          0.3, 4,  0.05],
     ["supersample",     () => RENDER.supersample,   (v) => { RENDER.supersample = v; applyScaling(); }, 1, 2.5, 0.25],
+    // Vertical exaggeration of the deviation geometry. 1 is the true (nearly
+    // invisible) height; higher makes the water visibly rise, more for a harder
+    // impact. Display only — see RENDER.heightGain.
+    ["water height",    () => RENDER.heightGain,     (v) => RENDER.heightGain = v,    1, 40, 1],
     ["reflection blur", () => WIND.blurGain,        (v) => WIND.blurGain = v,        0, 300, 5],
     // How long an impact ring survives. 0.990 is Wallace's original (gone in
     // ~3 s); 0.9999 is nearly lossless. The settle gate follows this
@@ -2958,6 +3043,7 @@ scene.registerBeforeRender(() => {
     _windDir.copyFromFloats(Math.cos(wr), Math.sin(wr));
     waterMat.setVector2("windDir", _windDir);
     waterMat.setFloat("detailScale", WIND.detail);
+    waterMat.setFloat("heightGain", RENDER.heightGain);
     waterMat.setFloat("waveScale", WIND.waveScale);
     waterMat.setFloat("blurGain", WIND.blurGain);
     waterMat.setVector2("windowCenter", windowCenter);
@@ -3111,6 +3197,10 @@ stoneMesh.rotationQuaternion = BABYLON.Quaternion.Identity();
 stoneMesh.isPickable = false;
 
 let sim = null, trail = null, trailPts = [];
+/** Where the stone was last frame, so the continuous-displacement sources can
+ *  stroke a furrow along its path rather than stamp a dent at each frame. Null
+ *  until the first frame of a throw, which then strokes zero length. */
+let strokePrevX = null, strokePrevZ = null;
 /** What placeRun() decided for the current throw, for the readout. */
 let lastPlacement = null;
 
@@ -3177,6 +3267,7 @@ function doThrow() {
     // volume in place would make the first frame emit the whole difference as
     // one enormous mound.
     resetDisplace();
+    strokePrevX = null; strokePrevZ = null;
     trailPts = [];
     if (trail) { trail.dispose(); trail = null; }
     $("outcome").textContent = "";
@@ -3281,6 +3372,11 @@ scene.onBeforeRenderObservable.add(() => {
             thickness: SKIP.stone.thickness,
             effRadius: sim.effRadius,
             resync: bouncedThisFrame,
+            // Last frame's stone position, so both continuous sources stroke a
+            // furrow along the path travelled this frame. Undefined on the first
+            // frame — the sources fall back to a single stamp there.
+            fromX: strokePrevX === null ? undefined : strokePrevX,
+            fromZ: strokePrevZ === null ? undefined : strokePrevZ,
         };
         stoneDisplace(g, mark);
         if (!g.contact) {
@@ -3290,6 +3386,11 @@ scene.onBeforeRenderObservable.add(() => {
             const gap = p0.y - waterAmbient(p0.x, p0.z, sim.state.time);
             stoneGroundEffect(p0.x, p0.z, gap, g.speed, sim.effRadius, mark);
         }
+        // Remember where the stone is for next frame's stroke. Set every frame,
+        // including the ones the sources skipped (a bounce resync, a still
+        // stone), so a segment is always exactly one frame long.
+        strokePrevX = sim.state.position.x;
+        strokePrevZ = sim.state.position.z;
     }
 
     const p = sim.state.position, q = sim.state.orientation;
