@@ -228,6 +228,16 @@ export async function run(canvas) {
         ...(worldEnv ? worldEnv.root.getChildMeshes() : []),
     ]);
 
+    // Scene depth for the water's soft shore edge: the depth of the opaque
+    // geometry BEHIND the water (shore, rocks, trees), so its foam and edge
+    // fade against real objects instead of a flat band drawn over them. The
+    // water itself is excluded from the depth pass — it is the thing sampling
+    // it — so a static render list of everything else is set once.
+    const depthRenderer = scene.enableDepthRenderer(rig.camera, false, false);
+    const depthMap = depthRenderer.getDepthMap();
+    depthMap.renderList = scene.meshes.filter((m) => m !== water.mesh);
+    water.setSceneDepth(depthMap, rig.camera.maxZ);
+
     // The four sifting beds are unwired, not deleted.
     //
     // They are the only thing that can put a stone in your hand, and the field

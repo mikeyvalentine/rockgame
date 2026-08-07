@@ -353,8 +353,11 @@ uniform float useTerrainDepth;
 uniform vec2 terrainOrigin;
 uniform float terrainSize;
 uniform float waterLevelY;
+uniform float useSceneDepth;
+uniform float sceneDepthFar;
 uniform sampler2D reflectionTex;
 uniform sampler2D terrainHeightTex;
+uniform sampler2D sceneDepthTex;
 varying vec3 vWorld;
 varying vec4 vClip;
 void main(void) {
@@ -401,10 +404,23 @@ void main(void) {
         depth = clamp((-shoreDist) * foreshoreSlope - amb.x, 0.0, seabedDepth);
     }
     color = mix(vec3(0.16, 0.30, 0.32), color, smoothstep(0.0, 0.6, depth));
-    // Foam on the WATER side only (depth<0 is land the disc overshoots).
-    float foam = depth > 0.0 ? (1.0 - smoothstep(0.0, 0.05, depth)) : 0.0;
+
+    // Scene-depth soft edge + intersection foam (twin of water.fragment.wgsl):
+    // fade/foam against the real geometry behind the water (rocks, shore), not
+    // a flat band drawn over them. No V-flip here (WebGL RT is bottom-up).
+    float edge = 1.0;
+    float foam = 0.0;
+    if (useSceneDepth > 0.5) {
+        vec2 suv = clamp(vClip.xy / vClip.w * 0.5 + 0.5, 0.0, 1.0);
+        float sceneZ = texture2D(sceneDepthTex, suv).r * sceneDepthFar;
+        float gap = sceneZ - vClip.w;
+        edge = smoothstep(0.0, 0.35, gap);
+        foam = 1.0 - smoothstep(0.0, 0.25, gap);
+    } else if (depth > 0.0) {
+        foam = 1.0 - smoothstep(0.0, 0.05, depth);
+    }
     color = mix(color, vec3(0.92, 0.96, 1.0), foam * 0.8);
-    float alpha = max(smoothstep(0.0, 0.12, depth), foam);
+    float alpha = max(smoothstep(0.0, 0.12, depth) * edge, foam);
     gl_FragColor = vec4(color, alpha);
 }
 `;
