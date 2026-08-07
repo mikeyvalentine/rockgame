@@ -113,6 +113,14 @@ for (const [tex, mats] of users) {
     data[i + 3] = a;
   }
 
+  // Bleed the leaf colour outward into the transparent background. The atlas
+  // backs onto black, so without this the RGB of every transparent texel is
+  // (0,0,0) and bilinear/mip filtering — and the hard alpha-test edge — pull
+  // that black into the leaf rims: a dark OUTLINE at rest, and crawling STATIC
+  // as the camera moves and the edge samples shift. Dilation replaces the black
+  // under the mask with the nearest leaf colour, so the fringe is leaf-on-leaf.
+  dilateColor(data, info.width, info.height);
+
   const webp = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
     .webp({ quality: 92, effort: 5 })
     .toBuffer();
@@ -134,3 +142,46 @@ renameSync(packed, output);
 for (const f of [decoded, edited]) { try { rmSync(f); } catch {} }
 console.log(`\n${keyed} atlas(es) keyed`);
 console.log(`FINAL      ${mb(output)}   ${output}`);
+
+/**
+ * Bleed opaque colour outward into the transparent background, in place, one
+ * pixel ring per pass. RGBA8, alpha untouched — only the RGB under transparent
+ * texels is filled, from the nearest solid neighbours, so edge filtering never
+ * pulls the black backing into a leaf rim.
+ */
+function dilateColor(data, w, h, passes = 20) {
+  const n = w * h;
+  const solid = new Uint8Array(n);
+  for (let p = 0; p < n; p++) if (data[p * 4 + 3] >= 8) solid[p] = 1;
+
+  for (let pass = 0; pass < passes; pass++) {
+    const filled = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x;
+        if (solid[p]) continue;
+        let r = 0, g = 0, b = 0, c = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx;
+            if (nx < 0 || nx >= w) continue;
+            const q = ny * w + nx;
+            if (!solid[q]) continue;
+            r += data[q * 4]; g += data[q * 4 + 1]; b += data[q * 4 + 2]; c++;
+          }
+        }
+        if (c) {
+          data[p * 4] = Math.round(r / c);
+          data[p * 4 + 1] = Math.round(g / c);
+          data[p * 4 + 2] = Math.round(b / c);
+          filled.push(p);
+        }
+      }
+    }
+    if (!filled.length) break;         // background fully bled — done early
+    for (const p of filled) solid[p] = 1; // deferred, so a pass spreads one ring
+  }
+}
