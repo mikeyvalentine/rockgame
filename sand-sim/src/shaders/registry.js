@@ -349,7 +349,12 @@ uniform vec2 pondCenter;
 uniform float pondRadius;
 uniform float foreshoreSlope;
 uniform float seabedDepth;
+uniform float useTerrainDepth;
+uniform vec2 terrainOrigin;
+uniform float terrainSize;
+uniform float waterLevelY;
 uniform sampler2D reflectionTex;
+uniform sampler2D terrainHeightTex;
 varying vec3 vWorld;
 varying vec4 vClip;
 void main(void) {
@@ -386,8 +391,15 @@ void main(void) {
     vec3 color = mix(body, refl, fresnel);
 
     // Shore — twin of water.fragment.wgsl; see it for the reasoning.
-    float shoreDist = length(vWorld.xz - pondCenter) - pondRadius;
-    float depth = clamp((-shoreDist) * foreshoreSlope - amb.x, 0.0, seabedDepth);
+    float depth;
+    if (useTerrainDepth > 0.5) {
+        vec2 tuv = clamp((vWorld.xz - terrainOrigin) / terrainSize, 0.0, 1.0);
+        float th = texture2D(terrainHeightTex, tuv).r;
+        depth = clamp((waterLevelY - th) - amb.x, -2.0, seabedDepth);
+    } else {
+        float shoreDist = length(vWorld.xz - pondCenter) - pondRadius;
+        depth = clamp((-shoreDist) * foreshoreSlope - amb.x, 0.0, seabedDepth);
+    }
     color = mix(vec3(0.16, 0.30, 0.32), color, smoothstep(0.0, 0.6, depth));
     float foam = 1.0 - smoothstep(0.0, 0.05, depth);
     color = mix(color, vec3(0.92, 0.96, 1.0), foam * 0.8);

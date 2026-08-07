@@ -32,8 +32,18 @@ uniform pondRadius: f32;
 uniform foreshoreSlope: f32;
 uniform seabedDepth: f32;
 
+// Terrain-driven shore: when useTerrainDepth is on, depth comes from the baked
+// ground height under each pixel, so the waterline follows the real (irregular)
+// shore instead of the circle SDF below.
+uniform useTerrainDepth: f32;
+uniform terrainOrigin: vec2f;
+uniform terrainSize: f32;
+uniform waterLevelY: f32;
+
 var reflectionTex: texture_2d<f32>;
 var reflectionTexSampler: sampler;
+var terrainHeightTex: texture_2d<f32>;
+var terrainHeightTexSampler: sampler;
 
 // The shore band widths, in metres of depth.
 const SHALLOW_FADE: f32 = 0.12;  // water fades to nothing over this depth
@@ -96,11 +106,20 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     var color = mix(body, refl, fresnel);
 
     // ---- shore ---------------------------------------------------------------
-    // Signed distance to the waterline (negative in the water), turned into an
-    // approximate depth by the foreshore ramp. The ambient wave height rides on
-    // top, so the shore line and the foam breathe with the swell.
-    let shoreDist = length(wp.xz - uniforms.pondCenter) - uniforms.pondRadius;
-    let depth = clamp((-shoreDist) * uniforms.foreshoreSlope - amb.x, 0.0, uniforms.seabedDepth);
+    // Water depth here. With a baked terrain it is the real gap between the
+    // water level and the authored ground (so the shore follows the mesh, not a
+    // circle); otherwise the circle SDF ramped by the foreshore slope. The
+    // ambient wave height rides on top, so the shore line and foam breathe.
+    var depth: f32;
+    if (uniforms.useTerrainDepth > 0.5) {
+        let tuv = (wp.xz - uniforms.terrainOrigin) / uniforms.terrainSize;
+        let th = textureSampleLevel(terrainHeightTex, terrainHeightTexSampler,
+                                    clamp(tuv, vec2f(0.0), vec2f(1.0)), 0.0).r;
+        depth = clamp((uniforms.waterLevelY - th) - amb.x, -2.0, uniforms.seabedDepth);
+    } else {
+        let shoreDist = length(wp.xz - uniforms.pondCenter) - uniforms.pondRadius;
+        depth = clamp((-shoreDist) * uniforms.foreshoreSlope - amb.x, 0.0, uniforms.seabedDepth);
+    }
 
     // Shallows lift toward a lighter, greener colour before the edge.
     color = mix(vec3f(0.16, 0.30, 0.32), color, smoothstep(0.0, SHALLOW_TINT, depth));

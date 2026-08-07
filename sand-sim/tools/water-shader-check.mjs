@@ -73,11 +73,14 @@ check("water.fragment.wgsl pairs texture with its sampler",
 // (registry.js), since they are hand-mirrored rather than emitted.
 const registry = readFileSync(join(ROOT, "src/shaders/registry.js"), "utf8");
 for (const [where, src] of [["WGSL fragment", waterFrag], ["GLSL twin", registry]]) {
-    check(`${where} derives a shore distance`, src.includes("shoreDist"));
+    check(`${where} derives a shore distance (circle fallback)`, src.includes("shoreDist"));
     check(`${where} reads the pond centre`, src.includes("pondCenter"));
     check(`${where} ramps depth by the foreshore slope`, src.includes("foreshoreSlope"));
     check(`${where} draws a foam lip`, src.includes("foam"));
     check(`${where} rides the shore line on the wave height`, src.includes("- amb.x"));
+    // Terrain-driven shore: the whole point of the non-circular waterline.
+    check(`${where} can follow the terrain height`, src.includes("useTerrainDepth"));
+    check(`${where} samples the terrain height texture`, src.includes("terrainHeightTex"));
 }
 
 console.log(failures ? `\n${failures} failure(s)` : "\nall good");

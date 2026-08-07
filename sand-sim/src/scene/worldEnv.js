@@ -4,14 +4,13 @@
  * shrubs, optimized by `tools/optimize-glb.mjs` (draco + webp + GPU
  * instancing).
  *
- * Scenery only. The character grounds on the procedural heightfield and the
- * game draws its own water disc, so the export's `water` plane is dropped
- * here. What remains splits in two: the RING (trees, boulders, deadfall —
- * every GPU-instanced prop, all of it scattered r=96..176 around the pond),
- * which is re-grounded onto the game's own terrain and cleared off the
- * walkable strip (see `groundInstances`), and the authored pond TERRAIN (the
- * `Landscape` mesh, a basin with a shore — off by default while the world
- * still grounds on the procedural beach; see the note at its dial). The whole
+ * The glb IS the world; everything is inferred from it. Its `water` plane is
+ * dropped (the game draws its own surface), and what remains splits in two:
+ * the RING (trees, boulders, deadfall — every GPU-instanced prop, scattered
+ * r=96..176 around the pond), left exactly as the artist placed it and only
+ * re-seated in height onto the terrain (see `groundInstances`), and the pond
+ * TERRAIN (the `Landscape` mesh, a basin with a shore) which is baked into the
+ * height grid the world grounds on and returned as `.terrain`. The whole
  * environment hangs off one root with a live yaw dial (`S.envYaw`) and a
  * visibility toggle (`S.showWorldEnv`, `?env=0` skips the load entirely).
  *
@@ -44,10 +43,7 @@ import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
-import {
-    shoreDistance, shoreArc, SHORE_HALF_ARC, SHORE_DEPTH, WADE_DEPTH,
-    POND_CENTER_X, POND_CENTER_Z,
-} from "../../../shared/worldBounds.js";
+import { POND_CENTER_X, POND_CENTER_Z } from "../../../shared/worldBounds.js";
 import { shoreProfileJS } from "../terrain/beachParams.js";
 import { bakeHeightGrid, makeHeightSampler } from "../../../shared/glbHeightfield.js";
 import { S, onChange } from "../core/settings.js";
@@ -162,7 +158,6 @@ export async function buildWorldEnv(scene, opts = {}) {
 
     const group = opts.renderingGroupId ?? 0;
     let instances = 0;
-    let cleared = 0;
     for (const mesh of container.meshes) {
         mesh.renderingGroupId = group;
         mesh.isPickable = false;
@@ -175,7 +170,7 @@ export async function buildWorldEnv(scene, opts = {}) {
         // swaying trees eventually — just not shaded with.
         mesh.useVertexColors = false;
         if (mesh.thinInstanceCount > 0) {
-            cleared += groundInstances(mesh, groundHeightAt);
+            groundInstances(mesh, groundHeightAt);
             instances += mesh.thinInstanceCount;
         } else {
             instances += 1;
@@ -197,7 +192,6 @@ export async function buildWorldEnv(scene, opts = {}) {
         root,
         meshes: container.meshes.length,
         instances,
-        cleared,
         // The baked ground: `{ heightAt, normalAt, min, max }`, or null when the
         // export carried no Landscape (`?env=0`, or a stripped glb). The app
         // uses this as the world's terrain when present.
@@ -235,65 +229,53 @@ function bakeTerrain(mesh) {
     const sampler = makeHeightSampler(baked);
     sampler.min = baked.min;
     sampler.max = baked.max;
+    // The raw grid + its world mapping, so the water shader can sample terrain
+    // height per pixel and end its foam/shallows on the real (irregular) shore
+    // instead of an idealised circle.
+    sampler.grid = baked.grid;
+    sampler.gridRes = baked.res;
+    sampler.gridOrigin = baked.origin;
+    sampler.gridSize = baked.size;
     console.log(`[worldEnv] terrain baked ${baked.res}² over ${TERRAIN_GRID_SIZE} m: ` +
         `${baked.min.toFixed(1)}..${baked.max.toFixed(1)} m`);
     return sampler;
 }
 
-/** Clearance around the walkable strip before a prop may stand, metres. */
-const BEACH_MARGIN = 3;
-
 /** Seat props a hair into the sand rather than tangent to it. */
 const SETTLE = 0.04;
 
 /**
- * Re-ground one instanced prop family: drop every instance standing on the
- * walkable beach, and set the survivors' feet on the game's own terrain.
+ * Re-seat an instanced prop family's feet on the world's ground.
  *
- * Both are load-time corrections, not art dials. The export scattered its
- * ring uniformly — 217 instances stand inside the strip the player walks and
- * sifts (measured; no yaw avoids it, the ring has no clear arc). And the
- * ground the ring was scattered ON was not usable directly, so the feet are
- * re-seated on `heightAt` — the world's actual ground, which is now the terrain
- * baked from this same export, so the ring sits on the authored land and a
- * re-export moves both together.
+ * Nothing is dropped. The glb IS the world, so the tree ring is the artist's
+ * placement and stays exactly as authored in plan; only the HEIGHT is set —
+ * onto `heightAt`, the terrain baked from this same export — so feet meet the
+ * ground the player actually walks, and a re-export moves both together.
  *
- * Baked against the yaw at load, like the rock field is against its density
- * dial: moving `envYaw` afterwards spins the surround but does not re-derive
- * the clearing — it is a reload knob for placement, a live one for looking.
+ * (An earlier version deleted ~217 trees that fell inside a fixed 70 m walkable
+ * arc, to clear a beach. That arc was placeholder scaffolding and cut a visible
+ * gap in the ring; the walkable/rock area is inferred from the glb now, not
+ * carved out of the forest. Removed.)
  *
  * @param {import("@babylonjs/core/Meshes/mesh").Mesh} mesh
  * @param {(x:number,z:number)=>number} heightAt  the world's ground
- * @returns {number} instances dropped from the beach
  */
 function groundInstances(mesh, heightAt) {
     const world = mesh.computeWorldMatrix(true);
     const inv = world.clone().invert();
     const src = mesh.thinInstanceGetWorldMatrices();
 
-    const kept = [];
     const p = new Vector3();
     for (const m of src) {
         m.getTranslationToRef(p);
         Vector3.TransformCoordinatesToRef(p, world, p);
-        const d = shoreDistance(p.x, p.z);
-        const arc = shoreArc(p.x, p.z);
-        if (
-            d > -WADE_DEPTH - BEACH_MARGIN && d < SHORE_DEPTH + BEACH_MARGIN &&
-            Math.abs(arc) < SHORE_HALF_ARC + BEACH_MARGIN
-        ) continue;
-
         p.y = heightAt(p.x, p.z) - SETTLE;
         Vector3.TransformCoordinatesToRef(p, inv, p);
         m.setTranslation(p);
-        kept.push(m);
     }
 
-    if (kept.length !== src.length || kept.length) {
-        const data = new Float32Array(kept.length * 16);
-        kept.forEach((m, i) => m.copyToArray(data, i * 16));
-        mesh.thinInstanceSetBuffer("matrix", data, 16, true);
-        mesh.thinInstanceRefreshBoundingInfo();
-    }
-    return src.length - kept.length;
+    const data = new Float32Array(src.length * 16);
+    src.forEach((m, i) => m.copyToArray(data, i * 16));
+    mesh.thinInstanceSetBuffer("matrix", data, 16, true);
+    mesh.thinInstanceRefreshBoundingInfo();
 }

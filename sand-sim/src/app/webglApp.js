@@ -194,7 +194,9 @@ export async function run(canvas) {
     ground.material = groundMat;
 
     // ----------------------------------------------------------------- water
-    const water = buildWater(scene);
+    // Hand the baked terrain to the water so its shore follows the real
+    // (non-circular) waterline, matching the wet-sand band.
+    const water = buildWater(scene, { terrain: worldEnv?.terrain });
     water.material.setVector3(
         "sunDir", new Vector3(sky.sunDir.x, sky.sunDir.y, sky.sunDir.z).normalize()
     );

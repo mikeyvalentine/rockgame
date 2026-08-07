@@ -17,9 +17,15 @@
  * a reflection will never resolve anyway.
  *
  * Open surface only, by the current scope: no interaction/drop ripples (that is
- * the skip sim, not wired yet) and no shoreline foam. The wave field is anchored
- * to world xz and is a pure function of (x, z, t), so it stays in lockstep with
- * the physics twin.
+ * the skip sim, not wired yet). The wave field is anchored to world xz and is a
+ * pure function of (x, z, t), so it stays in lockstep with the physics twin.
+ *
+ * The shore. When a baked terrain grid is handed in (`opts.terrain`), the
+ * surface reads terrain HEIGHT per pixel and ends its foam/shallows/fade on the
+ * real waterline of the authored ground — which is not a circle (its radius
+ * varies ~25 m around this pond). Without a grid it falls back to a circle SDF
+ * from the pond centre, which is what the standalone lab and the WebGPU path
+ * (terrain not yet wired there) still use.
  *
  * Conventions unchanged: metres, water toward +Z, waterline at WATERLINE_Z.
  */
@@ -31,6 +37,7 @@ import { CreateDisc } from "@babylonjs/core/Meshes/Builders/discBuilder";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
 import { MirrorTexture } from "@babylonjs/core/Materials/Textures/mirrorTexture";
+import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
 import { Constants } from "@babylonjs/core/Engines/constants";
 
 import {
@@ -53,17 +60,30 @@ const MIRROR_RATIO = 0.5;
 const DISTORTION = 0.02;
 
 /**
+ * Water disc overshoot past the pond radius, metres. The authored basin reaches
+ * a little past POND_RADIUS in places (shore radius measured 75–101 m); the
+ * extra ring is faded out by the terrain-depth alpha on land and occluded by
+ * the higher sand, so it only guarantees the whole basin is covered.
+ */
+const DISC_MARGIN = 15;
+
+/**
  * @param {import("@babylonjs/core/scene").Scene} scene
+ * @param {{ terrain?: { grid: Float32Array, gridRes: number,
+ *           gridOrigin: {x:number,z:number}, gridSize: number } }} [opts]
+ *   terrain = the baked ground grid (worldEnv.terrain); when given, the shore
+ *   follows it instead of a circle.
  * @returns {{ mesh: import("@babylonjs/core/Meshes/mesh").Mesh,
  *             material: ShaderMaterial, mirror: MirrorTexture,
  *             setReflection(meshes: any[]): void, update(dt:number, camera:any):void }}
  */
-export function buildWater(scene) {
+export function buildWater(scene, opts = {}) {
     const engine = scene.getEngine();
     const wgpu = !!engine.isWebGPU;
+    const terrain = opts.terrain && opts.terrain.grid ? opts.terrain : null;
 
     const mesh = CreateDisc("water", {
-        radius: POND_RADIUS, tessellation: RIM_SEGMENTS,
+        radius: POND_RADIUS + (terrain ? DISC_MARGIN : 0), tessellation: RIM_SEGMENTS,
     }, scene);
     mesh.rotation.x = Math.PI / 2; // CreateDisc faces +Z; lay it flat
     mesh.position.set(0, WATER_LEVEL_Y - SINK, WATERLINE_Z + POND_RADIUS);
@@ -103,8 +123,9 @@ export function buildWater(scene) {
                 "waveScale", "detailScale", "cameraPosition", "sunDir", "tint",
                 "blurGain", "distortion",
                 "pondCenter", "pondRadius", "foreshoreSlope", "seabedDepth",
+                "useTerrainDepth", "terrainOrigin", "terrainSize", "waterLevelY",
             ],
-            samplers: ["reflectionTex"],
+            samplers: ["reflectionTex", "terrainHeightTex"],
             shaderLanguage: wgpu ? ShaderLanguage.WGSL : ShaderLanguage.GLSL,
         }
     );
@@ -124,6 +145,32 @@ export function buildWater(scene) {
     mat.setFloat("pondRadius", POND_RADIUS);
     mat.setFloat("foreshoreSlope", FORESHORE_SLOPE);
     mat.setFloat("seabedDepth", SEABED_DEPTH);
+    mat.setFloat("waterLevelY", WATER_LEVEL_Y);
+
+    // Terrain-driven shore: upload the baked height grid and let the shader end
+    // the water on the real waterline. R32F, clamped; the sampler is always
+    // declared, so a 1x1 stand-in is bound when there is no terrain to keep the
+    // binding valid on both shader languages.
+    if (terrain) {
+        const tex = RawTexture.CreateRTexture(
+            terrain.grid, terrain.gridRes, terrain.gridRes, scene,
+            /* genMips */ false, /* invertY */ false,
+            Constants.TEXTURE_BILINEAR_SAMPLINGMODE, Constants.TEXTURETYPE_FLOAT
+        );
+        tex.wrapU = Constants.TEXTURE_CLAMP_ADDRESSMODE;
+        tex.wrapV = Constants.TEXTURE_CLAMP_ADDRESSMODE;
+        mat.setTexture("terrainHeightTex", tex);
+        mat.setFloat("useTerrainDepth", 1);
+        mat.setVector2("terrainOrigin", new Vector2(terrain.gridOrigin.x, terrain.gridOrigin.z));
+        mat.setFloat("terrainSize", terrain.gridSize);
+    } else {
+        mat.setTexture("terrainHeightTex",
+            RawTexture.CreateRTexture(new Float32Array([0]), 1, 1, scene, false, false,
+                Constants.TEXTURE_NEAREST_SAMPLINGMODE, Constants.TEXTURETYPE_FLOAT));
+        mat.setFloat("useTerrainDepth", 0);
+        mat.setVector2("terrainOrigin", new Vector2(0, 0));
+        mat.setFloat("terrainSize", 1);
+    }
     mesh.material = mat;
 
     const windDir = new Vector2();
