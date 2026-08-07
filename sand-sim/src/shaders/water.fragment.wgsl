@@ -22,8 +22,23 @@ uniform detailScale: f32;
 uniform blurGain: f32;
 uniform distortion: f32;
 
+// Shore contour, from the pond's own geometry (shared/worldBounds + shoreRamp):
+// how the water finds its edge without a terrain lookup. pondCenter/pondRadius
+// give a signed distance to the waterline; foreshoreSlope turns that into an
+// approximate depth, the same ramp the ground is built on, so the water ends
+// exactly where the sand emerges.
+uniform pondCenter: vec2f;
+uniform pondRadius: f32;
+uniform foreshoreSlope: f32;
+uniform seabedDepth: f32;
+
 var reflectionTex: texture_2d<f32>;
 var reflectionTexSampler: sampler;
+
+// The shore band widths, in metres of depth.
+const SHALLOW_FADE: f32 = 0.12;  // water fades to nothing over this depth
+const SHALLOW_TINT: f32 = 0.6;   // shallows read lighter within this depth
+const FOAM_BAND: f32 = 0.05;     // foam sits within this depth of the edge
 
 varying vWorld: vec3f;
 varying vClip: vec4f;
@@ -78,6 +93,24 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     // Cubic F0=0.25 Fresnel — never near-black head-on, mirror at grazing.
     let fresnel = mix(0.25, 1.0, pow(1.0 - dot(N, -incoming), 3.0));
     let body = refl * uniforms.tint;
+    var color = mix(body, refl, fresnel);
 
-    fragmentOutputs.color = vec4f(mix(body, refl, fresnel), 1.0);
+    // ---- shore ---------------------------------------------------------------
+    // Signed distance to the waterline (negative in the water), turned into an
+    // approximate depth by the foreshore ramp. The ambient wave height rides on
+    // top, so the shore line and the foam breathe with the swell.
+    let shoreDist = length(wp.xz - uniforms.pondCenter) - uniforms.pondRadius;
+    let depth = clamp((-shoreDist) * uniforms.foreshoreSlope - amb.x, 0.0, uniforms.seabedDepth);
+
+    // Shallows lift toward a lighter, greener colour before the edge.
+    color = mix(vec3f(0.16, 0.30, 0.32), color, smoothstep(0.0, SHALLOW_TINT, depth));
+
+    // A foam lip right at the waterline.
+    let foam = 1.0 - smoothstep(0.0, FOAM_BAND, depth);
+    color = mix(color, vec3f(0.92, 0.96, 1.0), foam * 0.8);
+
+    // Fade the surface out over the last few centimetres of depth so it ends on
+    // the shore contour with no rim; keep the foam lip opaque as it does.
+    let alpha = max(smoothstep(0.0, SHALLOW_FADE, depth), foam);
+    fragmentOutputs.color = vec4f(color, alpha);
 }

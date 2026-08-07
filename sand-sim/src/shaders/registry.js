@@ -345,6 +345,10 @@ uniform float waveScale;
 uniform float detailScale;
 uniform float blurGain;
 uniform float distortion;
+uniform vec2 pondCenter;
+uniform float pondRadius;
+uniform float foreshoreSlope;
+uniform float seabedDepth;
 uniform sampler2D reflectionTex;
 varying vec3 vWorld;
 varying vec4 vClip;
@@ -379,7 +383,16 @@ void main(void) {
 
     float fresnel = mix(0.25, 1.0, pow(1.0 - dot(N, -incoming), 3.0));
     vec3 body = refl * tint;
-    gl_FragColor = vec4(mix(body, refl, fresnel), 1.0);
+    vec3 color = mix(body, refl, fresnel);
+
+    // Shore — twin of water.fragment.wgsl; see it for the reasoning.
+    float shoreDist = length(vWorld.xz - pondCenter) - pondRadius;
+    float depth = clamp((-shoreDist) * foreshoreSlope - amb.x, 0.0, seabedDepth);
+    color = mix(vec3(0.16, 0.30, 0.32), color, smoothstep(0.0, 0.6, depth));
+    float foam = 1.0 - smoothstep(0.0, 0.05, depth);
+    color = mix(color, vec3(0.92, 0.96, 1.0), foam * 0.8);
+    float alpha = max(smoothstep(0.0, 0.12, depth), foam);
+    gl_FragColor = vec4(color, alpha);
 }
 `;
 

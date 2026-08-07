@@ -69,5 +69,16 @@ check("water.fragment.wgsl samples the reflection", waterFrag.includes("reflecti
 check("water.fragment.wgsl pairs texture with its sampler",
     waterFrag.includes("reflectionTexSampler"));
 
+// Shore treatment must exist in BOTH the WGSL fragment and the GLSL twin
+// (registry.js), since they are hand-mirrored rather than emitted.
+const registry = readFileSync(join(ROOT, "src/shaders/registry.js"), "utf8");
+for (const [where, src] of [["WGSL fragment", waterFrag], ["GLSL twin", registry]]) {
+    check(`${where} derives a shore distance`, src.includes("shoreDist"));
+    check(`${where} reads the pond centre`, src.includes("pondCenter"));
+    check(`${where} ramps depth by the foreshore slope`, src.includes("foreshoreSlope"));
+    check(`${where} draws a foam lip`, src.includes("foam"));
+    check(`${where} rides the shore line on the wave height`, src.includes("- amb.x"));
+}
+
 console.log(failures ? `\n${failures} failure(s)` : "\nall good");
 process.exit(failures ? 1 : 0);

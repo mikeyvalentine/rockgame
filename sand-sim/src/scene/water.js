@@ -33,7 +33,10 @@ import { ShaderLanguage } from "@babylonjs/core/Materials/shaderLanguage";
 import { MirrorTexture } from "@babylonjs/core/Materials/Textures/mirrorTexture";
 import { Constants } from "@babylonjs/core/Engines/constants";
 
-import { WATERLINE_Z, WATER_LEVEL_Y, POND_RADIUS } from "../terrain/beachParams.js";
+import {
+    WATERLINE_Z, WATER_LEVEL_Y, POND_RADIUS,
+    POND_CENTER_X, POND_CENTER_Z, FORESHORE_SLOPE, SEABED_DEPTH,
+} from "../terrain/beachParams.js";
 import { POND_CONDITIONS } from "../../../shared/ambientWater.js";
 import { S } from "../core/settings.js";
 
@@ -99,18 +102,28 @@ export function buildWater(scene) {
                 "world", "viewProjection", "time", "windDir", "windStrength",
                 "waveScale", "detailScale", "cameraPosition", "sunDir", "tint",
                 "blurGain", "distortion",
+                "pondCenter", "pondRadius", "foreshoreSlope", "seabedDepth",
             ],
             samplers: ["reflectionTex"],
             shaderLanguage: wgpu ? ShaderLanguage.WGSL : ShaderLanguage.GLSL,
         }
     );
     mat.backFaceCulling = false;
+    // Alpha blend so the surface can fade to nothing on the shore contour and
+    // reveal the wet sand under its edge. A hair under 1 is what turns blending
+    // on for a ShaderMaterial; the real per-pixel alpha comes from the shader.
+    mat.alpha = 0.999;
+    mat.alphaMode = Constants.ALPHA_COMBINE;
     mat.setTexture("reflectionTex", mirror);
     mat.setColor3("tint", new Color3(0.10, 0.20, 0.24));
     mat.setFloat("detailScale", 1.0);
     mat.setFloat("blurGain", 1.0);
     mat.setFloat("distortion", DISTORTION);
     mat.setVector3("sunDir", new Vector3(0.3, 0.6, 0.74).normalize());
+    mat.setVector2("pondCenter", new Vector2(POND_CENTER_X, POND_CENTER_Z));
+    mat.setFloat("pondRadius", POND_RADIUS);
+    mat.setFloat("foreshoreSlope", FORESHORE_SLOPE);
+    mat.setFloat("seabedDepth", SEABED_DEPTH);
     mesh.material = mat;
 
     const windDir = new Vector2();
