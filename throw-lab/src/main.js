@@ -32,6 +32,7 @@ import { DracoCompression } from "@babylonjs/core/Meshes/Compression/dracoCompre
 import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
 import { buildRock } from "./rock.js";
+import { gripRock } from "./grip.js";
 
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
@@ -140,6 +141,14 @@ async function main() {
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
+
+    // --- procedural grip: curl the fingers onto the rock --------------------
+    const palmar = palmNormal.scale(-1); // toward the palm / the rock
+    const curled = gripRock({ side: SIDE, findNode, rockMesh: rock.mesh, palmar });
+    console.log(`[throw-lab] grip: ${curled} finger joints curled onto the rock`);
+    for (let pass = 0; pass < 2; pass++) {
+        scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
+    }
 
     // --- frame from the right-arm bones -------------------------------------
     // The arm's real extent, not a guessed box: union the world positions of the
