@@ -62,6 +62,7 @@
  */
 
 import { FORESHORE_SLOPE } from "./shoreRamp.js";
+import { POND_RADIUS, POND_CENTER_Z, shoreDistance } from "./worldBounds.js";
 
 /**
  * The flat region, half-extents in metres.
@@ -156,7 +157,14 @@ export function padCoverage(x, z) {
 export function padLevel(x, z) {
     const { cov, spot } = dominant(x, z);
     if (!cov) return 0;
-    return cov * (z - spot.z) * FORESHORE_SLOPE;
+    // Cancel the ramp RADIALLY, not in z.
+    //
+    // This read `(z - spot.z) * slope` while the shore was straight and the
+    // beach rose purely with z. The pond is a disc now, so the foreshore rises
+    // with distance from the water's edge; measured in z the correction is
+    // wrong by the difference between a chord and an arc, which over a 2.7 m
+    // pad at the ends of the shore is enough to tilt a bed visibly.
+    return cov * (shoreDistance(spot.x, spot.z) - shoreDistance(x, z)) * FORESHORE_SLOPE;
 }
 
 /**
@@ -201,7 +209,10 @@ export function siftPadWGSL() {
     const f = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
     const terms = SIFT_SPOTS.map((s) => `    {
         let c = padFalloff(p - vec2f(${f(s.x)}, ${f(s.z)}));
-        if (c > best.x) { best = vec2f(c, c * (p.y - (${f(s.z)})) * FORESHORE_SLOPE); }
+        if (c > best.x) {
+            let atSpot = padShoreDistance(vec2f(${f(s.x)}, ${f(s.z)}));
+            best = vec2f(c, c * (atSpot - padShoreDistance(p)) * FORESHORE_SLOPE);
+        }
     }`).join("\n");
 
     return `// GENERATED from shared/siftPad.js by siftPadWGSL(). Do not edit.
@@ -209,6 +220,15 @@ const PAD_HALF_X: f32 = ${f(PAD_HALF_X)};
 const PAD_HALF_Z: f32 = ${f(PAD_HALF_Z)};
 const PAD_FEATHER: f32 = ${f(PAD_FEATHER)};
 const FORESHORE_SLOPE: f32 = ${f(FORESHORE_SLOPE)};
+const POND_RADIUS: f32 = ${f(POND_RADIUS)};
+const POND_CENTER_Z: f32 = ${f(POND_CENTER_Z)};
+
+/// Twin of shoreDistance() in shared/worldBounds.js. Duplicated here rather
+/// than shared because this include is generated and the height bake pulls it
+/// in on its own; the check asserts the two agree.
+fn padShoreDistance(p: vec2f) -> f32 {
+    return length(p - vec2f(0.0, POND_CENTER_Z)) - POND_RADIUS;
+}
 
 fn padFalloff(d: vec2f) -> f32 {
     let q = max(abs(d) - vec2f(PAD_HALF_X, PAD_HALF_Z), vec2f(0.0, 0.0));
@@ -218,7 +238,7 @@ fn padFalloff(d: vec2f) -> f32 {
 
 /// The pad that wins here: x = coverage 0..1, y = metres of levelling.
 /// Winner-takes-all rather than a sum, so overlapping pads cannot level twice;
-/// the correction carries the winning spot's own z.
+/// the correction carries the winning spot's own distance from the water.
 fn padDominant(p: vec2f) -> vec2f {
     var best = vec2f(0.0, 0.0);
 ${terms}

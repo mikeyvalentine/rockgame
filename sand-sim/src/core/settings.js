@@ -53,6 +53,14 @@ export const S = {
     macroHeightScale: 1.0,
     sastrugiStrength: 1.0,
 
+    // ----------------------------------------------------------- shore rocks
+    // Multiplier on `shared/shoreScatter.js` densityAt. A "decide in engine"
+    // number: how covered the beach should look is settled by standing on it,
+    // and it trades straight against the triangle budget. Read once, at build
+    // — the field is generated behind the loading screen, so moving this
+    // slider does nothing until reload.
+    rockDensity: 1.0,
+
     // ----------------------------------------------------------- deformation
     deformDepth: 1.0,
     deformBerm: 1.0,
@@ -151,6 +159,12 @@ export const SCHEMA = [
             { k: "detailNormalStrength", l: "Detail normals", t: "f", min: 0, max: 2, step: 0.01 },
             { k: "macroHeightScale", l: "Relief", t: "f", min: 0, max: 2, step: 0.01 },
             { k: "sastrugiStrength", l: "Wind ridges", t: "f", min: 0, max: 2, step: 0.01 },
+        ],
+    },
+    {
+        group: "Shore rocks",
+        items: [
+            { k: "rockDensity", l: "Density", t: "f", min: 0, max: 4, step: 0.05 },
         ],
     },
     {

@@ -28,6 +28,7 @@ uniform windAngle: f32;
 uniform heightAmp: f32;
 
 uniform waterlineZ: f32;
+uniform pondRadius: f32;
 uniform foreshoreSlope: f32;
 uniform seabedDepth: f32;
 uniform bermHeight: f32;
@@ -43,8 +44,14 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     let p = uniforms.worldOrigin + input.vUV * uniforms.worldSize;
     let z = p.y;
 
-    // Foreshore ramp: rises landward (-z), descends seaward (+z).
-    var h = -(z - uniforms.waterlineZ) * uniforms.foreshoreSlope;
+    // Foreshore ramp, from the water's edge — twin of `shoreDistance` in
+    // shared/worldBounds.js: the signed distance to the pond's disc, positive
+    // on land. One slope raises the beach, digs the basin and lifts the far
+    // bank, so the water has something to end against on every side. The pond
+    // is round, which is what curves the shoreline.
+    let centre = vec2f(0.0, uniforms.waterlineZ + uniforms.pondRadius);
+    let d = length(p - centre) - uniforms.pondRadius;
+    var h = d * uniforms.foreshoreSlope;
 
     // Soft clamp into the flat seabed.
     let tSea = smoothstep(-uniforms.seabedDepth - 1.0, -uniforms.seabedDepth + 1.0, h);

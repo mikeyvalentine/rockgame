@@ -12,17 +12,36 @@
  */
 
 import { Color3 } from "@babylonjs/core/Maths/math.color";
-import { CreateGround } from "@babylonjs/core/Meshes/Builders/groundBuilder";
+import { CreateDisc } from "@babylonjs/core/Meshes/Builders/discBuilder";
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Constants } from "@babylonjs/core/Engines/constants";
 
-import { WATERLINE_Z, WATER_LEVEL_Y } from "../terrain/beachParams.js";
+import { WATERLINE_Z, WATER_LEVEL_Y, POND_RADIUS } from "../terrain/beachParams.js";
 
-/** Seaward extent of the quad, metres. Meets the horizon well before maxZ. */
-const REACH = 3600;
-/** Lateral extent, metres. */
-const WIDTH = 4000;
+/**
+ * The pond, not a sea.
+ *
+ * This was a 4000 x 3600 m quad running to the horizon, which is what you build
+ * when the world has no edge. It has one now (`shared/worldBounds.js`): a disc
+ * of radius 100, its near rim on the waterline. The bank it ends against is the
+ * beach profile's own, raised by the same foreshore slope measured from that
+ * same rim — so the two meet at y = 0 all the way round by construction rather
+ * than by being lined up here.
+ *
+ * Round rather than square because the shoreline is what the player stands on,
+ * and a disc gives it curvature: the water is nearest straight ahead and falls
+ * back on both sides, so the strip is a shallow bay instead of a pool edge.
+ */
+/**
+ * Segments around the rim.
+ *
+ * 128 puts a vertex every 4.9 m, which at the 100 m across the pond is well
+ * under a pixel of chord error — and the rim is where the water meets a sand
+ * edge that curves smoothly, so a coarse polygon reads as a crease.
+ */
+const RIM_SEGMENTS = 128;
+
 /**
  * The quad sits a hair below the true water level so it cannot z-fight the
  * sand exactly at the waterline; the wet band owns that pixel-wide seam.
@@ -35,10 +54,12 @@ const SINK = 0.02;
  *             material: PBRMaterial, update(dt:number):void }}
  */
 export function buildWater(scene) {
-    const mesh = CreateGround("water", {
-        width: WIDTH, height: REACH, subdivisions: 1,
+    const mesh = CreateDisc("water", {
+        radius: POND_RADIUS, tessellation: RIM_SEGMENTS,
     }, scene);
-    mesh.position.set(0, WATER_LEVEL_Y - SINK, WATERLINE_Z + REACH / 2);
+    // CreateDisc builds in the XY plane facing +Z; lay it flat.
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(0, WATER_LEVEL_Y - SINK, WATERLINE_Z + POND_RADIUS);
     mesh.isPickable = false;
     mesh.freezeWorldMatrix();
     // Alpha-blended, after the opaque sand — group 2, like the spray.

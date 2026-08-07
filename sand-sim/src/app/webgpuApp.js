@@ -44,8 +44,7 @@ import { MaskPaint } from "../terrain/maskPaint.js";
 import { initMaskBrush } from "../tools/maskBrush.js";
 import { DigTool } from "../tools/dig.js";
 import { buildWater } from "../scene/water.js";
-import { buildSiftingBeds } from "../scene/siftingBeds.js";
-import { loadSiftPhysics } from "../scene/siftPhysics.js";
+import { buildShoreRocks } from "../scene/shoreRocks.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
@@ -247,23 +246,30 @@ export async function run(canvas) {
     // into a buffer that the opaque pass then does not clear. The WebGL path
     // has no groups at all, so nothing there ever said this was wrong.
     //
-    // `?beds=0` skips them entirely and `?forge=0` draws them with a plain
+    // `?rocks=0` skips them entirely and `?forge=0` draws them with a plain
     // material instead of the forge one. Two URL flags rather than two deploys:
     // WebGPU cannot be run in the dev container (the software adapter refuses
     // every mappedAtCreation buffer, so no texture ever uploads and no material
     // ever compiles), so when this path misbehaves on a real GPU the fastest
-    // way to find out whether the beds are involved is to be able to turn them
+    // way to find out whether the rocks are involved is to be able to turn them
     // off from the address bar.
     const q = new URLSearchParams(location.search);
-    const beds = q.get("beds") === "0" ? null : await buildSiftingBeds(scene, terrain, {
+    const rocks = q.get("rocks") === "0" ? null : await buildShoreRocks(scene, terrain, {
         renderingGroupId: 1,
         forgeMaterial: q.get("forge") !== "0",
+        density: Number.parseFloat(q.get("density")) >= 0
+            ? Number.parseFloat(q.get("density")) : S.rockDensity,
     });
-    if (beds) console.log(`[sand-sim] ${beds.stones} stones across ${beds.spots} spots`);
+    if (rocks) {
+        console.log(
+            `[sand-sim] ${rocks.stones} stones across the shore ` +
+            `(${rocks.meshes} meshes, ${rocks.tiles} tiles)`
+        );
+    }
 
-    // Behind the loading screen, so the crouch is a camera move and not a load.
-    await loading.phase("waking the stones", 0.75);
-    const physics = beds ? await loadSiftPhysics(scene) : null;
+    // The four sifting beds are unwired, not deleted — see webglApp.js for why.
+    const beds = null;
+    const physics = null;
     const prompt = createCrouchPrompt();
     // rock-sift's own sweep, carry and examine, constructed against this
     // camera and this bed — see scene/siftInteraction.js.
@@ -368,6 +374,9 @@ export async function run(canvas) {
             contact.update(dt);
             dig.update();
         }
+        // Tiles beyond DRAW_DISTANCE are switched off — frustum culling drops
+        // what is behind you, this drops the far end of a 70 m beach.
+        rocks?.update(character.position.x, character.position.z);
         nearSpot = crouch && !crouch.engaged
             ? spotAt(character.position.x, character.position.z)
             : null;

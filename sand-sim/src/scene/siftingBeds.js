@@ -88,6 +88,15 @@ export const U = 4;
 const SCENERY_LOD = 2;
 
 /**
+ * Icosphere level for the shore field.
+ *
+ * Superseded by `shoreRocks.js` `LOD_LEVELS`, which draws the field at three
+ * levels by distance instead of one. Kept as the single-level fallback that
+ * `?lod=` selects, for judging a flat field against the ringed one.
+ */
+export const FIELD_LOD = 0;
+
+/**
  * The cast, as a sequence — the single place the RNG is walked.
  *
  * The draw order matters and is not incidental: rock-sift advances its RNG once
@@ -130,7 +139,7 @@ export function createBedArchetypes(scene, opts = {}, materials = {}, photo = fa
 
     for (const { name, shape, params, sizeMetres } of castSequence(opts)) {
         const jitter = 0.86 + jrng() * 0.28;
-        const detail = buildDetailMesh(shape, params, SCENERY_LOD, sizeMetres);
+        const detail = buildDetailMesh(shape, params, opts.lod ?? SCENERY_LOD, sizeMetres);
         const positions = Float32Array.from(detail.positions);
         const indices = Array.from(detail.indices);
         const normals = [];
