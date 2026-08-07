@@ -8,10 +8,12 @@
     "rock-forge",
     "rock-sift",
     "sand-sim",
-    "stone-skipping-physics"
+    "stone-skipping-physics",
+    "throw-lab"
   ],
   "scripts": {
-    "dev": "concurrently -k -n hub,sift,forge,sand -c blue,green,yellow,magenta \"vite\" \"npm --prefix rock-sift run dev\" \"npm --prefix rock-forge run dev\" \"npm --prefix sand-sim run dev\"",
+    "dev": "concurrently -k -n hub,sift,forge,sand,throw -c blue,green,yellow,magenta,cyan \"vite\" \"npm --prefix rock-sift run dev\" \"npm --prefix rock-forge run dev\" \"npm --prefix sand-sim run dev\" \"npm --prefix throw-lab run dev\"",
+    "dev:throw": "npm --prefix throw-lab run dev",
     "dev:hub": "vite",
     "build": "vite build",
     "build:site": "node tools/build-site.mjs",

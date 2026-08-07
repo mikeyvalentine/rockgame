@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>throw lab — arm pose</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <!-- One label per quadrant, laid over the 2x2 camera viewports. -->
+    <div id="panels">
+      <div class="panel tl"><span>arm · side</span></div>
+      <div class="panel tr"><span>arm · top</span></div>
+      <div class="panel bl"><span>wrist · side</span></div>
+      <div class="panel br"><span>wrist · top</span></div>
+    </div>
+    <div id="err" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
