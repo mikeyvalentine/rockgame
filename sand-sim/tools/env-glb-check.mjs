@@ -41,6 +41,17 @@ check("world export exists at " + ENV_URL, existsSync(glbPath));
 for (const f of DRACO_FILES) {
     check("draco file vendored: " + f, existsSync(join(PUBLIC, ...f.split("/").filter(Boolean))));
 }
+
+// The asset AND its decoder must live under /assets, because that is the only
+// tree `tools/build-site.mjs` ships to the deployed site — a decoder outside
+// it works in `vite dev` (whole publicDir served) and 404s in production as a
+// non-executable text/html SPA fallback, which is exactly how the first
+// deploy shipped a world that could not decode. Assert the URLs, not just
+// that the files exist on disk.
+check("world export is served from /assets", ENV_URL.startsWith("/assets/"));
+for (const f of DRACO_FILES) {
+    check("draco decoder is served from /assets: " + f, f.startsWith("/assets/"));
+}
 if (failures) { process.exit(1); }
 
 const buf = readFileSync(glbPath);

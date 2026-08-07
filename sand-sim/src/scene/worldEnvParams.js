@@ -32,10 +32,18 @@ export const ENV_OFFSET = {
     z: POND_CENTER_Z,
 };
 
-/** The asset itself, and the draco decoder it cannot load without. */
+/**
+ * The asset itself, and the draco decoder it cannot load without.
+ *
+ * The decoder lives UNDER `/assets` on purpose. `tools/build-site.mjs` ships
+ * only `git ls-files public/assets` — nothing else in `public/` reaches the
+ * deployed site — so a decoder anywhere else 404s in production (served as
+ * the SPA HTML fallback, which the worker then refuses as a non-executable
+ * `text/html` script) even though Vite's dev server serves all of `public/`.
+ */
 export const ENV_URL = "/assets/pond.0.glb";
 export const DRACO_FILES = [
-    "/vendor/draco/draco_wasm_wrapper_gltf.js",
-    "/vendor/draco/draco_decoder_gltf.wasm",
-    "/vendor/draco/draco_decoder_gltf.js",
+    "/assets/vendor/draco/draco_wasm_wrapper_gltf.js",
+    "/assets/vendor/draco/draco_decoder_gltf.wasm",
+    "/assets/vendor/draco/draco_decoder_gltf.js",
 ];
