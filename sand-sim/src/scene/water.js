@@ -53,8 +53,22 @@ const RIM_SEGMENTS = 128;
 /** A hair below true level so the surface cannot z-fight the wet sand seam. */
 const SINK = 0.02;
 
-/** Mirror render-target scale. Half res — the reflection is rippled and dim. */
-const MIRROR_RATIO = 0.5;
+/**
+ * Mirror render-target scale. Was 0.5 (half res), which read blocky once the
+ * wave distortion magnified the texels; 0.75 is sharper without paying for a
+ * full-resolution second scene render (the tree ring makes the mirror pass the
+ * expensive one, so this is the main perf lever — dial back toward 0.5 if the
+ * floor machine drops frames).
+ */
+const MIRROR_RATIO = 0.75;
+
+/**
+ * Gaussian blur on the mirror, in adaptive kernel units (scaled by RT size, so
+ * it looks the same at any ratio). A little blur is what water reflections
+ * actually look like and it hides the render target's remaining pixelation —
+ * the reflection is rippled and never wants to be a crisp mirror.
+ */
+const MIRROR_BLUR = 16;
 
 /** How far the wave slope drags the reflection sample, in UV. */
 const DISTORTION = 0.02;
@@ -102,7 +116,10 @@ export function buildWater(scene, opts = {}) {
     // is the sky and the tree line. d = level so the plane sits on the surface.
     mirror.mirrorPlane = new Plane(0, -1, 0, WATER_LEVEL_Y);
     mirror.renderList = [];
-    mirror.adaptiveBlurKernel = 0; // roughness is handled in-shader, not here
+    // A gentle gaussian softens the half-ish-res reflection into something that
+    // reads as water rather than a pixelated mirror; the in-shader lod blur on
+    // top is the extra roughness from unresolved ripples (see the fragment).
+    mirror.adaptiveBlurKernel = MIRROR_BLUR;
     mirror.wrapU = Constants.TEXTURE_CLAMP_ADDRESSMODE;
     mirror.wrapV = Constants.TEXTURE_CLAMP_ADDRESSMODE;
     // A MirrorTexture only renders on its own when it is the reflectionTexture of
