@@ -129,10 +129,46 @@ export async function run(canvas) {
     hemi.groundColor = new Color3(0.42, 0.40, 0.36);
     hemi.intensity = 0.35;
 
+    // ------------------------------------------------------------ world env
+    // Load the authored world FIRST — it carries the terrain the whole scene
+    // grounds on. buildWorldEnv bakes the glb's Landscape into a height grid
+    // and hands it back as `.terrain`; the ground mesh, the walker and the
+    // rocks below all read that. `?env=0` skips it and falls back to the
+    // procedural beach profile.
+    await loading.phase("raising the world", 0.4);
+    const worldEnv = new URLSearchParams(location.search).get("env") === "0"
+        ? null
+        : await buildWorldEnv(scene);
+    if (worldEnv) {
+        console.log(
+            `[sand-sim] world env: ${worldEnv.meshes} meshes, ` +
+            `${worldEnv.instances} instances`
+        );
+    }
+
+    // The world's ground. The authored glb terrain when it is there; otherwise
+    // the procedural beach profile, kept for `?env=0` and for a glb that ships
+    // no Landscape. Both expose `heightAt`/`normalAt`, so nothing downstream
+    // knows which it got.
+    const proceduralTerrain = {
+        heightAt: (x, z) => shoreProfileJS(x, z, 1),
+        normalAt: (x, z, out) => {
+            const e = 0.5;
+            const hx = shoreProfileJS(x + e, z, 1) - shoreProfileJS(x - e, z, 1);
+            const hz = shoreProfileJS(x, z + e, 1) - shoreProfileJS(x, z - e, 1);
+            out.set(-hx / (2 * e), 1, -hz / (2 * e));
+            out.normalize();
+            return out;
+        },
+    };
+    const terrain = worldEnv?.terrain ?? proceduralTerrain;
+
     // ---------------------------------------------------------------- ground
-    await loading.phase("displacing beach", 0.45);
-    // The visible beach: one displaced dense grid over the shared profile —
+    await loading.phase("displacing beach", 0.5);
+    // The visible beach: one displaced dense grid over the world's ground —
     // rock-sift's `displace()` pattern, including its silent-failure guard.
+    // Displaced from and grounded on the SAME `terrain.heightAt`, so what is
+    // drawn is what the character stands on.
     const ground = CreateGround("beach", {
         width: WORLD_SIZE, height: WORLD_SIZE,
         subdivisions: GRID_SUBDIVISIONS, updatable: true,
@@ -143,7 +179,7 @@ export async function run(canvas) {
     }
     const positions = ground.getVerticesData(VertexBuffer.PositionKind);
     for (let i = 0; i < positions.length; i += 3) {
-        positions[i + 1] = shoreProfileJS(positions[i], positions[i + 2], 1);
+        positions[i + 1] = terrain.heightAt(positions[i], positions[i + 2]);
     }
     ground.updateVerticesData(VertexBuffer.PositionKind, positions, true);
     ground.createNormals(true);
@@ -156,20 +192,6 @@ export async function run(canvas) {
     groundMat.metallic = 0;
     groundMat.environmentIntensity = 0.7;
     ground.material = groundMat;
-
-    // Grounding reads the same profile the mesh was displaced from. Amp fixed
-    // at 1 on this path — the mesh is baked once, and the two must agree.
-    const terrain = {
-        heightAt: (x, z) => shoreProfileJS(x, z, 1),
-        normalAt: (x, z, out) => {
-            const e = 0.5;
-            const hx = shoreProfileJS(x + e, z, 1) - shoreProfileJS(x - e, z, 1);
-            const hz = shoreProfileJS(x, z + e, 1) - shoreProfileJS(x, z - e, 1);
-            out.set(-hx / (2 * e), 1, -hz / (2 * e));
-            out.normalize();
-            return out;
-        },
-    };
 
     // ----------------------------------------------------------------- water
     const water = buildWater(scene);
@@ -196,20 +218,6 @@ export async function run(canvas) {
         `[sand-sim] ${rocks.stones} stones across the shore ` +
         `(${rocks.meshes} meshes, ${rocks.tiles} tiles)`
     );
-
-    // ------------------------------------------------------------ world env
-    // The pond world export — scenery only, same `?env=0` contract as the
-    // WebGPU path. No rendering group: this path has no groups at all.
-    await loading.phase("raising the world", 0.74);
-    const worldEnv = new URLSearchParams(location.search).get("env") === "0"
-        ? null
-        : await buildWorldEnv(scene);
-    if (worldEnv) {
-        console.log(
-            `[sand-sim] world env: ${worldEnv.meshes} meshes, ` +
-            `${worldEnv.instances} instances`
-        );
-    }
 
     // What the water mirrors: sky, shore, tree line — not the 117k shore rocks
     // (see scene/water.js). The GLSL twin's mirror is the same MirrorTexture.

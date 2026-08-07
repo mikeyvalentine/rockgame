@@ -43,11 +43,24 @@ import { DracoCompression } from "@babylonjs/core/Meshes/Compression/dracoCompre
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
-import { shoreDistance, shoreArc, SHORE_HALF_ARC, SHORE_DEPTH, WADE_DEPTH }
-    from "../../../shared/worldBounds.js";
+import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
+import {
+    shoreDistance, shoreArc, SHORE_HALF_ARC, SHORE_DEPTH, WADE_DEPTH,
+    POND_CENTER_X, POND_CENTER_Z,
+} from "../../../shared/worldBounds.js";
 import { shoreProfileJS } from "../terrain/beachParams.js";
+import { bakeHeightGrid, makeHeightSampler } from "../../../shared/glbHeightfield.js";
 import { S, onChange } from "../core/settings.js";
 import { ENV_URL, ENV_OFFSET, DRACO_FILES } from "./worldEnvParams.js";
+
+/**
+ * The baked terrain grid's world extent, centred on the pond. 300 m covers the
+ * ±100 m pond and the shore with margin; 512 cells is ~0.6 m/cell, ample for
+ * grounding and for displacing the ground mesh. Heights outside the mesh clamp
+ * to the nearest edge (hidden under the tree ring and the water).
+ */
+const TERRAIN_GRID_SIZE = 300;
+const TERRAIN_GRID_RES = 512;
 
 let registered = false;
 
@@ -129,11 +142,23 @@ export async function buildWorldEnv(scene, opts = {}) {
     // terrain the world's ground — which means porting walking / sand
     // deformation / sifting onto its heightfield — so it stays a dial until
     // that reconciliation happens.
-    const terrain = container.meshes.find((m) => m.name === "env:Landscape");
-    if (terrain) {
-        terrain.setEnabled(S.showEnvIsland);
-        onChange("showEnvIsland", (v) => terrain.setEnabled(v));
+    const landscape = container.meshes.find((m) => m.name === "env:Landscape");
+
+    // Bake the authored terrain into the height grid the world grounds on. The
+    // baked grid IS the ground: the app displaces its ground mesh from this and
+    // the character walks it, so the raw Landscape mesh is left disabled (the
+    // `GLB terrain` dial re-shows it as a debug overlay). Vertices are read
+    // through Babylon (correct de-interleave) and transformed to world by the
+    // mesh's own matrix, so the yaw and offset are baked in.
+    let ground = null;
+    if (landscape) {
+        ground = bakeTerrain(landscape);
+        landscape.setEnabled(S.showEnvIsland);
+        onChange("showEnvIsland", (v) => landscape.setEnabled(v));
     }
+    // Trees stand on the baked terrain, not the procedural profile — so the
+    // ring rises and falls with the authored ground and a re-export moves it.
+    const groundHeightAt = ground ? ground.heightAt : (x, z) => shoreProfileJS(x, z, 1);
 
     const group = opts.renderingGroupId ?? 0;
     let instances = 0;
@@ -150,7 +175,7 @@ export async function buildWorldEnv(scene, opts = {}) {
         // swaying trees eventually — just not shaded with.
         mesh.useVertexColors = false;
         if (mesh.thinInstanceCount > 0) {
-            cleared += groundInstances(mesh);
+            cleared += groundInstances(mesh, groundHeightAt);
             instances += mesh.thinInstanceCount;
         } else {
             instances += 1;
@@ -173,9 +198,46 @@ export async function buildWorldEnv(scene, opts = {}) {
         meshes: container.meshes.length,
         instances,
         cleared,
+        // The baked ground: `{ heightAt, normalAt, min, max }`, or null when the
+        // export carried no Landscape (`?env=0`, or a stripped glb). The app
+        // uses this as the world's terrain when present.
+        terrain: ground,
         setYaw,
         dispose() { container.dispose(); root.dispose(); },
     };
+}
+
+/**
+ * Bake the Landscape mesh into the height grid + sampler the world grounds on.
+ * @param {import("@babylonjs/core/Meshes/mesh").Mesh} mesh (parented, so its
+ *   world matrix carries ENV_OFFSET and the yaw)
+ */
+function bakeTerrain(mesh) {
+    mesh.computeWorldMatrix(true);
+    const wm = mesh.getWorldMatrix();
+    const local = mesh.getVerticesData(VertexBuffer.PositionKind);
+    const indices = mesh.getIndices();
+    // World-space positions (Babylon de-interleaves getVerticesData for us).
+    const world = new Float32Array(local.length);
+    const v = new Vector3();
+    for (let i = 0; i < local.length; i += 3) {
+        Vector3.TransformCoordinatesFromFloatsToRef(local[i], local[i + 1], local[i + 2], wm, v);
+        world[i] = v.x; world[i + 1] = v.y; world[i + 2] = v.z;
+    }
+    const baked = bakeHeightGrid({
+        positions: world, indices,
+        origin: { x: POND_CENTER_X - TERRAIN_GRID_SIZE / 2, z: POND_CENTER_Z - TERRAIN_GRID_SIZE / 2 },
+        size: TERRAIN_GRID_SIZE, res: TERRAIN_GRID_RES,
+        // Below the real basin (~-13 m) and above the shore (~+2.5 m); only a
+        // wild spike would hit these.
+        clampLo: -20, clampHi: 30,
+    });
+    const sampler = makeHeightSampler(baked);
+    sampler.min = baked.min;
+    sampler.max = baked.max;
+    console.log(`[worldEnv] terrain baked ${baked.res}² over ${TERRAIN_GRID_SIZE} m: ` +
+        `${baked.min.toFixed(1)}..${baked.max.toFixed(1)} m`);
+    return sampler;
 }
 
 /** Clearance around the walkable strip before a prop may stand, metres. */
@@ -191,20 +253,20 @@ const SETTLE = 0.04;
  * Both are load-time corrections, not art dials. The export scattered its
  * ring uniformly — 217 instances stand inside the strip the player walks and
  * sifts (measured; no yaw avoids it, the ring has no clear arc). And the
- * ground the ring was scattered ON was not exported, so instance heights are
- * relative to terrain that does not exist here; the game's shore profile is
- * the only ground there is. `shoreProfileJS` rather than `terrain.heightAt`
- * so both renderers seat the feet identically, and because the ring reaches
- * past the WebGPU bake's extent where the analytic profile keeps going.
+ * ground the ring was scattered ON was not usable directly, so the feet are
+ * re-seated on `heightAt` — the world's actual ground, which is now the terrain
+ * baked from this same export, so the ring sits on the authored land and a
+ * re-export moves both together.
  *
  * Baked against the yaw at load, like the rock field is against its density
  * dial: moving `envYaw` afterwards spins the surround but does not re-derive
  * the clearing — it is a reload knob for placement, a live one for looking.
  *
  * @param {import("@babylonjs/core/Meshes/mesh").Mesh} mesh
+ * @param {(x:number,z:number)=>number} heightAt  the world's ground
  * @returns {number} instances dropped from the beach
  */
-function groundInstances(mesh) {
+function groundInstances(mesh, heightAt) {
     const world = mesh.computeWorldMatrix(true);
     const inv = world.clone().invert();
     const src = mesh.thinInstanceGetWorldMatrices();
@@ -221,7 +283,7 @@ function groundInstances(mesh) {
             Math.abs(arc) < SHORE_HALF_ARC + BEACH_MARGIN
         ) continue;
 
-        p.y = shoreProfileJS(p.x, p.z, 1) - SETTLE;
+        p.y = heightAt(p.x, p.z) - SETTLE;
         Vector3.TransformCoordinatesToRef(p, inv, p);
         m.setTranslation(p);
         kept.push(m);
