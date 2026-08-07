@@ -21,6 +21,7 @@ import { Engine } from "@babylonjs/core/Engines/engine";
 import { Scene } from "@babylonjs/core/scene";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Space } from "@babylonjs/core/Maths/math.axis";
 import { Viewport } from "@babylonjs/core/Maths/math.viewport";
 import { UniversalCamera } from "@babylonjs/core/Cameras/universalCamera";
 import { Camera } from "@babylonjs/core/Cameras/camera";
@@ -35,9 +36,6 @@ const DRACO = "/assets/vendor/draco/";
 
 /** Which arm we pose. The left is collapsed until we need two hands. */
 const SIDE = "Right";
-
-/** Panel framing margin (1 = tight, >1 leaves air around the arm). */
-const MARGIN = 1.4;
 
 /** Set once in main(), so findNode() can scan without threading scene around. */
 let _scene = null;
@@ -100,29 +98,46 @@ async function main() {
         console.warn("[throw-lab] LeftShoulder node not found — left arm not hidden");
     }
 
+    // --- resting pose: upper arm down, forearm forward (90° at the elbow) ----
+    // The player will pivot from here. Posed by aiming each bone SEGMENT at a
+    // world direction rather than by hand-tuned Euler angles, so it does not
+    // depend on the rig's rest orientation: upper arm segment → straight down,
+    // then the forearm segment → forward. That L is the sagittal (swing) plane.
+    restPose();
+
+    // Settle every world matrix after posing — aimSegment only refreshes the
+    // bones it touched, so the fingers (grandchildren of the hand) still hold
+    // bind-pose world positions until this runs. Two passes so parents update
+    // before the children that read them. Without it the framing point sets
+    // mix posed and bind positions and the panels frame the wrong region.
+    for (let pass = 0; pass < 2; pass++) {
+        scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
+    }
+
     // --- frame from the right-arm bones -------------------------------------
     // The arm's real extent, not a guessed box: union the world positions of the
     // right-side joints from shoulder to fingertip.
-    const armNodes = [
+    // Two point sets to frame on: the whole arm (shoulder→fingertips) and a
+    // tight wrist/hand set. Cameras fit to the actual joint positions, so the
+    // framing follows whatever pose the arm is in.
+    const armPts = collectPoints([
         "Shoulder", "Arm", "ForeArm_", "ForearmRoll", "Hand",
-        "HandMiddle1", "HandMiddle4", "HandThumb4", "HandPinky4",
-    ].map((n) => findNode(SIDE + n)).filter(Boolean);
-    const armBox = aabbOf(armNodes);
-    const handBox = aabbOf([
-        "Hand", "HandMiddle1", "HandMiddle4", "HandThumb4", "HandPinky4",
-    ].map((n) => findNode(SIDE + n)).filter(Boolean), 0.06);
-
-    console.log("[throw-lab] arm box", armBox, "hand box", handBox);
+        "HandMiddle1", "HandMiddle4", "HandThumb4", "HandIndex4",
+        "HandRing4", "HandPinky4",
+    ]);
+    const wristPts = collectPoints([
+        "Hand", "HandThumb1", "HandThumb4", "HandIndex4",
+        "HandMiddle1", "HandMiddle4", "HandRing4", "HandPinky4",
+    ]);
 
     // --- four orthographic cameras, 2x2 -------------------------------------
-    // Screen axes per view: side looks along world X (horizontal=Z, vertical=Y);
-    // top looks straight down -Y (horizontal=X, vertical=Z). Guessed axes — easy
-    // to flip once we see the first render.
+    // side = profile (look -X): screen right = +Z forward, up = +Y loft.
+    // top  = overhead (look -Y): screen shows the left/right line + forward.
     const cams = [
-        makeOrthoCam("armSide", scene, canvas, armBox, "side", new Viewport(0, 0.5, 0.5, 0.5)),
-        makeOrthoCam("armTop", scene, canvas, armBox, "top", new Viewport(0.5, 0.5, 0.5, 0.5)),
-        makeOrthoCam("wristSide", scene, canvas, handBox, "side", new Viewport(0, 0, 0.5, 0.5)),
-        makeOrthoCam("wristTop", scene, canvas, handBox, "top", new Viewport(0.5, 0, 0.5, 0.5)),
+        makeOrthoCam("armSide", scene, canvas, armPts, "side", 1.25, new Viewport(0, 0.5, 0.5, 0.5)),
+        makeOrthoCam("armTop", scene, canvas, armPts, "top", 1.25, new Viewport(0.5, 0.5, 0.5, 0.5)),
+        makeOrthoCam("wristSide", scene, canvas, wristPts, "side", 1.35, new Viewport(0, 0, 0.5, 0.5)),
+        makeOrthoCam("wristTop", scene, canvas, wristPts, "top", 1.35, new Viewport(0.5, 0, 0.5, 0.5)),
     ];
     scene.activeCameras = cams.map((c) => c.cam);
 
@@ -145,60 +160,106 @@ function findNode(name) {
            nodes.find((n) => n.name.includes(name)) || null;
 }
 
-/** World-space AABB spanning the given nodes' origins, padded by `pad` metres. */
-function aabbOf(nodes, pad = 0) {
-    const min = new Vector3(Infinity, Infinity, Infinity);
-    const max = new Vector3(-Infinity, -Infinity, -Infinity);
-    for (const n of nodes) {
-        const p = n.getAbsolutePosition();
-        min.minimizeInPlace(p);
-        max.maximizeInPlace(p);
-    }
-    const center = min.add(max).scale(0.5);
-    const half = max.subtract(min).scale(0.5).add(new Vector3(pad, pad, pad));
-    return { center, half };
+/** World positions of the named right-side joints (missing ones dropped). */
+function collectPoints(names) {
+    return names
+        .map((n) => findNode(SIDE + n))
+        .filter(Boolean)
+        .map((n) => n.getAbsolutePosition().clone());
 }
 
 /**
- * An orthographic camera fitted to a box, in one of two 2D planes. The arm
- * extends along world X, lofts in Y, and lines out in Z, so:
- *   side → look along -Z; screen X = world X (arm length), Y = world Y (loft)
- *   top  → look along -Y; screen X = world X (arm length), Y = world Z (line)
- * Returns { cam, fit } — fit() recomputes ortho extents for the panel's aspect.
+ * An orthographic camera fitted to a set of world POINTS, in one of two planes:
+ *   side → look along -X (sagittal profile), up = +Y
+ *   top  → look along -Y (overhead),        up = -Z
+ * It aims at the points' centroid and sizes to their spread projected onto the
+ * screen axes — so it centres and fits whatever pose the arm holds, no per-axis
+ * box mapping to get wrong. Returns { cam, fit }; fit() re-runs on resize.
  */
-function makeOrthoCam(name, scene, canvas, box, plane, viewport) {
-    const { center, half } = box;
+function makeOrthoCam(name, scene, canvas, points, plane, margin, viewport) {
     const dist = 5; // ortho: distance is only for near/far, not size
-    const cam = new UniversalCamera(name, center.clone(), scene);
+    const centroid = points
+        .reduce((a, p) => a.addInPlace(p), new Vector3(0, 0, 0))
+        .scale(1 / Math.max(points.length, 1));
+
+    const axis = plane === "side" ? new Vector3(1, 0, 0) : new Vector3(0, 1, 0);
+    const up = plane === "side" ? new Vector3(0, 1, 0) : new Vector3(0, 0, -1);
+
+    const cam = new UniversalCamera(name, centroid.add(axis.scale(dist)), scene);
     cam.mode = Camera.ORTHOGRAPHIC_CAMERA;
     cam.minZ = -20; cam.maxZ = 20;
+    cam.upVector = up;
     cam.viewport = viewport;
-    cam.inputs.clear(); // static technical view — no user camera control
+    cam.inputs.clear(); // static technical view
+    cam.setTarget(centroid);
 
-    let hU, hV;
-    if (plane === "side") {
-        cam.position = center.add(new Vector3(0, 0, dist));
-        cam.upVector = new Vector3(0, 1, 0);
-        hU = half.x; hV = half.y;       // screen X=X (length), Y=Y (loft)
-    } else { // top
-        cam.position = center.add(new Vector3(0, dist, 0));
-        cam.upVector = new Vector3(0, 0, -1);
-        hU = half.x; hV = half.z;       // screen X=X (length), Y=Z (line)
+    // Screen right = up × forward (forward points from camera to centroid).
+    const forward = centroid.subtract(cam.position);
+    forward.normalize();
+    const right = Vector3.Cross(up, forward);
+    right.normalize();
+
+    // Half-spread of the points on each screen axis, about the centroid.
+    let hu = 1e-3, hv = 1e-3;
+    for (const p of points) {
+        const d = p.subtract(centroid);
+        hu = Math.max(hu, Math.abs(Vector3.Dot(d, right)));
+        hv = Math.max(hv, Math.abs(Vector3.Dot(d, up)));
     }
-    cam.setTarget(center);
 
     const fit = () => {
         const panelAspect = (canvas.width * viewport.width) /
                             (canvas.height * viewport.height);
-        let halfW = Math.max(hU, 1e-3) * MARGIN;
-        let halfH = Math.max(hV, 1e-3) * MARGIN;
-        // Grow the smaller axis so content is never squashed by the panel aspect.
+        let halfW = hu * margin;
+        let halfH = hv * margin;
         if (halfW / halfH < panelAspect) halfW = halfH * panelAspect;
         else halfH = halfW / panelAspect;
         cam.orthoLeft = -halfW; cam.orthoRight = halfW;
         cam.orthoTop = halfH; cam.orthoBottom = -halfH;
     };
     return { cam, fit };
+}
+
+/**
+ * Rotate `node` (in world space) so the segment from it to `child` points along
+ * `targetDir`. Shortest-arc rotation; safe when already aligned or opposite.
+ */
+function aimSegment(node, child, targetDir) {
+    node.computeWorldMatrix(true);
+    child.computeWorldMatrix(true);
+    const cur = child.getAbsolutePosition().subtract(node.getAbsolutePosition());
+    if (cur.lengthSquared() < 1e-10) return;
+    cur.normalize();
+    const tgt = targetDir.clone().normalize();
+    let axis = Vector3.Cross(cur, tgt);
+    const s = axis.length();
+    const c = Vector3.Dot(cur, tgt);
+    if (s < 1e-6) {
+        if (c > 0) return;                  // already aligned
+        // Opposite: rotate 180° about any perpendicular axis.
+        axis = Vector3.Cross(cur, new Vector3(0, 1, 0));
+        if (axis.length() < 1e-6) axis = Vector3.Cross(cur, new Vector3(1, 0, 0));
+    }
+    axis.normalize();
+    node.rotate(axis, Math.atan2(s, c), Space.WORLD);
+    node.computeWorldMatrix(true);
+}
+
+/**
+ * The resting throw-ready pose: upper arm straight down, forearm forward — a
+ * 90° elbow, the L the swing pivots from. Directions in world space; the aim
+ * approach means it does not depend on the rig's bind orientation.
+ */
+function restPose() {
+    const arm = findNode(SIDE + "Arm");
+    const fore = findNode(SIDE + "ForeArm_");
+    const hand = findNode(SIDE + "Hand");
+    if (!arm || !fore || !hand) {
+        console.warn("[throw-lab] restPose: missing arm/forearm/hand joints");
+        return;
+    }
+    aimSegment(arm, fore, new Vector3(0, -1, 0));   // upper arm → straight down
+    aimSegment(fore, hand, new Vector3(0, 0, 1));   // forearm → forward (90° elbow)
 }
 
 main().catch((e) => fail("throw-lab boot failed: " + (e && e.stack || e)));
