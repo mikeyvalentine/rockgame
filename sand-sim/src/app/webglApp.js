@@ -51,6 +51,7 @@ import {
 } from "../terrain/beachParams.js";
 import { buildWater } from "../scene/water.js";
 import { buildShoreRocks } from "../scene/shoreRocks.js";
+import { buildWorldEnv } from "../scene/worldEnv.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
@@ -192,6 +193,20 @@ export async function run(canvas) {
         `[sand-sim] ${rocks.stones} stones across the shore ` +
         `(${rocks.meshes} meshes, ${rocks.tiles} tiles)`
     );
+
+    // ------------------------------------------------------------ world env
+    // The pond world export — scenery only, same `?env=0` contract as the
+    // WebGPU path. No rendering group: this path has no groups at all.
+    await loading.phase("raising the world", 0.74);
+    const worldEnv = new URLSearchParams(location.search).get("env") === "0"
+        ? null
+        : await buildWorldEnv(scene);
+    if (worldEnv) {
+        console.log(
+            `[sand-sim] world env: ${worldEnv.meshes} meshes, ` +
+            `${worldEnv.instances} instances`
+        );
+    }
 
     // The four sifting beds are unwired, not deleted.
     //
@@ -387,7 +402,7 @@ export async function run(canvas) {
 
     globalThis.SANDSIM = {
         renderer: "webgl2",
-        engine, scene, rig, character, overlay, sky, water, ground,
+        engine, scene, rig, character, overlay, sky, water, ground, worldEnv,
         deform, contact, scribble, rocks, beds, physics, crouch, sift, imprints,
         S, input, perfStats: stats,
     };

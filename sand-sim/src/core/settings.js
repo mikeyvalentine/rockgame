@@ -61,6 +61,18 @@ export const S = {
     // slider does nothing until reload.
     rockDensity: 1.0,
 
+    // ------------------------------------------------------------- world env
+    // The pond world export (scene/worldEnv.js): the tree ring and its
+    // boulders/deadfall, plus a wooded island the export puts in the middle
+    // of the pond. The island is level design in the skip lane, so it ships
+    // OFF until someone looks at it in engine and rules. Yaw spins the whole
+    // surround about the pond's centre — live for looking, but the beach
+    // clearing bakes against it at load, so placement judgements want a
+    // reload (see worldEnv.js groundInstances).
+    showWorldEnv: true,
+    showEnvIsland: false,
+    envYaw: 0,
+
     // ----------------------------------------------------------- deformation
     deformDepth: 1.0,
     deformBerm: 1.0,
@@ -165,6 +177,14 @@ export const SCHEMA = [
         group: "Shore rocks",
         items: [
             { k: "rockDensity", l: "Density", t: "f", min: 0, max: 4, step: 0.05 },
+        ],
+    },
+    {
+        group: "World env",
+        items: [
+            { k: "showWorldEnv", l: "World env", t: "b" },
+            { k: "showEnvIsland", l: "Island", t: "b" },
+            { k: "envYaw", l: "Yaw", t: "f", min: -180, max: 180, step: 1 },
         ],
     },
     {

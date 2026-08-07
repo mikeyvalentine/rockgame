@@ -45,6 +45,7 @@ import { initMaskBrush } from "../tools/maskBrush.js";
 import { DigTool } from "../tools/dig.js";
 import { buildWater } from "../scene/water.js";
 import { buildShoreRocks } from "../scene/shoreRocks.js";
+import { buildWorldEnv } from "../scene/worldEnv.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
@@ -267,6 +268,23 @@ export async function run(canvas) {
         );
     }
 
+    // ------------------------------------------------------------ world env
+    // The pond world export: landscape, tree ring, boulders. Scenery only —
+    // grounding stays on the heightfield. `?env=0` skips it, same contract as
+    // `?rocks=0` and for the same reason (see scene/worldEnv.js).
+    await loading.phase("raising the world", 0.76);
+    const worldEnv = q.get("env") === "0" ? null : await buildWorldEnv(scene, {
+        // Group 1 with the terrain — group 0 would draw it with the sky and
+        // write depth the opaque pass never clears (see the beds note above).
+        renderingGroupId: 1,
+    });
+    if (worldEnv) {
+        console.log(
+            `[sand-sim] world env: ${worldEnv.meshes} meshes, ` +
+            `${worldEnv.instances} instances`
+        );
+    }
+
     // The four sifting beds are unwired, not deleted — see webglApp.js for why.
     const beds = null;
     const physics = null;
@@ -438,7 +456,7 @@ export async function run(canvas) {
 
     globalThis.SANDSIM = {
         renderer: "webgpu",
-        engine, scene, rig, character, contact, dig, spray, grains, water,
+        engine, scene, rig, character, contact, dig, spray, grains, water, worldEnv,
         maskPaint, overlay, terrain, sky, shadows, post, depthPass, scribble, beds,
         physics, crouch, sift, imprints,
         S, input, perfStats: stats,
