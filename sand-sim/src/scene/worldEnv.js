@@ -9,10 +9,11 @@
  * here. What remains splits in two: the RING (trees, boulders, deadfall —
  * every GPU-instanced prop, all of it scattered r=96..176 around the pond),
  * which is re-grounded onto the game's own terrain and cleared off the
- * walkable strip (see `groundInstances`), and the ISLAND (the `Landscape`
- * mesh — see the note at its dial). The whole environment hangs off one root
- * with a live yaw dial (`S.envYaw`) and a visibility toggle
- * (`S.showWorldEnv`, `?env=0` skips the load entirely).
+ * walkable strip (see `groundInstances`), and the authored pond TERRAIN (the
+ * `Landscape` mesh, a basin with a shore — off by default while the world
+ * still grounds on the procedural beach; see the note at its dial). The whole
+ * environment hangs off one root with a live yaw dial (`S.envYaw`) and a
+ * visibility toggle (`S.showWorldEnv`, `?env=0` skips the load entirely).
  *
  * Alignment is one translation — `worldEnvParams.js` has the measured facts
  * and `tools/env-glb-check.mjs` holds the file to them.
@@ -115,16 +116,23 @@ export async function buildWorldEnv(scene, opts = {}) {
     container.addAllToScene();
     for (const node of container.rootNodes) node.parent = root;
 
-    // The island. The export's landscape mesh is not a shore around the pond
-    // — it is a wooded island IN it (measured: the mesh only has surface
-    // within ~r<80, the pond floor and the ring under the forest are holes).
-    // An island in the middle of the skip lane is level design, which the
-    // pillars forbid — so it ships behind a dial, off by default, and whether
-    // it stays is decided by looking at it (and at a thrown stone) in engine.
-    const island = container.meshes.find((m) => m.name === "env:Landscape");
-    if (island) {
-        island.setEnabled(S.showEnvIsland);
-        onChange("showEnvIsland", (v) => island.setEnabled(v));
+    // The authored pond terrain — the C4D Landscape: a pond basin (deepening
+    // toward the middle) with a shore rising to the waterline around its rim.
+    // (An earlier note here called it an island; that was a bad measurement —
+    // a max-height triangle walk latched onto the noisy cavity geometry at the
+    // centre and misread the bowl as a peak. Corrected 2026-08-07.)
+    //
+    // Off by DEFAULT for a different reason than being wrong: the world still
+    // grounds the player on the PROCEDURAL beach (shoreProfileJS / the height
+    // bake), and drawing this mesh on top of it double-terrains the shore and
+    // z-fights. Turning it on is really the decision to make the authored
+    // terrain the world's ground — which means porting walking / sand
+    // deformation / sifting onto its heightfield — so it stays a dial until
+    // that reconciliation happens.
+    const terrain = container.meshes.find((m) => m.name === "env:Landscape");
+    if (terrain) {
+        terrain.setEnabled(S.showEnvIsland);
+        onChange("showEnvIsland", (v) => terrain.setEnabled(v));
     }
 
     const group = opts.renderingGroupId ?? 0;

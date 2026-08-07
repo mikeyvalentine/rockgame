@@ -74,12 +74,13 @@ export const S = {
 
     // ------------------------------------------------------------- world env
     // The pond world export (scene/worldEnv.js): the tree ring and its
-    // boulders/deadfall, plus a wooded island the export puts in the middle
-    // of the pond. The island is level design in the skip lane, so it ships
-    // OFF until someone looks at it in engine and rules. Yaw spins the whole
-    // surround about the pond's centre — live for looking, but the beach
-    // clearing bakes against it at load, so placement judgements want a
-    // reload (see worldEnv.js groundInstances).
+    // boulders/deadfall, plus the authored pond TERRAIN (a basin with a shore,
+    // the Landscape mesh). The terrain ships OFF because the world still
+    // grounds on the procedural beach and drawing both double-terrains the
+    // shore; enabling it is the decision to make the authored mesh the ground
+    // (see worldEnv.js). Yaw spins the whole surround about the pond centre —
+    // live for looking, but the beach clearing bakes against it at load, so
+    // placement judgements want a reload (see worldEnv.js groundInstances).
     showWorldEnv: true,
     showEnvIsland: false,
     envYaw: 0,
@@ -202,7 +203,7 @@ export const SCHEMA = [
         group: "World env",
         items: [
             { k: "showWorldEnv", l: "World env", t: "b" },
-            { k: "showEnvIsland", l: "Island", t: "b" },
+            { k: "showEnvIsland", l: "GLB terrain", t: "b" },
             { k: "envYaw", l: "Yaw", t: "f", min: -180, max: 180, step: 1 },
         ],
     },
