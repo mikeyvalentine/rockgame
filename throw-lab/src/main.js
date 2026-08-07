@@ -128,7 +128,7 @@ async function main() {
     const rock = buildRock(scene, {
         name: q.get("rock") || "granite",
         seed: Number.parseInt(q.get("seed"), 10) || 7,
-        size: Number.parseFloat(q.get("size")) || 0.06,
+        size: Number.parseFloat(q.get("size")) || 0.10,
     });
     const handNode = findNode(SIDE + "Hand");
     const knuckle = findNode(SIDE + "HandMiddle1");
@@ -143,15 +143,26 @@ async function main() {
     across.normalize();
     const palmNormal = Vector3.Cross(fingerDir, across);
     palmNormal.normalize();
-    const palm = Vector3.Lerp(handP, knuckle.getAbsolutePosition(), 0.55)
-                        .add(palmNormal.scale(-0.025));
+    // Seat the rock's palm-side surface ON the palm: offset by its bounding
+    // radius (+ a small gap), so the stone rests in the hand with the open
+    // fingers around it rather than buried in it — otherwise the fingers start
+    // already inside a big rock and the grip has nothing to close.
+    let rockR = 0;
+    const rp = rock.geometry.positions;
+    for (let i = 0; i < rp.length; i += 3) {
+        rockR = Math.max(rockR, Math.hypot(rp[i], rp[i + 1], rp[i + 2]));
+    }
+    const palm = Vector3.Lerp(handP, knuckle.getAbsolutePosition(), 0.5)
+                        .add(palmNormal.scale(-(rockR + 0.005)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
 
     // --- procedural grip: curl the fingers onto the rock --------------------
     const palmar = palmNormal.scale(-1); // toward the palm / the rock
-    const curled = gripRock({ side: SIDE, findNode, rockMesh: rock.mesh, palmar });
+    const curled = gripRock({
+        side: SIDE, findNode, rockMesh: rock.mesh, geometry: rock.geometry, palmar,
+    });
     console.log(`[throw-lab] grip: ${curled} finger joints curled onto the rock`);
     for (let pass = 0; pass < 2; pass++) {
         scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
