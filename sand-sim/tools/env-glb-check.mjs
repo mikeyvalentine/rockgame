@@ -101,5 +101,34 @@ check(
 check("offset lands water on the waterline", near(ENV_OFFSET.y + GLB_WATER_Y, WATER_LEVEL_Y));
 check("offset lands pond centre on pond centre", near(ENV_OFFSET.z, POND_CENTER_Z));
 
+// ---------------------------------------------------------------------------
+// The leaf cards keep the alpha `tools/key-atlas-alpha.mjs` restored
+// ---------------------------------------------------------------------------
+//
+// The C4D export flattened every branch-atlas opacity onto black; keying put
+// it back as alphaMode MASK on 4-channel WebP. A re-export from the DCC would
+// silently flatten them again — every canopy back to a solid card — and only
+// this catches it, because the geometry and placement are all still correct.
+
+const { materials = [], textures = [], images = [] } = gltf;
+const FOLIAGE = /branch|atlas|leaf|shrub/i;
+const foliageMats = materials.filter((m) => FOLIAGE.test(m.name ?? ""));
+check("the export has foliage materials", foliageMats.length > 0);
+
+let masked = 0, withAlpha = 0;
+for (const m of foliageMats) {
+    if (m.alphaMode === "MASK") masked++;
+    const ti = m.pbrMetallicRoughness?.baseColorTexture?.index;
+    const tex = ti !== undefined ? textures[ti] : null;
+    const img = tex ? images[tex.extensions?.EXT_texture_webp?.source ?? tex.source] : null;
+    // A keyed atlas is WebP with an alpha channel; the JSON does not carry the
+    // channel count, so the mime + MASK mode together are the signal here and
+    // the pixel-level check lives in key-atlas-alpha's own run.
+    if (img?.mimeType === "image/webp") withAlpha++;
+}
+check("every foliage material is alphaMode MASK", masked === foliageMats.length,
+    `${masked}/${foliageMats.length} keyed — re-export probably flattened the atlases`);
+check("every foliage atlas is WebP", withAlpha === foliageMats.length);
+
 console.log(failures ? `\n${failures} failure(s)` : "\nall good");
 process.exit(failures ? 1 : 0);

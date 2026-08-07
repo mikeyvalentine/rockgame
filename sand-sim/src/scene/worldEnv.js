@@ -48,9 +48,6 @@ import { shoreProfileJS } from "../terrain/beachParams.js";
 import { S, onChange } from "../core/settings.js";
 import { ENV_URL, ENV_OFFSET, DRACO_FILES } from "./worldEnvParams.js";
 
-/** Foliage cards: alpha-tested, two-sided. Everything else stays opaque. */
-const FOLIAGE = /branch|atlas|leaf|shrub/i;
-
 let registered = false;
 
 /**
@@ -95,17 +92,17 @@ export async function buildWorldEnv(scene, opts = {}) {
         dropped.dispose();
     }
 
+    // The leaf cards carry their own alpha mask and alphaMode MASK now — the
+    // C4D export flattened both onto black, and `tools/key-atlas-alpha.mjs`
+    // put them back in the asset (see its header). So the glTF loader sets up
+    // the alpha test on its own and nothing is forced here. The one thing the
+    // loader will not infer is that a leaf card is two-sided — the export
+    // authored single-sided cards, and a one-sided leaf vanishes when the
+    // camera crosses its plane — so double-siding is set from the alpha mode
+    // the asset now declares, no name matching required.
     for (const mat of container.materials) {
         if (!(mat instanceof PBRMaterial)) continue;
-        if (FOLIAGE.test(mat.name)) {
-            // Atlas cards. The export says OPAQUE, which draws every card as a
-            // solid quad; the albedo's alpha is the leaf mask.
-            if (mat.albedoTexture) {
-                mat.albedoTexture.hasAlpha = true;
-                mat.useAlphaFromAlbedoTexture = true;
-                mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST;
-                mat.alphaCutOff = 0.4;
-            }
+        if (mat.transparencyMode === PBRMaterial.PBRMATERIAL_ALPHATEST) {
             mat.backFaceCulling = false;
         }
     }
