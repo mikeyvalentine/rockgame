@@ -20,6 +20,7 @@
     "test:scatter": "node tools/shore-scatter-check.mjs",
     "test:env": "node tools/env-glb-check.mjs",
     "test:water": "node tools/water-shader-check.mjs",
+    "test:glbterrain": "node tools/glb-heightfield-check.mjs",
     "test:sifttools": "node tools/sift-tools-check.mjs",
     "test:rockmat": "node tools/rock-material-check.mjs",
     "test:raymarch": "node tools/raymarch-test.mjs",

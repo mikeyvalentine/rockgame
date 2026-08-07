@@ -49,6 +49,13 @@ const UNWIRED = {
     // run of this check finding it is the point.
     "mat4.js":
         "flat-array bone maths for a skeleton the beach has not grown yet",
+    // Groundwork for making the authored glb the world's ground (stage 2).
+    // Used by tools/glb-heightfield-check.mjs today; not yet wired into either
+    // app, because the current terrain mesh does not bake to a clean
+    // heightfield (run `npm run test:glbterrain`). Wired in once the mesh
+    // passes that gate.
+    "glbHeightfield.js":
+        "mesh->heightfield bake, waiting on a ground-ready terrain mesh (test:glbterrain)",
 };
 
 function walk(dir, out = []) {
