@@ -59,7 +59,10 @@ check("vertex injection absent (fragment-only by design)",
     plugin.getCustomCode("vertex") === null);
 
 const uni = plugin.getUniforms();
-check("ubo uniforms declared", Array.isArray(uni.ubo) && uni.ubo.length >= 5);
+// Deform center/size/texel + wet colour. (The wet-band shore thresholds are no
+// longer uniforms — the band is height-driven from vPositionW.y with constants
+// baked into the GLSL, so it follows the terrain contour rather than a circle.)
+check("ubo uniforms declared", Array.isArray(uni.ubo) && uni.ubo.length >= 4);
 
 const defines = { SAND_DEFORM: false, SAND_DEFORM_TEX: true };
 plugin.prepareDefines(defines);

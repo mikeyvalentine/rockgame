@@ -21,11 +21,19 @@
 // node, which (unlike vite) does not resolve extensionless deep imports.
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase.js";
 
-import { SAND_WET, WET_NEAR, WET_FAR } from "../looks/sandTone.js";
-import { POND_CENTER_X, POND_CENTER_Z, POND_RADIUS } from "../terrain/beachParams.js";
+import { SAND_WET } from "../looks/sandTone.js";
+import { WATER_LEVEL_Y } from "../terrain/beachParams.js";
 
 /** GLSL float literal — a bare integer like `100` is invalid where a float is wanted. */
 const flt = (n) => (Number.isInteger(n) ? n + ".0" : String(n));
+
+/**
+ * Metres of height above the waterline over which sand dries out. Wet sand
+ * follows the water's reach UP THE SLOPE, so a height band traces the real
+ * shore contour of the terrain — wide on a gentle foreshore, tight on a steep
+ * one — instead of a circle that ignores the ground's actual curve.
+ */
+const WET_RISE = 0.4;
 
 export class SandDeformPlugin extends MaterialPluginBase {
     /**
@@ -83,8 +91,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
                 { name: "sandDeformSize", size: 1, type: "float" },
                 { name: "sandDeformTexel", size: 1, type: "float" },
                 { name: "sandWetColor", size: 3, type: "vec3" },
-                { name: "sandWetNear", size: 1, type: "float" },
-                { name: "sandWetFar", size: 1, type: "float" },
             ],
             fragment: `
                 #ifdef SAND_DEFORM
@@ -92,8 +98,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
                     uniform float sandDeformSize;
                     uniform float sandDeformTexel;
                     uniform vec3 sandWetColor;
-                    uniform float sandWetNear;
-                    uniform float sandWetFar;
                 #endif
             `,
         };
@@ -103,8 +107,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
         uniformBuffer.updateFloat3(
             "sandWetColor", SAND_WET.r, SAND_WET.g, SAND_WET.b
         );
-        uniformBuffer.updateFloat("sandWetNear", WET_NEAR);
-        uniformBuffer.updateFloat("sandWetFar", WET_FAR);
         const f = this._field;
         if (f) {
             uniformBuffer.updateFloat2("sandDeformCenter", f.center.x, f.center.y);
@@ -179,17 +181,18 @@ export class SandDeformPlugin extends MaterialPluginBase {
                         }
                     }
                     #endif
-                    // Analytic shore band, driven by DISTANCE from the pond's
-                    // waterline (the same circle SDF the water shader ends on),
-                    // not by a flat z: the pond is a curved disc, so the damp
-                    // band has to wrap with the shore. The pond centre/radius
-                    // are baked in as literals — they are compile-time world
-                    // constants, so there is nothing to bind. A cheap sine
-                    // stands in for tide noise, wobbling the lapping line.
-                    float sdDist = length(vPositionW.xz - vec2(${flt(POND_CENTER_X)}, ${flt(POND_CENTER_Z)})) - ${flt(POND_RADIUS)};
-                    float sdTide = sin(vPositionW.x * 0.045 + 1.7) * 1.4;
+                    // Analytic shore band, driven by HEIGHT above the waterline
+                    // rather than distance from a circle: the sand fragment
+                    // carries its own terrain height in vPositionW.y (the ground
+                    // is displaced from the authored mesh), so wetness that
+                    // fades over the first WET_RISE metres of rise traces the
+                    // terrain's true shore contour and slope — not a perfect
+                    // circle. Submerged sand (below the waterline) is fully wet.
+                    // A cheap sine wobbles the lapping line a few centimetres.
+                    float sdAbove = vPositionW.y - ${flt(WATER_LEVEL_Y)};
+                    float sdTide = sin(vPositionW.x * 0.7 + 1.7) * 0.05;
                     float sdShore = 1.0 - smoothstep(
-                        sandWetNear, sandWetFar, sdDist + sdTide
+                        0.0, ${flt(WET_RISE)}, sdAbove + sdTide
                     );
                     float sdWet = max(sdShore, sdWetC);
                     #ifdef SAND_DEFORM_DEBUG
