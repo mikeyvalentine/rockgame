@@ -122,7 +122,14 @@ async function main() {
     // between the wrist and the middle knuckle, then parented to the hand so it
     // rides the pose. The exact palm seat is provisional — the procedural grip
     // will settle the fingers to it next.
-    const rock = buildRock(scene, { name: "granite", seed: 7, size: 0.06 });
+    // `?rock=basalt&seed=3&size=0.08` swaps the stone — the grip re-fits to
+    // whatever surface it gets, which is the whole point of doing it procedurally.
+    const q = new URLSearchParams(location.search);
+    const rock = buildRock(scene, {
+        name: q.get("rock") || "granite",
+        seed: Number.parseInt(q.get("seed"), 10) || 7,
+        size: Number.parseFloat(q.get("size")) || 0.06,
+    });
     const handNode = findNode(SIDE + "Hand");
     const knuckle = findNode(SIDE + "HandMiddle1");
     // Palm normal from the hand skeleton: along the fingers × across the
