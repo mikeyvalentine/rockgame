@@ -35,16 +35,24 @@
  *   NEAR   level 2, stones within `NEAR_RADIUS` of the walker. Rebuilt when
  *          they move `REBUILD_STEP`; about a thousand stones, and the only
  *          per-frame allocation in the file is avoiding it.
- *   MID    level 1, static per tile, out to `MID_DISTANCE`.
- *   FAR    level 0, static per tile, out to `DRAW_DISTANCE` — and carrying
- *          only every `FAR_STRIDE`-th stone, because past twenty metres the
- *          field is bound by how MANY stones there are rather than by how many
- *          triangles each one has. Dropping two in three there is invisible
- *          and saves more than any amount of simplifying would.
+ *   MID    level 1, per tile, out to `MID_DISTANCE`.
+ *   FAR    level 0, per tile, out to `DRAW_DISTANCE` — and carrying only every
+ *          `FAR_STRIDE`-th stone, because past twenty metres the field is
+ *          bound by how MANY stones there are rather than by how many triangles
+ *          each one has. Dropping most of them there is invisible and saves
+ *          more than any amount of simplifying would.
  *
- * The occupied tiles' MID meshes are switched off while the near set stands in
- * for them, so nothing is ever drawn twice — that is what `_rebuildNear` is
- * really for, and why it rebuilds the leftovers as well as the near stones.
+ * Near and mid share their stones, so where they overlap one must give way. The
+ * first version of this switched a whole tile off the moment the near circle
+ * touched it — which left a visible ring of near-bare ground between the circle
+ * and the tile edge, the tile beyond it drawn full while the tile under your
+ * feet showed only its far-ring quarter. The fix is finer than a whole tile:
+ * when the near set covers part of a tile, exactly the covered stones are
+ * removed from that tile's MID buffer (`setMidRemainder`), so the near ring
+ * draws them at level 2 and the mid ring draws the rest of the same tile at
+ * level 1 — no stone twice, no bare ring. It is recomputed every rebuild
+ * because the circle slides as you cross a tile, and undone (`setMidFull`) the
+ * moment the near set leaves.
  *
  * Geometry is copied per mesh, not cloned
  * ---------------------------------------
@@ -208,8 +216,15 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         return mesh;
     }
 
-    // ---- the two static rings ----------------------------------------------
-    const midMeshes = new Map();   // tile -> Mesh[]
+    // ---- the static rings ---------------------------------------------------
+    //
+    // MID starts holding every stone in the tile. When the near set covers part
+    // of a tile, those stones are punched OUT of its mid buffer for as long as
+    // it is covered (see `setMidRemainder`), so the near ring draws them at
+    // level 2 and the mid ring draws the rest of the tile at level 1, with no
+    // stone drawn twice and no hole where the near circle ends. That is why the
+    // mid buffers are not static — they are rewritten as the walker moves.
+    const midByTile = new Map();   // tile -> [{ mesh, buf, list }]
     const farMeshes = new Map();
     let stones = 0;
     let farStones = 0;
@@ -220,13 +235,13 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         for (const [archetype, list] of arches) {
             stones += list.length;
 
-            const midBuf = new Float32Array(list.length * 16);
-            list.forEach((s, i) => writeMatrix(s, midBuf, i * 16));
+            const buf = new Float32Array(list.length * 16);
+            list.forEach((s, i) => writeMatrix(s, buf, i * 16));
             const m = makeMesh(midArch[archetype], `rockMid_${archetype}#${tile}`);
-            m.thinInstanceSetBuffer("matrix", midBuf, 16, true);
+            m.thinInstanceSetBuffer("matrix", buf, 16, false);
             m.thinInstanceRefreshBoundingInfo(true);
             m.freezeWorldMatrix();
-            mid.push(m);
+            mid.push({ mesh: m, buf, list });
 
             const kept = list.filter((_, i) => i % FAR_STRIDE === 0);
             if (!kept.length) continue;
@@ -239,7 +254,7 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
             f.freezeWorldMatrix();
             far.push(f);
         }
-        midMeshes.set(tile, mid);
+        midByTile.set(tile, mid);
         farMeshes.set(tile, far);
     }
 
@@ -248,9 +263,14 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     // One mesh per archetype, sized once to the worst case the radius can hold
     // and then refilled in place. `thinInstanceCount` is what varies, so no
     // buffer is ever reallocated after this.
+    // Generous, because a near stone that overflows the cap now VANISHES: it is
+    // punched out of its tile's mid buffer (it is inside the radius) but has no
+    // slot in the near set, so it is drawn nowhere. The 600/m^2 ceiling against
+    // a field that peaks near 140 is more than four times the mean, which no
+    // single archetype's share of a 2 m circle can realistically reach.
     const nearCap = Math.max(
-        64,
-        Math.ceil(Math.PI * NEAR_RADIUS * NEAR_RADIUS * 250 / archCount)
+        96,
+        Math.ceil(Math.PI * NEAR_RADIUS * NEAR_RADIUS * 600 / archCount)
     );
     const nearMeshes = [];
     const nearBufs = [];
@@ -277,23 +297,50 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         ));
     }
 
-    /** Tiles whose MID meshes are suppressed because the near set covers them. */
+    /** Tiles the near set currently covers, whose MID has near stones removed. */
     let occupied = new Set();
     let lastX = Infinity;
     let lastZ = Infinity;
     /** Per tile: which ring is showing, so `setEnabled` is only called on change. */
     const ring = new Map();
+    const r2 = NEAR_RADIUS * NEAR_RADIUS;
+
+    /** Rewrite a covered tile's MID to only the stones OUTSIDE the near radius. */
+    function setMidRemainder(tile, x, z) {
+        for (const info of midByTile.get(tile) ?? []) {
+            let n = 0;
+            for (const s of info.list) {
+                const dx = s.x - x;
+                const dz = s.z - z;
+                if (dx * dx + dz * dz <= r2) continue;   // the near set draws it
+                writeMatrix(s, info.buf, n * 16);
+                n++;
+            }
+            info.mesh.thinInstanceCount = n;
+            info.mesh.thinInstanceBufferUpdated("matrix");
+        }
+        // Bounds shrink slightly; not refreshed, so the mesh keeps the full
+        // tile's bounds. That only ever over-includes it in the frustum, never
+        // wrongly culls it.
+    }
+
+    /** Restore a tile's MID to its whole stone list, when the near set leaves. */
+    function setMidFull(tile) {
+        for (const info of midByTile.get(tile) ?? []) {
+            info.list.forEach((s, i) => writeMatrix(s, info.buf, i * 16));
+            info.mesh.thinInstanceCount = info.list.length;
+            info.mesh.thinInstanceBufferUpdated("matrix");
+        }
+    }
 
     function rebuildNear(x, z) {
         const counts = new Array(archCount).fill(0);
         const nextOccupied = new Set();
-        const r2 = NEAR_RADIUS * NEAR_RADIUS;
 
-        // Only the tiles the radius can actually reach. At 3.5 m into 10 m
-        // tiles that is between one and four of them.
+        // Only the tiles the radius can actually reach.
+        const reach = TILE * 1.5 + NEAR_RADIUS;
         for (const [tile, c] of tileCenters) {
-            const half = TILE * 0.5 + NEAR_RADIUS;
-            if (Math.abs(c.x - x) > half + TILE || Math.abs(c.z - z) > half + TILE) continue;
+            if (Math.abs(c.x - x) > reach || Math.abs(c.z - z) > reach) continue;
             const arches = byTile.get(tile);
             if (!arches) continue;
             let touched = false;
@@ -303,7 +350,7 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
                     const dz = s.z - z;
                     if (dx * dx + dz * dz > r2) continue;
                     const n = counts[archetype];
-                    if (n >= nearCap) continue;   // budget, not correctness
+                    if (n >= nearCap) continue;   // see nearCap: kept generous
                     writeMatrix(s, nearBufs[archetype], n * 16);
                     counts[archetype] = n + 1;
                     touched = true;
@@ -320,16 +367,12 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
             m.setEnabled(true);
         }
 
-        // A tile the near set has taken over must stop drawing its MID copy, or
-        // every stone inside the radius is drawn twice — once detailed, once
-        // not, z-fighting with itself.
-        //
-        // Only the stones within the radius are duplicated, not the whole tile,
-        // so suppressing the tile outright loses the rest of it. That is the
-        // trade taken here: at 3.5 m the near set covers the ground the eye is
-        // actually on, and the tile beyond it is still drawn by the FAR ring.
+        // Punch the near stones out of every covered tile's MID, and refill any
+        // tile the near set has just left. Recomputed every rebuild, not only on
+        // the transition, because the circle slides as the walker crosses a tile.
+        for (const tile of nextOccupied) setMidRemainder(tile, x, z);
         for (const tile of occupied) {
-            if (!nextOccupied.has(tile)) ring.delete(tile);
+            if (!nextOccupied.has(tile)) setMidFull(tile);
         }
         occupied = nextOccupied;
     }
@@ -337,14 +380,14 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     function show(tile, want) {
         if (ring.get(tile) === want) return;
         ring.set(tile, want);
-        for (const m of midMeshes.get(tile) ?? []) m.setEnabled(want === "mid");
+        for (const info of midByTile.get(tile) ?? []) info.mesh.setEnabled(want === "mid");
         for (const m of farMeshes.get(tile) ?? []) m.setEnabled(want === "far");
     }
 
     const built = {
         stones,
         farStones,
-        meshes: [...midMeshes.values(), ...farMeshes.values()]
+        meshes: [...midByTile.values(), ...farMeshes.values()]
             .reduce((n, l) => n + l.length, 0) + nearMeshes.length,
         tiles: cols * rows,
         nearCap,
@@ -366,19 +409,20 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
                 const d = Math.hypot(c.x - x, c.z - z);
                 if (d > DRAW_DISTANCE + slack) show(tile, "off");
                 else if (d > MID_DISTANCE + slack) show(tile, "far");
-                else if (occupied.has(tile)) show(tile, "far");
+                // Occupied tiles are within 2 m and so always fall here — they
+                // draw MID, which is now holding the tile minus its near stones.
                 else show(tile, "mid");
             }
         },
 
         setEnabled(on) {
-            for (const list of midMeshes.values()) for (const m of list) m.setEnabled(on);
+            for (const list of midByTile.values()) for (const i of list) i.mesh.setEnabled(on);
             for (const list of farMeshes.values()) for (const m of list) m.setEnabled(on);
             for (const m of nearMeshes) m.setEnabled(on);
             if (!on) ring.clear();
         },
         dispose() {
-            for (const list of midMeshes.values()) for (const m of list) m.dispose();
+            for (const list of midByTile.values()) for (const i of list) i.mesh.dispose();
             for (const list of farMeshes.values()) for (const m of list) m.dispose();
             for (const m of nearMeshes) m.dispose();
         },
@@ -386,8 +430,8 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
 
     // Loud, because the quiet version of this failure is a beach that looks
     // exactly like a beach with no rocks on it.
-    const uploaded = [...midMeshes.values()].flat()
-        .reduce((n, m) => n + (m.thinInstanceCount ?? 0), 0);
+    const uploaded = [...midByTile.values()].flat()
+        .reduce((n, i) => n + (i.mesh.thinInstanceCount ?? 0), 0);
     if (uploaded !== stones) {
         throw new Error(
             `shore rocks: placed ${stones} stones but the mid ring reports ` +
