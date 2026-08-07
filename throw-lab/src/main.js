@@ -31,6 +31,8 @@ import { LoadAssetContainerAsync } from "@babylonjs/core/Loading/sceneLoader";
 import { DracoCompression } from "@babylonjs/core/Meshes/Compression/dracoCompression";
 import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
+import { buildRock } from "./rock.js";
+
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
 
@@ -114,6 +116,31 @@ async function main() {
         scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
     }
 
+    // --- borrow a rock and set it in the palm -------------------------------
+    // A real rock-forge stone (its surface is what the grip will read). Anchored
+    // between the wrist and the middle knuckle, then parented to the hand so it
+    // rides the pose. The exact palm seat is provisional — the procedural grip
+    // will settle the fingers to it next.
+    const rock = buildRock(scene, { name: "granite", seed: 7, size: 0.06 });
+    const handNode = findNode(SIDE + "Hand");
+    const knuckle = findNode(SIDE + "HandMiddle1");
+    // Palm normal from the hand skeleton: along the fingers × across the
+    // knuckles. The rock is seated on the palm surface (offset out along that
+    // normal by ~a third of its size) rather than sunk into the mesh.
+    const handP = handNode.getAbsolutePosition();
+    const fingerDir = knuckle.getAbsolutePosition().subtract(handP);
+    fingerDir.normalize();
+    const idx = findNode(SIDE + "HandIndex1"), pinky = findNode(SIDE + "HandPinky1");
+    const across = idx.getAbsolutePosition().subtract(pinky.getAbsolutePosition());
+    across.normalize();
+    const palmNormal = Vector3.Cross(fingerDir, across);
+    palmNormal.normalize();
+    const palm = Vector3.Lerp(handP, knuckle.getAbsolutePosition(), 0.55)
+                        .add(palmNormal.scale(-0.025));
+    rock.mesh.position.copyFrom(palm);
+    rock.mesh.computeWorldMatrix(true);
+    rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
+
     // --- frame from the right-arm bones -------------------------------------
     // The arm's real extent, not a guessed box: union the world positions of the
     // right-side joints from shoulder to fingertip.
@@ -129,6 +156,9 @@ async function main() {
         "Hand", "HandThumb1", "HandThumb4", "HandIndex4",
         "HandMiddle1", "HandMiddle4", "HandRing4", "HandPinky4",
     ]);
+    // Keep the rock in frame in both the wrist and the whole-arm panels.
+    wristPts.push(palm.clone());
+    armPts.push(palm.clone());
 
     // --- four orthographic cameras, 2x2 -------------------------------------
     // side = profile (look -X): screen right = +Z forward, up = +Y loft.
@@ -148,7 +178,7 @@ async function main() {
     engine.runRenderLoop(() => scene.render());
 
     // Expose for poking from the console.
-    globalThis.LAB = { engine, scene, container, cams, findNode };
+    globalThis.LAB = { engine, scene, container, cams, rock, findNode };
 }
 
 // --------------------------------------------------------------------------
