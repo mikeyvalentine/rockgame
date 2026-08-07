@@ -18,6 +18,7 @@
     "deploy": "node tools/build-site.mjs && npx wrangler pages deploy dist --project-name rockgame",
     "preview": "vite preview",
     "install:all": "npm install",
+    "optimize:glb": "node tools/optimize-glb.mjs",
     "test": "node tools/store-test.mjs && node tools/loader-test.mjs && node tools/backend-contract-test.mjs && node tools/schema-check.mjs && node tools/pinned-cdn-check.mjs && node tools/workspace-check.mjs && node babylon-water/tools/page-syntax-check.mjs && node babylon-water/tools/ambient-sync-check.mjs && node babylon-water/tools/scheme-stability-check.mjs && node tools/water-coupling-check.mjs",
     "test:water": "node tools/water-coupling-check.mjs"
   },
@@ -27,7 +28,10 @@
     "@supabase/supabase-js": "^2.58.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "4.4.2",
+    "@gltf-transform/extensions": "4.4.2",
     "concurrently": "^10.0.4",
+    "sharp": "0.35.3",
     "vite": "^8.2.0"
   }
 }
