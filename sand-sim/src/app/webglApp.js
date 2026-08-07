@@ -173,6 +173,9 @@ export async function run(canvas) {
 
     // ----------------------------------------------------------------- water
     const water = buildWater(scene);
+    water.material.setVector3(
+        "sunDir", new Vector3(sky.sunDir.x, sky.sunDir.y, sky.sunDir.z).normalize()
+    );
 
     // --------------------------------------------------------- shore rocks
     // Stones across the whole strip, thinning to nothing at the water's edge —
@@ -207,6 +210,13 @@ export async function run(canvas) {
             `${worldEnv.instances} instances`
         );
     }
+
+    // What the water mirrors: sky, shore, tree line — not the 117k shore rocks
+    // (see scene/water.js). The GLSL twin's mirror is the same MirrorTexture.
+    water.setReflection([
+        sky.mesh, ground,
+        ...(worldEnv ? worldEnv.root.getChildMeshes() : []),
+    ]);
 
     // The four sifting beds are unwired, not deleted.
     //
@@ -377,7 +387,7 @@ export async function run(canvas) {
         sky.update();
         sky.render(rig, 0);
         sun.direction.set(-sky.sunDir.x, -sky.sunDir.y, -sky.sunDir.z);
-        water.update(dt);
+        water.update(dt, rig.camera);
         // After contact staged its brushes, before the render consumes them.
         // Tiles beyond DRAW_DISTANCE are switched off — frustum culling drops
         // what is behind you, this drops the far end of a 70 m beach.

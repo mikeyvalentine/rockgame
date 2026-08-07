@@ -22,6 +22,7 @@ import spellLightsLib from "./lib/spellLights.wgsl?raw";
 import postCommonLib from "./lib/postCommon.wgsl?raw";
 
 import { siftPadWGSL } from "../../../shared/siftPad.js";
+import { ambientGLSL, ambientWGSL } from "../../../shared/ambientWaterShader.js";
 
 import heightBakeFrag from "./heightBake.fragment.wgsl?raw";
 import auxBakeFrag from "./auxBake.fragment.wgsl?raw";
@@ -41,12 +42,23 @@ import prepassFrag from "./prepass.fragment.wgsl?raw";
 import terrainPrepassVert from "./terrainPrepass.vertex.wgsl?raw";
 import waterPrepassVert from "./waterPrepass.vertex.wgsl?raw";
 
+import waterVert from "./water.vertex.wgsl?raw";
+import waterFrag from "./water.fragment.wgsl?raw";
+
 /**
  * The one include with no file behind it: the sifting pads are generated from
  * `shared/siftPad.js`, so the bake and the JS grounding twin cannot disagree
  * about where the beach is levelled. Generated once, at module load.
  */
 const padLib = siftPadWGSL();
+
+/**
+ * The ambient wave field, generated from `shared/ambientWater.js`'s OCTAVES so
+ * the water the world renders, the water the lab renders, and the water the
+ * solver planes on cannot describe three different ponds. Same no-file include
+ * scheme as `siftPad`.
+ */
+const ambientWaterLib = ambientWGSL();
 
 const INCLUDES = {
     snowNoise: noiseLib,
@@ -62,6 +74,7 @@ const INCLUDES = {
     snowSpellLights: spellLightsLib,
     snowPostCommon: postCommonLib,
     siftPad: padLib,
+    ambientWater: ambientWaterLib,
 };
 
 const SHADERS = {
@@ -87,6 +100,9 @@ const SHADERS = {
     prepassPixelShader: prepassFrag,
     terrainPrepassVertexShader: terrainPrepassVert,
     waterPrepassVertexShader: waterPrepassVert,
+
+    waterVertexShader: waterVert,
+    waterPixelShader: waterFrag,
 };
 
 let registered = false;
@@ -284,6 +300,89 @@ void main() {
 }
 `;
 
+/**
+ * GLSL twin of water.vertex.wgsl. The ambient field is prepended from the same
+ * `shared/ambientWater.js` OCTAVES as the WGSL include, so the fallback and the
+ * primary renderer displace by identical waves.
+ */
+const GL_WATER_VERTEX = `precision highp float;
+` + ambientGLSL() + `
+attribute vec3 position;
+uniform mat4 world;
+uniform mat4 viewProjection;
+uniform float time;
+uniform vec2 windDir;
+uniform float windStrength;
+uniform float waveScale;
+varying vec3 vWorld;
+varying vec4 vClip;
+void main(void) {
+    vec4 flatW = world * vec4(position, 1.0);
+    vec3 p = position;
+    p.y += ambientField(flatW.xz, 0.0, 0.0, windDir, windStrength, waveScale, time).x;
+    vec4 wp = world * vec4(p, 1.0);
+    vClip = viewProjection * wp;
+    vWorld = wp.xyz;
+    gl_Position = vClip;
+}
+`;
+
+/**
+ * GLSL twin of water.fragment.wgsl — same composition (analytic normal, planar
+ * mirror, recovered roughness, sun lobe, cubic Fresnel). No V-flip on the
+ * projective sample: a WebGL render target is bottom-up already, which is the
+ * one thing that differs from the WGSL twin.
+ */
+const GL_WATER_FRAGMENT = `precision highp float;
+` + ambientGLSL() + `
+uniform vec3 cameraPosition;
+uniform vec3 sunDir;
+uniform vec3 tint;
+uniform float time;
+uniform vec2 windDir;
+uniform float windStrength;
+uniform float waveScale;
+uniform float detailScale;
+uniform float blurGain;
+uniform float distortion;
+uniform sampler2D reflectionTex;
+varying vec3 vWorld;
+varying vec4 vClip;
+void main(void) {
+    vec2 fw = fwidth(vWorld.xz);
+    float fpTrue = max(fw.x, fw.y);
+    float fp = fpTrue / max(detailScale, 0.01);
+
+    vec3 amb = ambientField(vWorld.xz, 1.0, fp, windDir, windStrength, waveScale, time);
+    vec2 slope = amb.yz * SLOPE_GAIN;
+    vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
+
+    vec3 incoming = normalize(vWorld - cameraPosition);
+    vec3 R = reflect(incoming, N);
+
+    vec2 uv = vClip.xy / vClip.w * 0.5 + 0.5;
+    uv += N.xz * distortion;
+
+    float lod = 0.0;
+    if (blurGain > 0.0) {
+        float lostVar = ambientLostVariance(fpTrue, windDir, windStrength, waveScale)
+                        * SLOPE_GAIN * SLOPE_GAIN;
+        lod = clamp(log2(1.0 + lostVar * blurGain), 0.0, 7.0);
+    }
+    vec3 refl = textureLod(reflectionTex, clamp(uv, 0.0, 1.0), lod).rgb;
+
+    float sunDot = max(0.0, dot(sunDir, R));
+    float keep = detailWeight(0.30, fpTrue);
+    float sharp = pow(sunDot, 5000.0) * keep;
+    float broad = pow(sunDot, 60.0) * (1.0 - keep) * 0.12;
+    refl += vec3(sharp + broad) * vec3(10.0, 8.0, 6.0);
+
+    float fresnel = mix(0.25, 1.0, pow(1.0 - dot(N, -incoming), 3.0));
+    vec3 body = refl * tint;
+    gl_FragColor = vec4(mix(body, refl, fresnel), 1.0);
+}
+`;
+
 let registeredGL = false;
 
 export function registerShadersGL() {
@@ -293,4 +392,6 @@ export function registerShadersGL() {
     ShaderStore.ShadersStore["skyVertexShader"] = GL_SKY_VERTEX;
     ShaderStore.ShadersStore["hdriSkyPixelShader"] = GL_HDRI_SKY_FRAGMENT;
     ShaderStore.ShadersStore["deformSimPixelShader"] = GL_DEFORM_SIM_FRAGMENT;
+    ShaderStore.ShadersStore["waterVertexShader"] = GL_WATER_VERTEX;
+    ShaderStore.ShadersStore["waterPixelShader"] = GL_WATER_FRAGMENT;
 }

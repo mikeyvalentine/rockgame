@@ -174,6 +174,10 @@ export async function run(canvas) {
     // Static context plane (no water sim). It must join the depth prepass or
     // TAA/DOF/shafts treat its pixels as sky — see waterPrepass.vertex.wgsl.
     const water = buildWater(scene);
+    // The glint lobe reflects the real sun, not water.js's placeholder heading.
+    water.material.setVector3(
+        "sunDir", new Vector3(sky.sunDir.x, sky.sunDir.y, sky.sunDir.z).normalize()
+    );
     const waterPrepassMat = new ShaderMaterial(
         "waterPrepass",
         scene,
@@ -284,6 +288,15 @@ export async function run(canvas) {
             `${worldEnv.instances} instances`
         );
     }
+
+    // What the water mirrors: the sky, the shore it laps, and the tree line —
+    // everything big enough to read in a rippled reflection. The 117k shore
+    // rocks are left out on purpose (a second pass over them is unaffordable and
+    // a pebble reflection resolves to nothing); see scene/water.js.
+    water.setReflection([
+        sky.mesh, terrain.mesh,
+        ...(worldEnv ? worldEnv.root.getChildMeshes() : []),
+    ]);
 
     // The four sifting beds are unwired, not deleted — see webglApp.js for why.
     const beds = null;
@@ -423,7 +436,7 @@ export async function run(canvas) {
         shadows.update(rig.camera, sky.sunDir);
         terrain.update(rig.camera.position, character.position, dt);
         const tTerrain = performance.now();
-        water.update(dt);
+        water.update(dt, rig.camera);
         spray.update(dt, rig.camera.position);
         grains.update(dt, rig.camera.position);
         const tVfx = performance.now();

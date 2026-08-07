@@ -8,6 +8,8 @@
  * sampled next frame.
  */
 
+import { POND_CONDITIONS } from "../../../shared/ambientWater.js";
+
 /** @type {Record<string, number|boolean|string>} */
 export const S = {
     // ---------------------------------------------------------------- quality
@@ -60,6 +62,15 @@ export const S = {
     // — the field is generated behind the loading screen, so moving this
     // slider does nothing until reload.
     rockDensity: 1.0,
+
+    // ----------------------------------------------------------------- water
+    // The ambient wave field, from shared/ambientWater.js POND_CONDITIONS.
+    // These are the same knobs the babylon-water lab tunes — the lab is the
+    // tuning ground, and moving them here is for looking at the world under a
+    // given day, not for setting the baseline (which lives in shared/).
+    waterWind: POND_CONDITIONS.windStrength,
+    waterWindDir: POND_CONDITIONS.windDirDeg,
+    waterWaveScale: POND_CONDITIONS.waveScale,
 
     // ------------------------------------------------------------- world env
     // The pond world export (scene/worldEnv.js): the tree ring and its
@@ -177,6 +188,14 @@ export const SCHEMA = [
         group: "Shore rocks",
         items: [
             { k: "rockDensity", l: "Density", t: "f", min: 0, max: 4, step: 0.05 },
+        ],
+    },
+    {
+        group: "Water",
+        items: [
+            { k: "waterWind", l: "Wind strength", t: "f", min: 0, max: 1, step: 0.005 },
+            { k: "waterWindDir", l: "Wind dir", t: "f", min: 0, max: 360, step: 1 },
+            { k: "waterWaveScale", l: "Wave scale", t: "f", min: 1, max: 12, step: 0.1 },
         ],
     },
     {
