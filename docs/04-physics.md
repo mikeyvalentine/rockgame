@@ -232,6 +232,83 @@ Three reasons, in order of weight:
 
 They remain fully visible on screen. They just do not vote.
 
+### The ripple is a VOLUME, not a gain — decided
+
+The direction is one-way (solver → water), but the *quantity* crossing it is
+fixed: **a displaced volume in m³**, converted to a crater depth by
+
+```
+depth = volume / (π · R² · elongation · CRATER_KAPPA)
+```
+
+where `R` is whatever radius the grid can legibly carry and `CRATER_KAPPA` is
+the drop shader's own profile integral. Any `R` gives the same volume back.
+
+This replaced two hand-tuned gains, and both had failed in ways that were
+invisible from inside:
+
+- The impact path was `rippleGain × energy`, which came out at 0.047 m against a
+  0.050 m cap. **Every bounce in the playable range was clipped to the same
+  maximum crater**, so neither the throw nor the rock changed the water at all.
+  The reported symptom was "the ripples are fairly static"; the cause was a
+  saturated cap, not a missing feature.
+- The plough path was `ploughGain × displacedVolume × speed × dt × 60`, which
+  for a real stone returns ~1e-6 against a visible 1e-2. Four orders of
+  magnitude, because the expression had no units — a gain times a volume times a
+  speed is not a length.
+
+So `rippleGain` and `ploughGain` now default to **1.0, meaning "exactly what the
+solver said"**, and any other value is a deliberate exaggeration with its size
+on a slider. `tools/water-coupling-check.mjs` asserts the round trip, that no
+playable bounce is clipped, and that the softest-to-hardest spread survives
+(currently 134×).
+
+**Energy is the fallback, not the driver.** A skip retains nearly all its
+kinetic energy — that is what makes it a skip — so sizing its crater by energy
+over-reads it by two orders of magnitude. The energy form is only correct for an
+impact that actually spends itself, which on this page means Plunge. Its
+efficiency constant is **calibrated, not derived** (0.0046), and that figure
+looks wrong until you notice what it absorbs: a band-limited crater 60 mm deep
+over a 9.4 cm radius holds 0.084 J, so a 24.5 J plunge puts a few tenths of a
+percent of itself into the hole. The first value tried was 0.15, at which every
+caller down to a 2.7 J drop saturated the cap — the same "every impact looks
+identical" failure, on the other path.
+
+**Crater WIDTH is pinned by the grid, and that is not a compromise to fix by
+widening.** Craters keep a roughly constant depth-to-width ratio, so R ∝ V^⅓ is
+the right law — but it starts from the real 1.0–2.2 cm contact radius, and the
+grid floor is already 9.4 cm. Applying it on top of a radius that is itself
+clamped four times too wide double-counts, and volume conservation charges for
+it in slope, which is the only thing the surface shader shows: spread 0 gives
+5.88 mm depth at slope 0.063, spread 4.5 gives 0.95 mm at slope 0.004. A 15×
+loss of the visible signal to buy 2.5× of width. `craterSpread` therefore
+defaults to **0**, and only becomes meaningful if cells ever drop below ~7 mm.
+
+### Water reacts to the whole run, not just the bounces — decided
+
+A stone spends more of a run in contact than in scoring bounces (measured: 130
+contact frames, 69 of them after scoring had stopped). Ploughing, chattering,
+wobbling and sinking all displace water and all leave marks. So does the stone
+between bounces: the ram-pressure cushion it planes on presses the surface down,
+and a moving pressure source is what draws a wake rather than a row of stamps.
+
+Two things about the sink are worth recording, because the first fix was wrong:
+
+1. `getDisturbance().displacedVolume` is **penetration × face area** — the prism
+   the stone has driven through, not the depression the surface is holding. It
+   reaches 1.6e-3 m³ during a sink, twenty-five times the stone's own volume,
+   which cannot be a surface deformation.
+2. Bounding it by the stone's volume is right by Archimedes but **must be applied
+   to the depression, not to the flux input.** Clamping the input reached the cap
+   during the run, so the sink had no headroom left and emitted nothing at all —
+   the same reported bug, surviving its own fix.
+
+What the lab uses instead is the shape a real submergence has: the depression
+rises to at most the stone's own volume, then **closes again** as the stone sinks
+past, over a length scale of its own radius. For the shallow contacts of an
+ordinary skip (1–7 mm against a 10 mm stone) this returns the solver's number
+unchanged; for the sink it gives the dimple that shuts behind it, for free.
+
 ### Why the top two rungs are not reached — measured, not guessed
 
 Both causes are structural, and neither is fixable by turning the existing knobs

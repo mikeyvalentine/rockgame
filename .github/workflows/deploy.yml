@@ -26,20 +26,37 @@
 
 name: Deploy site
 
-# MANUAL ONLY. Cloudflare Pages now builds this repo itself, straight from
-# GitHub, on every push to main — so the automatic trigger that used to live
-# here would mean TWO systems publishing to one Pages project on every merge.
-# They race, and the loser's output is what sticks.
+# PUSH TO MAIN, and this is a REVERT of a change made earlier the same day.
 #
-# Kept rather than deleted, because it is the fallback: if the Cloudflare build
-# ever breaks, this still works from the Actions tab (Deploy site -> Run
-# workflow) using the repo's own secrets.
+# The push trigger was removed on 2026-08-06 on the reasoning that Cloudflare
+# Pages now builds this repo itself, straight from GitHub, so two systems
+# publishing to one Pages project would race. That reasoning was never checked
+# against the live site, and it was wrong: the last thing that actually reached
+# production was f1920d1 at 18:57 UTC, and every merge after it — the collapse
+# of the two labs into one skip lab at 19:03, then PR #19 and PR #20 — was
+# invisible. The symptom was a menu still offering "Water" and "Skipping
+# physics" as separate pages, three merges after they stopped existing.
 #
-# Note the trade that came with the move. This path was blocked all evening on
-# 2026-08-06 behind "All GitHub-hosted runners with label [ubuntu-latest] are
-# busy" — a queue nobody could jump. Cloudflare building directly takes GitHub's
-# runner pool out of the release path entirely, which is the whole point.
+# Whether the Cloudflare Git integration is connected is a fact about the
+# Cloudflare dashboard, not about this repo, and this file cannot see it. What
+# it CAN do is make sure main always reaches production by a path this
+# repository controls. If the Pages integration is also live, the duplicate
+# publish is wasteful but harmless — both build the same commit with the same
+# script. A silent four-hour gap between merging and shipping is not harmless,
+# and that is the trade the right way round.
+#
+# The original reason for removing it stands and is worth naming: this path was
+# blocked for an evening behind "All GitHub-hosted runners with label
+# [ubuntu-latest] are busy". That is why `ci.yml` no longer runs on push to
+# main — the five-job matrix already ran on the PR. This is one job.
 on:
+  push:
+    branches: [main]
+    # A markdown edit does not need a rebuild and a republish.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 # One deploy at a time. Two overlapping runs would race to publish and the

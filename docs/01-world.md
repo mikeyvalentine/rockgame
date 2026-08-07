@@ -1,5 +1,20 @@
 # 01 · World, Environment, Navigation & Cameras
 
+> **The interaction window is sized per throw.** The deviation field covers a
+> window on the pond, not the pond, and that window is now fitted to the run
+> before the run starts: the solver is deterministic, so `placeRun()` simulates
+> the throw headlessly, takes its bounding box and sizes the window to hold it
+> (64 m minimum, 160 m ceiling). The previous rule — drop the window a fixed
+> 0.72 of a half-span downrange — clipped two of the presets, and a ripple
+> outside the window is skipped silently, so the far end of a long run's trail
+> simply went missing. The precompute costs ~110 ms on the Throw press.
+>
+> The window can only ever WIDEN. Narrowing it for short throws would be better
+> — smaller cells, deeper craters — but holding waves at a physical speed needs
+> `WAVE_C` to rise as cells shrink, and below about a 53 m span at RES 2048 that
+> reaches the CFL limit. Shrinking needs more `STEPS`, which costs fill on every
+> frame rather than on the long throws that need it. See `docs/10`.
+
 ## Pond — decided
 
 - Single static 3D scene. One pond, no other locations.
