@@ -158,6 +158,15 @@ export async function run(canvas) {
     const depthPass = new DepthPass(scene);
 
     // -------------------------------------------------------------- terrain
+    // NOTE (2026-08-07): the WebGL path now grounds on the authored glb terrain
+    // (buildWorldEnv bakes its Landscape into a height grid — see webglApp.js
+    // and shared/glbHeightfield.js). This WebGPU path does NOT yet: it still
+    // bakes the procedural beach profile into heightTex via the WGSL bake, so
+    // `?webgpu=1` shows the old beach, not the glb. Wiring it in means feeding
+    // the baked grid into Heightfield as a RawTexture heightTex (over its own
+    // origin/size/res so the clipmap uniforms stay valid) + heightCPU, with a
+    // fallback to the WGSL bake. Deliberately deferred — WebGL2 is the default
+    // renderer and WebGPU cannot be verified in this dev env. See task #6.
     await loading.phase("baking heightfield", 0.34);
     const terrain = new Terrain(scene, sky, shadows);
     terrain.mesh.renderingGroupId = 1;

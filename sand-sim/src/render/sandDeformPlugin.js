@@ -22,7 +22,10 @@
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase.js";
 
 import { SAND_WET, WET_NEAR, WET_FAR } from "../looks/sandTone.js";
-import { WATERLINE_Z } from "../terrain/beachParams.js";
+import { POND_CENTER_X, POND_CENTER_Z, POND_RADIUS } from "../terrain/beachParams.js";
+
+/** GLSL float literal — a bare integer like `100` is invalid where a float is wanted. */
+const flt = (n) => (Number.isInteger(n) ? n + ".0" : String(n));
 
 export class SandDeformPlugin extends MaterialPluginBase {
     /**
@@ -80,7 +83,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
                 { name: "sandDeformSize", size: 1, type: "float" },
                 { name: "sandDeformTexel", size: 1, type: "float" },
                 { name: "sandWetColor", size: 3, type: "vec3" },
-                { name: "sandWaterlineZ", size: 1, type: "float" },
                 { name: "sandWetNear", size: 1, type: "float" },
                 { name: "sandWetFar", size: 1, type: "float" },
             ],
@@ -90,7 +92,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
                     uniform float sandDeformSize;
                     uniform float sandDeformTexel;
                     uniform vec3 sandWetColor;
-                    uniform float sandWaterlineZ;
                     uniform float sandWetNear;
                     uniform float sandWetFar;
                 #endif
@@ -102,7 +103,6 @@ export class SandDeformPlugin extends MaterialPluginBase {
         uniformBuffer.updateFloat3(
             "sandWetColor", SAND_WET.r, SAND_WET.g, SAND_WET.b
         );
-        uniformBuffer.updateFloat("sandWaterlineZ", WATERLINE_Z);
         uniformBuffer.updateFloat("sandWetNear", WET_NEAR);
         uniformBuffer.updateFloat("sandWetFar", WET_FAR);
         const f = this._field;
@@ -179,11 +179,17 @@ export class SandDeformPlugin extends MaterialPluginBase {
                         }
                     }
                     #endif
-                    // Analytic shore band; a cheap sine stands in for the tide noise.
+                    // Analytic shore band, driven by DISTANCE from the pond's
+                    // waterline (the same circle SDF the water shader ends on),
+                    // not by a flat z: the pond is a curved disc, so the damp
+                    // band has to wrap with the shore. The pond centre/radius
+                    // are baked in as literals — they are compile-time world
+                    // constants, so there is nothing to bind. A cheap sine
+                    // stands in for tide noise, wobbling the lapping line.
+                    float sdDist = length(vPositionW.xz - vec2(${flt(POND_CENTER_X)}, ${flt(POND_CENTER_Z)})) - ${flt(POND_RADIUS)};
                     float sdTide = sin(vPositionW.x * 0.045 + 1.7) * 1.4;
                     float sdShore = 1.0 - smoothstep(
-                        sandWetNear, sandWetFar,
-                        -(vPositionW.z - sandWaterlineZ) + sdTide
+                        sandWetNear, sandWetFar, sdDist + sdTide
                     );
                     float sdWet = max(sdShore, sdWetC);
                     #ifdef SAND_DEFORM_DEBUG
@@ -196,7 +202,12 @@ export class SandDeformPlugin extends MaterialPluginBase {
                             clamp(sdWetC, 0.0, 1.0)
                         );
                     #else
-                    surfaceAlbedo = mix(surfaceAlbedo, sandWetColor, sdWet * 0.9);
+                    // Wet sand reads as a hard tonal drop: mix to the wet colour
+                    // and then darken multiplicatively on top, because lighting
+                    // and the ACES tonemap otherwise compress SAND_WET back up
+                    // toward dry and the damp margin barely shows.
+                    surfaceAlbedo = mix(surfaceAlbedo, sandWetColor, sdWet);
+                    surfaceAlbedo *= 1.0 - sdWet * 0.30;
                     // (The analytic pebble band that lived here was removed
                     // with the WGSL band — the default beach is all sand.)
                     // Depressions darken (the shading a displaced trench would get),
