@@ -401,7 +401,8 @@ void main(void) {
         depth = clamp((-shoreDist) * foreshoreSlope - amb.x, 0.0, seabedDepth);
     }
     color = mix(vec3(0.16, 0.30, 0.32), color, smoothstep(0.0, 0.6, depth));
-    float foam = 1.0 - smoothstep(0.0, 0.05, depth);
+    // Foam on the WATER side only (depth<0 is land the disc overshoots).
+    float foam = depth > 0.0 ? (1.0 - smoothstep(0.0, 0.05, depth)) : 0.0;
     color = mix(color, vec3(0.92, 0.96, 1.0), foam * 0.8);
     float alpha = max(smoothstep(0.0, 0.12, depth), foam);
     gl_FragColor = vec4(color, alpha);

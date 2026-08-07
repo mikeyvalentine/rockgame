@@ -124,8 +124,11 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     // Shallows lift toward a lighter, greener colour before the edge.
     color = mix(vec3f(0.16, 0.30, 0.32), color, smoothstep(0.0, SHALLOW_TINT, depth));
 
-    // A foam lip right at the waterline.
-    let foam = 1.0 - smoothstep(0.0, FOAM_BAND, depth);
+    // A foam lip right at the waterline — on the WATER side only. depth < 0 is
+    // land (the disc overshoots the basin to cover its irregular edge); foam
+    // must be zero there or the whole disc paints white over the beach.
+    var foam = 0.0;
+    if (depth > 0.0) { foam = 1.0 - smoothstep(0.0, FOAM_BAND, depth); }
     color = mix(color, vec3f(0.92, 0.96, 1.0), foam * 0.8);
 
     // Fade the surface out over the last few centimetres of depth so it ends on
