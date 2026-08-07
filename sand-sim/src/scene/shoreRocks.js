@@ -24,23 +24,24 @@
  * sets per tile, switched by the tile's distance. It does not work here, and
  * the reason is the density rather than anything about Babylon.
  *
- * The field runs about 140 stones per square metre at the back of the strip. A
- * level-2 stone is 320 triangles, so level 2 costs roughly 45,000 triangles per
- * square metre — which means the whole level-2 budget is about fifteen square
- * metres, a circle two metres across. No tile is that small, and a tiling fine
- * enough to be would have more meshes than stones.
+ * The field runs several hundred stones per square metre at the back of the
+ * strip. A level-2 stone is 320 triangles, so level 2 costs tens of thousands
+ * of triangles per square metre — the whole level-2 budget is a couple of
+ * square metres, a circle a metre or two across. No tile is that small, and a
+ * tiling fine enough to be would have more meshes than stones.
  *
  * So the near ring is built from the player instead of from the grid:
  *
  *   NEAR   level 2, stones within `NEAR_RADIUS` of the walker. Rebuilt when
- *          they move `REBUILD_STEP`; about a thousand stones, and the only
- *          per-frame allocation in the file is avoiding it.
+ *          they move `REBUILD_STEP`; and the only per-frame allocation in the
+ *          file is avoiding it.
  *   MID    level 1, per tile, out to `MID_DISTANCE`.
- *   FAR    level 0, per tile, out to `DRAW_DISTANCE` — and carrying only every
- *          `FAR_STRIDE`-th stone, because past twenty metres the field is
- *          bound by how MANY stones there are rather than by how many triangles
- *          each one has. Dropping most of them there is invisible and saves
- *          more than any amount of simplifying would.
+ *   FAR    level 0, per tile, the whole rest of the strip — but only the
+ *          biggest stones (`FAR_FRACTION`), because a small pebble is sub-pixel
+ *          by fifteen metres and the field there is bound by how MANY stones
+ *          there are, not how detailed each is. There is no distance cutoff:
+ *          the strip is small enough to draw whole, which is what removed the
+ *          tile-edged holes the old 40 m cutoff left out in the field.
  *
  * Near and mid share their stones, so where they overlap one must give way. The
  * first version of this switched a whole tile off the moment the near circle
@@ -104,38 +105,47 @@ export const TILE = 6;
  * Radius of the level-2 set, metres. A budget, not a taste.
  *
  * The near set is one mesh per archetype covering a circle around the walker,
- * so it cannot be frustum-culled — the half of it behind you is submitted
- * every frame regardless. That makes its cost the full circle: at 140 stones
- * per square metre and 320 triangles each, 2 m is 560k triangles and 3.5 m is
- * 1.7M. Measured at 3.5 it was the second largest thing on screen.
+ * so it cannot be frustum-culled — the half of it behind you is submitted every
+ * frame regardless. That makes its cost the full circle, and at the field's
+ * ~three-times density that circle is expensive: 1.5 m is already 1.4M
+ * triangles up close. Wider would be prettier and is not affordable.
  */
-export const NEAR_RADIUS = 2.0;
+export const NEAR_RADIUS = 1.5;
 
 /** How far the walker moves before the near set is rebuilt, metres. */
 export const REBUILD_STEP = 0.75;
 
 /** Tile distance out to which the level-1 ring draws, metres. */
-export const MID_DISTANCE = 10;
+export const MID_DISTANCE = 4;
 
 /**
- * Metres past which a tile is switched off entirely.
+ * No distance cutoff.
  *
- * Frustum culling drops the tiles behind you; this drops the ones in front and
- * far away, which on a 70 m beach is most of them. It is not a fade — a tile
- * of 6 cm pebbles at 45 m is a few pixels of noise, and popping is only visible
- * when there is something to see popping.
+ * There used to be one at 40 m, and it is what made the beach end in squares:
+ * the strip runs 70 m along the shore, so from one end its far corner is well
+ * past 40 m, and those tiles were simply switched off — a hard tile-edged
+ * boundary out in the field, blinking as the player moved and tiles crossed the
+ * threshold. The strip is small enough to draw whole. What bounds the cost is
+ * not distance now but SIZE: the far ring keeps only the big stones (see
+ * `FAR_FRACTION`), and frustum culling still drops everything behind you.
  */
-export const DRAW_DISTANCE = 40;
+export const DRAW_DISTANCE = Infinity;
 
 /**
- * One stone in this many survives into the far ring.
+ * Fraction of the field's stones the far ring keeps — the biggest ones.
  *
- * The honest name for this is "we stop drawing most of the beach". It is
- * legitimate because at twenty metres a 6 cm pebble is under two pixels and the
- * field reads as texture rather than as stones — but it IS a lie about how many
- * rocks there are, so it is stated here and logged at build rather than buried.
+ * The far ring used to keep every fourth stone at random, which cut triangles
+ * but left a visible density step at the mid boundary and a field that thinned
+ * uniformly rather than by size. Keeping the largest stones instead is both
+ * cheaper to justify and truer: a 3 cm pebble is sub-pixel by fifteen metres
+ * and genuinely vanishes, while the big cobbles stay legible to the back of the
+ * strip. So the far field is the same big stones the mid ring drew, minus the
+ * grit — no step, no holes, no popping, just detail shedding with distance.
+ *
+ * 0.22 keeps the largest ~22% of stones. It is still a reduction the eye should
+ * not catch, because what it drops is exactly what has gone too small to see.
  */
-export const FAR_STRIDE = 4;
+export const FAR_FRACTION = 0.22;
 
 const _rot = new Quaternion();
 const _pos = new Vector3();
@@ -201,6 +211,29 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         list.push(s);
     }
 
+    // Which archetypes survive into the far ring: the largest, taken in
+    // descending size until their stones account for `FAR_FRACTION` of the
+    // field. Each archetype is one fixed size, so "the biggest stones" is a set
+    // of archetypes, and the far ring is those drawn whole — no random stride,
+    // no density step. See `FAR_FRACTION`.
+    const perArch = new Map();   // archetype -> { radius, count }
+    for (const s of field) {
+        const e = perArch.get(s.archetype);
+        if (e) e.count++;
+        else perArch.set(s.archetype, { radius: s.radius, count: 1 });
+    }
+    const farKept = new Set();
+    {
+        const bySize = [...perArch.entries()].sort((a, b) => b[1].radius - a[1].radius);
+        const budget = field.length * FAR_FRACTION;
+        let acc = 0;
+        for (const [archetype, e] of bySize) {
+            if (acc >= budget) break;
+            farKept.add(archetype);
+            acc += e.count;
+        }
+    }
+
     const group = opts.renderingGroupId ?? 0;
     function makeMesh(arch, name, count) {
         const mesh = new Mesh(name, scene);
@@ -243,8 +276,8 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
             m.freezeWorldMatrix();
             mid.push({ mesh: m, buf, list });
 
-            const kept = list.filter((_, i) => i % FAR_STRIDE === 0);
-            if (!kept.length) continue;
+            if (!farKept.has(archetype)) continue;   // too small to read at range
+            const kept = list;
             farStones += kept.length;
             const farBuf = new Float32Array(kept.length * 16);
             kept.forEach((s, i) => writeMatrix(s, farBuf, i * 16));
@@ -403,10 +436,13 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
                 rebuildNear(x, z);
             }
             // Half a tile of slack, so a tile whose centre is out of range but
-            // whose near corner is not stays on.
+            // whose near corner is not stays at the finer ring.
             const slack = TILE * 0.71;
             for (const [tile, c] of tileCenters) {
                 const d = Math.hypot(c.x - x, c.z - z);
+                // No "off": the whole strip is always drawn (DRAW_DISTANCE is
+                // Infinity), so the far ring is the floor, not a cutoff. Frustum
+                // culling still drops whatever is behind you.
                 if (d > DRAW_DISTANCE + slack) show(tile, "off");
                 else if (d > MID_DISTANCE + slack) show(tile, "far");
                 // Occupied tiles are within 2 m and so always fall here — they

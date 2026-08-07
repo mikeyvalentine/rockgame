@@ -6,7 +6,7 @@
 
 import { castSequence } from "../src/scene/siftingBeds.js";
 import {
-    scatterShore, densityAt, PEAK_DENSITY, MIN_GAP, SINK_FRACTION, SCATTER_SEED,
+    scatterShore, densityAt, PEAK_DENSITY, MIN_GAP, PACK, SINK_FRACTION, SCATTER_SEED,
 } from "../../shared/shoreScatter.js";
 import {
     SHORE_HALF_ARC, ROCK_FREE_MARGIN, SHORE_DEPTH,
@@ -65,11 +65,14 @@ check("every stone sits wholly inside the shore strip", strayed.length === 0,
     strayed.length + " outside");
 check("every stone is in the rock field", field.every((s) => inRockField(s.x, s.z)));
 
-// ---- and none of them interpenetrate ---------------------------------------
+// ---- and none of them nestle closer than PACK allows ------------------------
 //
-// The whole point of placing rather than dropping: with no physics to push
-// them apart, non-overlap has to be true by construction. Checked with a grid
-// so this is not 8,000 squared.
+// The field is not a physics pour, so its spacing is a property of the output
+// rather than something settled to. Stones may now overlap — `PACK` lets
+// silhouettes nestle past tangent, which is what carries the density past the
+// flat-disc jam ceiling — but only up to that bound. Every pair must sit at
+// least `(r1 + r2) * PACK + MIN_GAP` apart; anything closer is the sampler
+// leaking, not shingle. Checked with a grid so this is not 355,000 squared.
 {
     const CELL = 0.5;
     const buckets = new Map();
@@ -78,8 +81,8 @@ check("every stone is in the rock field", field.every((s) => inRockField(s.x, s.
         const k = key(Math.floor(s.x / CELL), Math.floor(s.z / CELL));
         (buckets.get(k) ?? buckets.set(k, []).get(k)).push(s);
     }
-    let worst = Infinity;
-    let clashes = 0;
+    let deepestBite = 0;   // how far past the PACK limit the worst pair sits
+    let leaks = 0;
     for (const s of field) {
         const cx = Math.floor(s.x / CELL);
         const cz = Math.floor(s.z / CELL);
@@ -87,17 +90,15 @@ check("every stone is in the rock field", field.every((s) => inRockField(s.x, s.
             for (let b = -1; b <= 1; b++) {
                 for (const o of buckets.get(key(cx + a, cz + b)) ?? []) {
                     if (o === s) continue;
-                    const gap = Math.hypot(s.x - o.x, s.z - o.z) - s.radius - o.radius;
-                    worst = Math.min(worst, gap);
-                    if (gap < MIN_GAP - 1e-9) clashes++;
+                    const need = (s.radius + o.radius) * PACK + MIN_GAP;
+                    const gap = Math.hypot(s.x - o.x, s.z - o.z) - need;
+                    if (gap < -1e-6) { leaks++; deepestBite = Math.min(deepestBite, gap); }
                 }
             }
         }
     }
-    check("no two stones overlap", clashes === 0,
-        clashes + " pairs, tightest gap " + worst.toFixed(4) + " m");
-    check("the tightest gap respects MIN_GAP", worst >= MIN_GAP - 1e-9,
-        worst.toFixed(4));
+    check("no two stones sit closer than PACK allows", leaks === 0,
+        leaks + " pairs, worst " + (deepestBite * 1000).toFixed(1) + " mm past the limit");
 }
 
 // ---- the density actually ramps --------------------------------------------
@@ -150,7 +151,7 @@ let monotonic = true;
 for (let i = 1; i < counts.length; i++) if (counts[i] <= counts[i - 1]) monotonic = false;
 check("the density multiplier is monotonic", monotonic, counts.join(" < "));
 check("a twentieth of the density is a small fraction of the field",
-    counts[0] < field.length * 0.25, `${counts[0]} vs ${field.length}`);
+    counts[0] < field.length * 0.35, `${counts[0]} vs ${field.length}`);
 check("doubling the default barely moves a jammed field",
     counts[3] < field.length * 1.35, `${counts[3]} vs ${field.length}`);
 

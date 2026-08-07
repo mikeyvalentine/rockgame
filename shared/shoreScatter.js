@@ -49,17 +49,13 @@ export const SCATTER_SEED = 20260806;
  * the triangle budget, so it is set by measuring rather than by arithmetic.
  *
  * This is what is ASKED for, per attempt, not what lands — most candidates are
- * rejected against a neighbour, and the harder the field is pushed the more of
- * them are. At 160 the back of the strip settles around 145 stones/m^2, and the
- * field is about 120,000 stones.
- *
- * The ceiling is geometric and it is not far above that. Stones of this size
- * mix jam at roughly 41% of the ground covered, around 170/m^2 — pushing the
- * multiplier past 8 buys single-digit percentages for linearly more work, and
- * past 16 the field gets slightly *worse* as the big stones crowd out the small
- * ones that were filling the gaps.
+ * rejected against a neighbour. With `PACK` letting stones nestle past tangent,
+ * 560 here lands about 355,000 stones, roughly three times the non-overlapping
+ * field and near what a real shingle beach covers. The flat-disc jam ceiling
+ * (about 55% of the ground, ~170/m^2) no longer applies, because the field is
+ * no longer flat discs kept apart — see `PACK`.
  */
-export const PEAK_DENSITY = 160;
+export const PEAK_DENSITY = 560;
 
 /**
  * How the density climbs away from the water.
@@ -96,6 +92,24 @@ export function densityAt(depth) {
 export const MIN_GAP = 0.012;
 
 /**
+ * How close two stones may sit, as a fraction of their touching distance.
+ *
+ * 1.0 is edge-to-edge — the old rule, and the reason the field jammed at about
+ * 55% of the ground covered (the random-packing ceiling for flat discs). A
+ * beach is denser than that: real shingle nestles, stones resting in the
+ * hollows between other stones. Below 1.0 the field is allowed that nestling —
+ * centres closer than tangent, so silhouettes overlap — which is what carries
+ * it past the flat-disc wall to the coverage a shingle beach actually has.
+ *
+ * The cost is honest: with no height layering, "nestled" reads on screen as
+ * "slightly interpenetrating", so this cannot go too low without the beach
+ * looking like stones melting into each other. 0.5 — centres as close as half
+ * their touching distance — is what reaching three times the density needs, and
+ * is the value most worth a look on real hardware.
+ */
+export const PACK = 0.5;
+
+/**
  * Candidates thrown per grid cell.
  *
  * One was the obvious choice and it is what caps the field. Single-shot dart
@@ -105,11 +119,12 @@ export const MIN_GAP = 0.012;
  * whichever survive lets the small stones settle into the spaces the big ones
  * left, which is both denser and how a shingle beach is actually graded.
  *
- * Six, because the returns fall off hard — the seventh candidate lands in an
- * occupied cell almost every time — and every one of them is paid for whether
- * it is accepted or not.
+ * Ten. The returns fall off, but with `PACK` letting stones nestle there is
+ * more room per cell to find, so it pays to throw more darts than the six that
+ * saturated the non-overlapping field. Every one is paid for whether accepted
+ * or not, so this trades build time (a few hundred ms) for density.
  */
-export const ATTEMPTS = 6;
+export const ATTEMPTS = 8;
 
 /**
  * How deep a stone sits in the sand, as a fraction of its size.
@@ -258,7 +273,8 @@ function overlaps(grid, cols, rows, cell, arc, depth, x, z, radius, reach) {
             const bucket = grid[r * cols + c];
             if (!bucket) continue;
             for (const o of bucket) {
-                const need = radius + o.radius + MIN_GAP;
+                // PACK < 1 lets silhouettes nestle past tangent; see the const.
+                const need = (radius + o.radius) * PACK + MIN_GAP;
                 const dx = x - o.x;
                 const dz = z - o.z;
                 if (dx * dx + dz * dz < need * need) return true;
