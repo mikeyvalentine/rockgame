@@ -27,10 +27,13 @@ const DEG = Math.PI / 180;
 // closing until it meets the palm/other fingers instead of floating mid-air.
 // Rock contact (below) stops a finger earlier when it does touch the stone.
 const TARGET = [95 * DEG, 105 * DEG, 75 * DEG];
-const THUMB_TARGET = [40 * DEG, 50 * DEG, 40 * DEG];
+// Deliberately short of a full curl: the thumb should press its pad on the SIDE
+// face of the stone (opposing the fingers), not roll all the way over the top.
+const THUMB_TARGET = [32 * DEG, 30 * DEG, 18 * DEG];
 const SKIN = 0.006;                   // fingertip rests this far off the surface
 const PENT = 0.004;                   // a phalanx may sink this far before we stop
 const PALM_STOP = 0.02;               // stop once a fingertip curls to the palm (a closed fist)
+const DRAPE = 0.4;                    // min curl for a finger over a too-big rock (else it kicks straight)
 
 const FINGERS = ["Index", "Middle", "Ring", "Pinky"];
 
@@ -47,6 +50,11 @@ export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
     const centre = rockMesh.getAbsolutePosition().clone();
     const world = toWorld(geometry.positions, rockMesh.getWorldMatrix());
     const idx = geometry.indices;
+    let rockR = 0;
+    for (let i = 0; i < world.length; i += 3) {
+        rockR = Math.max(rockR, Math.hypot(
+            world[i] - centre.x, world[i + 1] - centre.y, world[i + 2] - centre.z));
+    }
 
     // Flexion hinge: the across-the-knuckles axis, signed so + curls to the palm.
     const i1 = findNode(`${side}HandIndex1`), p1 = findNode(`${side}HandPinky1`);
@@ -87,16 +95,17 @@ export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
     }
 
     // The thumb OPPOSES rather than curls on a finger hinge: its own axis swings
-    // its tip toward the rock (cross of the thumb's reach and the direction to
-    // the rock), so its pad presses onto the top of the stone — the pinch.
+    // its pad toward the rock, opposing the fingers. Its curl budget (THUMB_TARGET)
+    // is short of a full wrap so it stops pressing the SIDE face rather than
+    // rolling over the top of the stone.
     const thumb = names(side, "Thumb").map(findNode).filter(Boolean);
     if (thumb.length === 4) {
-        const tRel = thumb[3].getAbsolutePosition().subtract(thumb[0].getAbsolutePosition());
-        const toRock = centre.subtract(thumb[0].getAbsolutePosition());
-        const thumbAxis = Vector3.Cross(tRel, toRock);
+        const tBase = thumb[0].getAbsolutePosition();
+        const tRel = thumb[3].getAbsolutePosition().subtract(tBase);
+        const thumbAxis = Vector3.Cross(tRel, centre.subtract(tBase));
         if (thumbAxis.lengthSquared() > 1e-8) {
             thumbAxis.normalize();
-            curled += closeFinger(thumb, thumbAxis, THUMB_TARGET, centre, world, idx, palmPoint);
+            curled += closeFinger(thumb, thumbAxis, THUMB_TARGET, centre, world, idx, palmPoint, 2);
         }
     }
     return curled;
@@ -176,7 +185,7 @@ function adductToward(mcp, tip, toward, n, frac) {
  * phalanx would penetrate. Joints bend in proportion to `target`.
  * @returns {number} 1 if it moved
  */
-function closeFinger(chain, axis, target, centre, world, idx, palmPoint) {
+function closeFinger(chain, axis, target, centre, world, idx, palmPoint, penFrom = 1) {
     const joints = [chain[0], chain[1], chain[2]];
     const tip = chain[3];
     const palmStopSq = PALM_STOP * PALM_STOP;
@@ -188,13 +197,24 @@ function closeFinger(chain, axis, target, centre, world, idx, palmPoint) {
         refresh(chain);
         t += DT;
 
-        // Penetration guard: if any phalanx tip sinks into the rock, step back.
+        // Penetration guard: if a phalanx sinks into the rock, step back. `penFrom`
+        // is the first joint checked — the thumb starts at index 2, because its
+        // proximal phalanx sits AT the web where the rock is seated (checking it
+        // would trip on step one and leave the thumb extended).
         let penetrated = false;
-        for (let j = 1; j < 4; j++) {
+        for (let j = penFrom; j < 4; j++) {
             if (gap(chain[j].getAbsolutePosition(), centre, world, idx) < -PENT) { penetrated = true; break; }
         }
         if (penetrated) {
             for (let j = 0; j < 3; j++) joints[j].rotate(axis, -target[j] * DT, Space.WORLD);
+            // If it barely curled before hitting (a rock too big to wrap), force a
+            // minimum drape so the finger lies over the stone instead of pointing
+            // straight out — the "just grip it" case for oversized rocks.
+            const applied = t - DT;
+            if (applied < DRAPE) {
+                const extra = DRAPE - applied;
+                for (let j = 0; j < 3; j++) joints[j].rotate(axis, target[j] * extra, Space.WORLD);
+            }
             refresh(chain);
             moved = 1;
             break;

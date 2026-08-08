@@ -161,22 +161,37 @@ async function main() {
         .map((n) => findNode(SIDE + "Hand" + n).getAbsolutePosition());
     const knuckleCentre = mcps.reduce((a, p) => a.addInPlace(p), new Vector3())
         .scale(1 / mcps.length);
-    // Seat in the thumb–index WEB — the natural crook between the thumb and the
-    // index — not out among the middle fingers. Bigger stones slide a little
-    // toward the palm centre for support.
+    // Seat depends on size, in three bands (a real hand changes grip by stone):
+    //   ≤8cm  → PINCH between thumb and index, held forward at the front crook;
+    //   9–15cm → WRAP: in the thumb–index web, sliding toward the palm as it grows;
+    //   ≥16cm  → POWER: just sits in the palm centre, hand closes around it (no
+    //            web-fitting — too big to hold in the crook).
     const idx1p = findNode(SIDE + "HandIndex1").getAbsolutePosition();
     const thumb2 = findNode(SIDE + "HandThumb2").getAbsolutePosition();
     const web = Vector3.Lerp(idx1p, thumb2, 0.5);
-    const sizeF = Math.min(1, Math.max(0, (rockSize - 0.05) / 0.08)); // 0 @5cm → 1 @13cm
-    const seat = Vector3.Lerp(web, knuckleCentre, sizeF * 0.4);
+    let seat, tiltDeg;
+    if (rockSize <= 0.08) {
+        // Nudge forward along the fingers so it sits at the fingertips/crook,
+        // pinched between thumb and index rather than down in the palm.
+        seat = web.add(fingerDir.scale(rockR * 0.5));
+        tiltDeg = 60;
+    } else if (rockSize < 0.16) {
+        const f = Math.min(1, (rockSize - 0.09) / 0.06);
+        seat = Vector3.Lerp(web, knuckleCentre, f * 0.5);
+        tiltDeg = 55;
+    } else {
+        seat = knuckleCentre.clone();
+        tiltDeg = 25;
+    }
     const palm = seat.add(palmNormal.scale(-(rockR * 0.5)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
-    // Held on edge, not flat in the palm: tilt the stone ~55° about the
-    // across-the-hand axis so a flat skipping face stands roughly perpendicular.
+    // Held on edge, not flat in the palm: tilt the stone about the across-the-hand
+    // axis so a flat skipping face stands roughly perpendicular (less for a big
+    // power-gripped rock, which sits flatter in the palm).
     const tiltAxis = mcps[0].subtract(mcps[3]);
     tiltAxis.normalize();
-    rock.mesh.rotate(tiltAxis, 55 * Math.PI / 180, Space.WORLD);
+    rock.mesh.rotate(tiltAxis, tiltDeg * Math.PI / 180, Space.WORLD);
     rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
 
