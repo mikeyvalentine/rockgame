@@ -152,18 +152,28 @@ async function main() {
     for (let i = 0; i < rp.length; i += 3) {
         rockR = Math.max(rockR, Math.hypot(rp[i], rp[i + 1], rp[i + 2]));
     }
-    const palm = Vector3.Lerp(handP, knuckle.getAbsolutePosition(), 0.5)
-                        .add(palmNormal.scale(-(rockR + 0.005)));
+    // Seat the rock in the FINGERS' closing plane: centre it on the knuckle line
+    // (average of the four finger MCPs), offset onto the palm by ~its radius so
+    // the curling fingers wrap onto its surface rather than closing beside it.
+    const mcps = ["Index1", "Middle1", "Ring1", "Pinky1"]
+        .map((n) => findNode(SIDE + "Hand" + n).getAbsolutePosition());
+    const knuckleCentre = mcps.reduce((a, p) => a.addInPlace(p), new Vector3())
+        .scale(1 / mcps.length);
+    const palm = knuckleCentre.add(palmNormal.scale(-(rockR * 0.85)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
 
     // --- procedural grip: curl the fingers onto the rock --------------------
     const palmar = palmNormal.scale(-1); // toward the palm / the rock
-    const curled = gripRock({
-        side: SIDE, findNode, rockMesh: rock.mesh, geometry: rock.geometry, palmar,
-    });
-    console.log(`[throw-lab] grip: ${curled} finger joints curled onto the rock`);
+    globalThis.LAB_GRIP = { palmNormal: palmNormal.clone(), palmar: palmar.clone() };
+    let curled = 0;
+    if (q.get("nogrip") === null) {
+        curled = gripRock({
+            side: SIDE, findNode, rockMesh: rock.mesh, geometry: rock.geometry, palmar,
+        });
+        console.log(`[throw-lab] grip: ${curled} finger joints curled onto the rock`);
+    }
     for (let pass = 0; pass < 2; pass++) {
         scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
     }
