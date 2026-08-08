@@ -10,29 +10,33 @@
     <canvas id="view"></canvas>
 
     <div id="controls">
-      <h1>skin</h1>
+      <header>
+        <span class="dot" id="swatch"></span>
+        <h1>Skin</h1>
+      </header>
 
-      <label class="row">
-        <span>tone</span>
-        <input id="tone" type="range" min="0" max="1" step="0.001" value="0.35" />
-      </label>
+      <section class="grp">
+        <div class="grp-h">Colour</div>
+        <input id="tone" class="tone" type="range" min="0" max="1" step="0.001" value="0.35"
+               aria-label="skin tone" />
+        <div class="free">
+          <label class="chk"><input id="free" type="checkbox" /> Custom</label>
+          <input id="color" type="color" value="#e0ac7a" aria-label="custom colour" />
+        </div>
+      </section>
 
-      <label class="row">
-        <input id="free" type="checkbox" />
-        <span>any colour</span>
-        <input id="color" type="color" value="#e0ac7a" />
-      </label>
+      <section class="grp">
+        <div class="grp-h">Age <output id="ageOut">18</output></div>
+        <input id="age" class="age" type="range" min="0" max="1" step="0.001" value="0"
+               aria-label="age" />
+        <div class="ends"><span>young</span><span>old</span></div>
+      </section>
 
-      <label class="row">
-        <span>age</span>
-        <input id="age" type="range" min="0" max="1" step="0.001" value="0" />
-        <output id="ageOut">18 yrs</output>
-      </label>
-
-      <label class="row">
-        <span>detail</span>
-        <input id="scale" type="range" min="6" max="60" step="1" value="22" />
-      </label>
+      <details class="adv">
+        <summary>Advanced</summary>
+        <label class="row"><span>Pore size</span>
+          <input id="scale" type="range" min="6" max="60" step="1" value="22" /></label>
+      </details>
     </div>
 
     <div id="err" hidden></div>

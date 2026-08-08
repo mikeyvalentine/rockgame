@@ -40,7 +40,7 @@ const TEX = {
 };
 
 // A believable light→dark skin locus (sRGB). The tone slider interpolates these.
-const SKIN_LOCUS = ["#ffdcc4", "#f1c39b", "#dda579", "#bd8250", "#8d5524", "#5a3620"];
+export const SKIN_LOCUS = ["#ffdcc4", "#f1c39b", "#dda579", "#bd8250", "#8d5524", "#5a3620"];
 
 const VERTEX = /* glsl */`
 precision highp float;
@@ -168,6 +168,9 @@ function loadTex(scene, file) {
     t.wrapV = Texture.WRAP_ADDRESSMODE;
     return t;
 }
+
+/** The active tone as a hex string — for the UI swatch. */
+export function toneHex(t) { return toneColor(t).toHexString(); }
 
 /** sRGB hex → Color3, and a lerp along the skin locus for the tone slider. */
 function toneColor(t) {

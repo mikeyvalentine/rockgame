@@ -13,7 +13,7 @@
     "skin-lab"
   ],
   "scripts": {
-    "dev": "concurrently -k -n hub,sift,forge,sand,throw -c blue,green,yellow,magenta,cyan \"vite\" \"npm --prefix rock-sift run dev\" \"npm --prefix rock-forge run dev\" \"npm --prefix sand-sim run dev\" \"npm --prefix throw-lab run dev\"",
+    "dev": "concurrently -k -n hub,sift,forge,sand,throw,skin -c blue,green,yellow,magenta,cyan,red \"vite\" \"npm --prefix rock-sift run dev\" \"npm --prefix rock-forge run dev\" \"npm --prefix sand-sim run dev\" \"npm --prefix throw-lab run dev\" \"npm --prefix skin-lab run dev\"",
     "dev:throw": "npm --prefix throw-lab run dev",
     "dev:skin": "npm --prefix skin-lab run dev",
     "dev:hub": "vite",

@@ -42,6 +42,12 @@ const LABS = [
     port: DEV ? 5185 : null,
     note: 'First-person beach sand, WebGPU (add ?webgl=1 for the fallback).',
   },
+  {
+    name: 'Skin lab',
+    href: DEV ? 'http://localhost:5187/' : '/skin-lab/',
+    port: DEV ? 5187 : null,
+    note: 'Customize the thrower — skin tone (or any colour) and an age slider for pores and wrinkles.',
+  },
 ];
 
 export function menuScreen({ host, navigate }) {

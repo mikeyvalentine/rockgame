@@ -22,7 +22,7 @@ import { LoadAssetContainerAsync } from "@babylonjs/core/Loading/sceneLoader";
 import { DracoCompression } from "@babylonjs/core/Meshes/Compression/dracoCompression";
 import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
-import { createSkinMaterial } from "./skin-material.js";
+import { createSkinMaterial, toneHex } from "./skin-material.js";
 
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
@@ -128,11 +128,13 @@ function wireControls(skins) {
     const color = document.getElementById("color");
     const scale = document.getElementById("scale");
     const ageOut = document.getElementById("ageOut");
+    const swatch = document.getElementById("swatch");
 
-    const useFree = () => free.checked;
+    const activeHex = () => (free.checked ? color.value : toneHex(Number(tone.value)));
     const pushColor = () => {
-        if (useFree()) apply(skins, (s) => s.setColor(color.value));
+        if (free.checked) apply(skins, (s) => s.setColor(color.value));
         else apply(skins, (s) => s.setTone(Number(tone.value)));
+        if (swatch) swatch.style.background = activeHex();
     };
     const pushAge = () => {
         const t = Number(age.value);
@@ -170,6 +172,9 @@ function seedFromUrl(skins) {
     age.value = q.has("age") ? q.get("age") : "0";
     apply(skins, (s) => s.setAge(Number(age.value)));
     ageOut.textContent = Math.round(18 + Number(age.value) * 72) + " yrs";
+
+    const swatch = document.getElementById("swatch");
+    if (swatch) swatch.style.background = free.checked ? color.value : toneHex(Number(tone.value));
 }
 
 /** Tolerant node lookup: exact name, else first whose name contains it. */
