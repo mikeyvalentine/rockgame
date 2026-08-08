@@ -1,0 +1,53 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1c1f; }
+#view { width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+/* Labels over the four camera viewports. The 1px lines are the panel gutters —
+   the cameras render into quadrants, this just names them and draws the cross. */
+#panels {
+  position: fixed; inset: 0; pointer-events: none;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+}
+#panels .panel {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+#panels .panel span {
+  position: absolute; top: 8px; left: 10px;
+  font: 11px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: rgba(220, 228, 235, 0.55);
+  user-select: none;
+}
+
+#err {
+  position: fixed; inset: auto 12px 12px 12px; padding: 10px 12px;
+  background: #2a1416; color: #ffb4b4; border: 1px solid #5a2a2e;
+  font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap;
+}
+
+/* Pivot handles: joint dots + degree readouts, laid over the canvas. */
+#pivots { position: fixed; inset: 0; pointer-events: none; }
+.pivot-dot {
+  position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; background: rgba(120, 190, 255, 0.35);
+  border: 1.5px solid rgba(150, 205, 255, 0.9);
+  pointer-events: auto; cursor: grab;
+}
+.pivot-dot:hover { background: rgba(150, 205, 255, 0.65); }
+.pivot-dot:active { cursor: grabbing; }
+.pivot-readout {
+  position: fixed; display: flex; align-items: center; gap: 6px;
+  padding: 2px 6px; border-radius: 5px;
+  background: rgba(16, 20, 26, 0.85); border: 1px solid rgba(150, 205, 255, 0.5);
+  font: 12px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #eaf1f8; user-select: none; white-space: nowrap;
+  pointer-events: auto;
+}
+.pivot-readout[hidden] { display: none; }  /* class display:flex would else beat [hidden] */
+.pivot-val { min-width: 34px; text-align: center; letter-spacing: 0.02em; }
+.pivot-btn {
+  cursor: pointer; width: 14px; text-align: center; color: #9cc8ff;
+  font-weight: 700;
+}
+.pivot-btn:hover { color: #fff; }

@@ -1,0 +1,232 @@
+/**
+ * Procedural grip — curl the fingers around whatever rock is in the palm.
+ *
+ * Approach (matching the VR-grip references): drive each finger with a NATURAL
+ * curl — the three joints bend in fixed anatomical proportions (MCP, PIP, DIP),
+ * so the finger shape always reads as a real curl rather than a knuckle-only
+ * claw — and close it until the fingertip reaches the rock, or until a phalanx
+ * would sink into it (then step back). Small rock → the finger closes most of
+ * the way; big rock → it stops early, draped over the surface.
+ *
+ * Flexion happens about the hand's ACROSS-THE-KNUCKLES axis (index→pinky),
+ * MEASURED from the rig, not guessed — finger flexion is planar about that one
+ * hinge, so using the same world axis for a finger's three joints gives a clean
+ * curl. The sign is chosen so the curl goes toward the palm.
+ *
+ * Contact is plain JS against the rock's triangles (Babylon's mesh.intersects
+ * misses in this tree-shaken build): the rock is transformed to world once and
+ * a two-sided ray from its centre gives the surface radius in any direction.
+ */
+
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Space } from "@babylonjs/core/Maths/math.axis";
+
+const DT = 1 / 48;                    // close fraction per step
+const DEG = Math.PI / 180;
+// Full-curl target = a firm FIST, so a finger that never reaches the rock keeps
+// closing until it meets the palm/other fingers instead of floating mid-air.
+// Rock contact (below) stops a finger earlier when it does touch the stone.
+const TARGET = [95 * DEG, 105 * DEG, 75 * DEG];
+// Deliberately short of a full curl: the thumb should press its pad on the SIDE
+// face of the stone (opposing the fingers), not roll all the way over the top.
+const THUMB_TARGET = [32 * DEG, 30 * DEG, 18 * DEG];
+const SKIN = 0.006;                   // fingertip rests this far off the surface
+const PENT = 0.004;                   // a phalanx may sink this far before we stop
+const PALM_STOP = 0.02;               // stop once a fingertip curls to the palm (a closed fist)
+const DRAPE = 0.4;                    // min curl for a finger over a too-big rock (else it kicks straight)
+
+const FINGERS = ["Index", "Middle", "Ring", "Pinky"];
+
+/**
+ * @param {object} a
+ * @param {string} a.side
+ * @param {(name:string)=>any} a.findNode
+ * @param {import("@babylonjs/core/Meshes/mesh").Mesh} a.rockMesh
+ * @param {{positions:Float32Array, indices:Uint32Array|Uint16Array}} a.geometry
+ * @param {Vector3} a.palmar  unit vector toward the palm
+ */
+export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
+    rockMesh.computeWorldMatrix(true);
+    const centre = rockMesh.getAbsolutePosition().clone();
+    const world = toWorld(geometry.positions, rockMesh.getWorldMatrix());
+    const idx = geometry.indices;
+    let rockR = 0;
+    for (let i = 0; i < world.length; i += 3) {
+        rockR = Math.max(rockR, Math.hypot(
+            world[i] - centre.x, world[i + 1] - centre.y, world[i + 2] - centre.z));
+    }
+
+    // Flexion hinge: the across-the-knuckles axis, signed so + curls to the palm.
+    const i1 = findNode(`${side}HandIndex1`), p1 = findNode(`${side}HandPinky1`);
+    const across = i1.getAbsolutePosition().subtract(p1.getAbsolutePosition());
+    across.normalize();
+    const mid1 = findNode(`${side}HandMiddle1`), mid4 = findNode(`${side}HandMiddle4`);
+    const tipRel = mid4.getAbsolutePosition().subtract(mid1.getAbsolutePosition());
+    if (Vector3.Dot(Vector3.Cross(across, tipRel), palmar) < 0) across.negate();
+
+    // Where a fully-curled fingertip comes home to (the fist/palm), so a finger
+    // that never reaches the rock stops there instead of floating.
+    const palmPoint = FINGERS.concat("Thumb")
+        .map((f) => findNode(`${side}Hand${f}1`))
+        .filter(Boolean)
+        .reduce((a, n) => a.addInPlace(n.getAbsolutePosition()), new Vector3())
+        .scale(1 / (FINGERS.length + 1));
+
+    // Convergence target for adduction: the middle FINGERTIP at rest. Every other
+    // finger swings its own tip toward this central point about the palm normal —
+    // that closes the sideways gaps (the model fans the fingers, so aiming merely
+    // parallel still leaves space and a floating pinky). Captured before any
+    // finger moves so it stays a fixed rest target.
+    const palmNormal = palmar.scale(-1);
+    const midC = names(side, "Middle").map(findNode).filter(Boolean);
+    const midTipRest = midC[3].getAbsolutePosition().clone();
+
+    let curled = 0;
+    for (const f of FINGERS) {
+        const chain = names(side, f).map(findNode).filter(Boolean);
+        if (chain.length !== 4) continue;
+        // Outer fingers converge more than the ring, which sits next to the middle.
+        if (f !== "Middle") {
+            const frac = f === "Ring" ? 0.55 : 0.9;
+            adductToward(chain[0], chain[3], midTipRest, palmNormal, frac);
+        }
+        refresh(chain);
+        curled += closeFinger(chain, across, TARGET, centre, world, idx, palmPoint);
+    }
+
+    // The thumb OPPOSES rather than curls on a finger hinge: its own axis swings
+    // its pad toward the rock, opposing the fingers. Its curl budget (THUMB_TARGET)
+    // is short of a full wrap so it stops pressing the SIDE face rather than
+    // rolling over the top of the stone.
+    const thumb = names(side, "Thumb").map(findNode).filter(Boolean);
+    if (thumb.length === 4) {
+        const tBase = thumb[0].getAbsolutePosition();
+        const tRel = thumb[3].getAbsolutePosition().subtract(tBase);
+        const thumbAxis = Vector3.Cross(tRel, centre.subtract(tBase));
+        if (thumbAxis.lengthSquared() > 1e-8) {
+            thumbAxis.normalize();
+            curled += closeFinger(thumb, thumbAxis, THUMB_TARGET, centre, world, idx, palmPoint, 2);
+        }
+    }
+    return curled;
+}
+
+const names = (side, f) => [1, 2, 3, 4].map((i) => `${side}Hand${f}${i}`);
+
+function toWorld(positions, m) {
+    const out = new Float32Array(positions.length);
+    const v = new Vector3();
+    for (let i = 0; i < positions.length; i += 3) {
+        Vector3.TransformCoordinatesFromFloatsToRef(
+            positions[i], positions[i + 1], positions[i + 2], m, v);
+        out[i] = v.x; out[i + 1] = v.y; out[i + 2] = v.z;
+    }
+    return out;
+}
+
+/** Two-sided Möller–Trumbore. Ray param t>0, else Infinity. */
+function rayTri(o, d, w, a, b, c) {
+    const e1x = w[b] - w[a], e1y = w[b + 1] - w[a + 1], e1z = w[b + 2] - w[a + 2];
+    const e2x = w[c] - w[a], e2y = w[c + 1] - w[a + 1], e2z = w[c + 2] - w[a + 2];
+    const px = d.y * e2z - d.z * e2y, py = d.z * e2x - d.x * e2z, pz = d.x * e2y - d.y * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) return Infinity;
+    const inv = 1 / det;
+    const tx = o.x - w[a], ty = o.y - w[a + 1], tz = o.z - w[a + 2];
+    const u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < 0 || u > 1) return Infinity;
+    const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    const vv = (d.x * qx + d.y * qy + d.z * qz) * inv;
+    if (vv < 0 || u + vv > 1) return Infinity;
+    const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    return t > 1e-7 ? t : Infinity;
+}
+
+const _d = new Vector3();
+/** Signed distance from world point `p` to the rock surface (<0 inside). */
+function gap(p, centre, world, idx) {
+    _d.copyFrom(p).subtractInPlace(centre);
+    const dist = _d.length();
+    if (dist < 1e-6) return -1;
+    _d.scaleInPlace(1 / dist);
+    let best = Infinity;
+    for (let i = 0; i < idx.length; i += 3) {
+        const t = rayTri(centre, _d, world, idx[i] * 3, idx[i + 1] * 3, idx[i + 2] * 3);
+        if (t < best) best = t;
+    }
+    return best === Infinity ? Infinity : dist - best;
+}
+
+function refresh(chain) {
+    for (const n of chain) n.computeWorldMatrix(true);
+}
+
+/**
+ * Adduct a finger's base joint about the palm normal `n` so its fingertip turns
+ * toward the point `toward` (the middle fingertip) by `frac` — the natural
+ * sideways "wiggle" DOF. Aiming at a central POINT (not just parallel) actually
+ * converges the fingers so their sides close up — the model fans them apart, so
+ * parallel alone still leaves gaps and a floating pinky.
+ */
+function adductToward(mcp, tip, toward, n, frac) {
+    mcp.computeWorldMatrix(true);
+    tip.computeWorldMatrix(true);
+    const m = mcp.getAbsolutePosition();
+    const a = tip.getAbsolutePosition().subtract(m);
+    const b = toward.subtract(m);
+    if (a.lengthSquared() < 1e-10 || b.lengthSquared() < 1e-10) return;
+    const ang = Math.atan2(Vector3.Dot(Vector3.Cross(a, b), n), Vector3.Dot(a, b));
+    mcp.rotate(n, ang * frac, Space.WORLD);
+    mcp.computeWorldMatrix(true);
+}
+
+/**
+ * Close one finger with a natural curl until the tip reaches the rock or a
+ * phalanx would penetrate. Joints bend in proportion to `target`.
+ * @returns {number} 1 if it moved
+ */
+function closeFinger(chain, axis, target, centre, world, idx, palmPoint, penFrom = 1) {
+    const joints = [chain[0], chain[1], chain[2]];
+    const tip = chain[3];
+    const palmStopSq = PALM_STOP * PALM_STOP;
+    let t = 0, moved = 0;
+
+    while (t < 1) {
+        // Step the whole finger a little, in proportion.
+        for (let j = 0; j < 3; j++) joints[j].rotate(axis, target[j] * DT, Space.WORLD);
+        refresh(chain);
+        t += DT;
+
+        // Penetration guard: if a phalanx sinks into the rock, step back. `penFrom`
+        // is the first joint checked — the thumb starts at index 2, because its
+        // proximal phalanx sits AT the web where the rock is seated (checking it
+        // would trip on step one and leave the thumb extended).
+        let penetrated = false;
+        for (let j = penFrom; j < 4; j++) {
+            if (gap(chain[j].getAbsolutePosition(), centre, world, idx) < -PENT) { penetrated = true; break; }
+        }
+        if (penetrated) {
+            for (let j = 0; j < 3; j++) joints[j].rotate(axis, -target[j] * DT, Space.WORLD);
+            // If it barely curled before hitting (a rock too big to wrap), force a
+            // minimum drape so the finger lies over the stone instead of pointing
+            // straight out — the "just grip it" case for oversized rocks.
+            const applied = t - DT;
+            if (applied < DRAPE) {
+                const extra = DRAPE - applied;
+                for (let j = 0; j < 3; j++) joints[j].rotate(axis, target[j] * extra, Space.WORLD);
+            }
+            refresh(chain);
+            moved = 1;
+            break;
+        }
+        moved = 1;
+        // Stop on the rock (snug on its surface)...
+        if (gap(tip.getAbsolutePosition(), centre, world, idx) <= SKIN) break;
+        // ...or, failing the rock, once the fingertip has curled home to the
+        // palm — so a finger that never reaches the stone still closes into the
+        // fist and supports, instead of floating at a fixed angle.
+        if (Vector3.DistanceSquared(tip.getAbsolutePosition(), palmPoint) < palmStopSq) break;
+    }
+    refresh(chain);
+    return moved;
+}

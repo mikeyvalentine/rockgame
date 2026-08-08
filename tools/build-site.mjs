@@ -51,7 +51,7 @@ const run = (cmd, cwd = ROOT) => {
 // lockfile, at the root), so it would fall through to `npm install` inside each
 // lab, create nested `node_modules`, and reintroduce exactly the duplicate
 // copies the workspace exists to remove.
-const LABS = ["rock-sift", "rock-forge", "sand-sim"];
+const LABS = ["rock-sift", "rock-forge", "sand-sim", "skin-lab"];
 
 run(existsSync(join(ROOT, "package-lock.json")) ? "npm ci" : "npm install");
 
