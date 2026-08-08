@@ -64,18 +64,24 @@ export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
         .reduce((a, n) => a.addInPlace(n.getAbsolutePosition()), new Vector3())
         .scale(1 / (FINGERS.length + 1));
 
-    // Reference for adduction: the middle finger's rest direction. Everything
-    // else turns toward parallel with it, so the fingers close their gaps.
+    // Convergence target for adduction: the middle FINGERTIP at rest. Every other
+    // finger swings its own tip toward this central point about the palm normal —
+    // that closes the sideways gaps (the model fans the fingers, so aiming merely
+    // parallel still leaves space and a floating pinky). Captured before any
+    // finger moves so it stays a fixed rest target.
     const palmNormal = palmar.scale(-1);
     const midC = names(side, "Middle").map(findNode).filter(Boolean);
-    const refDir = midC[3].getAbsolutePosition().subtract(midC[0].getAbsolutePosition());
-    refDir.normalize();
+    const midTipRest = midC[3].getAbsolutePosition().clone();
 
     let curled = 0;
     for (const f of FINGERS) {
         const chain = names(side, f).map(findNode).filter(Boolean);
         if (chain.length !== 4) continue;
-        if (f !== "Middle") adductToward(chain[0], chain[3], refDir, palmNormal, 0.7);
+        // Outer fingers converge more than the ring, which sits next to the middle.
+        if (f !== "Middle") {
+            const frac = f === "Ring" ? 0.55 : 0.9;
+            adductToward(chain[0], chain[3], midTipRest, palmNormal, frac);
+        }
         refresh(chain);
         curled += closeFinger(chain, across, TARGET, centre, world, idx, palmPoint);
     }
@@ -147,17 +153,20 @@ function refresh(chain) {
 }
 
 /**
- * Adduct a finger's base joint about the palm normal `n` so its direction turns
- * toward `refDir` (the middle finger) by `frac` — the natural "wiggle" DOF, used
- * here to CLOSE THE GAPS: real fingers converge as they grip rather than staying
- * fanned. Bounded (aims at parallel, not at a far point), so it can't over-swing.
+ * Adduct a finger's base joint about the palm normal `n` so its fingertip turns
+ * toward the point `toward` (the middle fingertip) by `frac` — the natural
+ * sideways "wiggle" DOF. Aiming at a central POINT (not just parallel) actually
+ * converges the fingers so their sides close up — the model fans them apart, so
+ * parallel alone still leaves gaps and a floating pinky.
  */
-function adductToward(mcp, tip, refDir, n, frac) {
+function adductToward(mcp, tip, toward, n, frac) {
     mcp.computeWorldMatrix(true);
     tip.computeWorldMatrix(true);
-    const a = tip.getAbsolutePosition().subtract(mcp.getAbsolutePosition());
-    if (a.lengthSquared() < 1e-10) return;
-    const ang = Math.atan2(Vector3.Dot(Vector3.Cross(a, refDir), n), Vector3.Dot(a, refDir));
+    const m = mcp.getAbsolutePosition();
+    const a = tip.getAbsolutePosition().subtract(m);
+    const b = toward.subtract(m);
+    if (a.lengthSquared() < 1e-10 || b.lengthSquared() < 1e-10) return;
+    const ang = Math.atan2(Vector3.Dot(Vector3.Cross(a, b), n), Vector3.Dot(a, b));
     mcp.rotate(n, ang * frac, Space.WORLD);
     mcp.computeWorldMatrix(true);
 }
