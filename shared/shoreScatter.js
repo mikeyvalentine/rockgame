@@ -61,27 +61,27 @@ export const PEAK_DENSITY = 160;
 /** A hair of clear sand right at the water, metres of HEIGHT above it. */
 export const ROCK_FREE_RISE = 0.03;
 
-/** Rocks fade out by this HEIGHT above the water, metres — the shingle band. */
-export const BEACH_TOP_RISE = 1.5;
+/** Rocks reach full density by this HEIGHT above the water, metres. */
+export const FULL_RISE = 1.0;
 
 /**
  * How dense the shingle is at a given HEIGHT above the waterline.
  *
- * A shingle beach is heaviest right at the water and thins as it climbs, so the
- * density peaks just above the wet edge and falls to nothing by BEACH_TOP_RISE —
- * which keeps the rocks a low band hugging the shore rather than carpeting the
- * whole clearing up to the trees. Driven by height (from the authored terrain),
- * not distance, so it follows the real slope of the beach automatically.
+ * THINNING near the water, heavier up the beach: the waves work the wet edge
+ * over and throw the shingle further up, so the density starts near zero at the
+ * waterline and rises (squared, so the thinning near the water is gradual) to
+ * full by FULL_RISE, then holds full up to wherever the clearing ends at the
+ * treeline. Driven by height from the authored terrain, so it follows the real
+ * slope of the beach.
  *
  * @param {number} above metres of terrain height above the waterline
  * @returns {number} stones per square metre asked for
  */
 export function densityAt(above) {
-    if (above < ROCK_FREE_RISE || above > BEACH_TOP_RISE) return 0;
-    const t = (above - ROCK_FREE_RISE) / (BEACH_TOP_RISE - ROCK_FREE_RISE);
-    // Full near the water (t=0), squared fade to zero at the top.
-    const f = 1 - t;
-    return PEAK_DENSITY * f * f;
+    if (above < ROCK_FREE_RISE) return 0;         // the waves keep the wet edge clear
+    if (above >= FULL_RISE) return PEAK_DENSITY;  // full from here up to the trees
+    const t = (above - ROCK_FREE_RISE) / (FULL_RISE - ROCK_FREE_RISE);
+    return PEAK_DENSITY * t * t;                  // thin at the water, ramping up
 }
 
 /**

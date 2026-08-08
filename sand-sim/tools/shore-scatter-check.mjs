@@ -12,7 +12,7 @@
 import { castSequence } from "../src/scene/siftingBeds.js";
 import {
     scatterShore, densityAt, PEAK_DENSITY, MIN_GAP, SINK_FRACTION, SCATTER_SEED,
-    ROCK_FREE_RISE, BEACH_TOP_RISE,
+    ROCK_FREE_RISE, FULL_RISE,
 } from "../../shared/shoreScatter.js";
 
 let failures = 0;
@@ -66,8 +66,8 @@ for (const s of field) {
 }
 check("no stone below the rock-free rise (a clear wet edge)",
     loAbove >= ROCK_FREE_RISE - 1e-6, "lowest " + loAbove.toFixed(3));
-check("no stone past the top of the shingle band (short of the trees)",
-    hiAbove <= BEACH_TOP_RISE + 1e-6, "highest " + hiAbove.toFixed(3));
+check("stones climb well up the beach (bounded only by the clearing)",
+    hiAbove > FULL_RISE, "highest " + hiAbove.toFixed(3));
 
 // ---- none of them interpenetrate -------------------------------------------
 {
@@ -97,31 +97,28 @@ check("no stone past the top of the shingle band (short of the trees)",
 
 // ---- the density is a shingle band: heaviest at the water, fading up -------
 check("density is zero at the waterline", densityAt(0) === 0);
-check("density is zero past the band top", densityAt(BEACH_TOP_RISE + 0.01) === 0);
-check("density peaks just above the wet edge",
-    densityAt(ROCK_FREE_RISE + 0.02) > PEAK_DENSITY * 0.8,
+check("density is thin just above the wet edge",
+    densityAt(ROCK_FREE_RISE + 0.02) < PEAK_DENSITY * 0.2,
     densityAt(ROCK_FREE_RISE + 0.02).toFixed(0));
+check("density is full up the beach", densityAt(FULL_RISE + 0.5) === PEAK_DENSITY);
 
 {
     // Measured off the field, not off `densityAt` — a ramp the sampler ignored
     // would pass the calls above and still carpet the beach. Bands by height
-    // above the water; the count must FALL as you climb (shingle hugs the water).
+    // above the water; the count must RISE as you climb (waves clear the edge,
+    // shingle piles up the beach).
     const BANDS = 4;
+    const top = FULL_RISE * 2; // the synthetic beach climbs past FULL_RISE
     const counts = new Array(BANDS).fill(0);
     for (const s of field) {
         const above = heightAt(s.x, s.z) - waterLevel;
-        const t = (above - ROCK_FREE_RISE) / (BEACH_TOP_RISE - ROCK_FREE_RISE);
-        counts[Math.max(0, Math.min(BANDS - 1, Math.floor(t * BANDS)))]++;
+        counts[Math.max(0, Math.min(BANDS - 1, Math.floor((above / top) * BANDS)))]++;
     }
-    // Not strictly per-band: the two near-water bands both saturate at the
-    // geometric jam limit, so they come out roughly equal. The thinning is real
-    // above that — so check the lower half against the upper, and the top band
-    // against the water band.
     const lower = counts[0] + counts[1], upper = counts[2] + counts[3];
-    check("the shingle is heavier near the water than up the beach",
-        lower > upper * 1.5, counts.join(" / "));
-    check("the top band is far sparser than the water band",
-        counts[BANDS - 1] < counts[0] * 0.4, counts.join(" / "));
+    check("the shingle is heavier up the beach than at the water",
+        upper > lower * 1.5, counts.join(" / "));
+    check("the water band is far sparser than the top band",
+        counts[0] < counts[BANDS - 1] * 0.4, counts.join(" / "));
 }
 
 // ---- stones sit IN the sand, not on it -------------------------------------
