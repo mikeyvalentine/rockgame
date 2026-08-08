@@ -64,12 +64,20 @@ export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
         .reduce((a, n) => a.addInPlace(n.getAbsolutePosition()), new Vector3())
         .scale(1 / (FINGERS.length + 1));
 
+    // Reference for adduction: the middle finger's rest direction. Everything
+    // else turns toward parallel with it, so the fingers close their gaps.
+    const palmNormal = palmar.scale(-1);
+    const midC = names(side, "Middle").map(findNode).filter(Boolean);
+    const refDir = midC[3].getAbsolutePosition().subtract(midC[0].getAbsolutePosition());
+    refDir.normalize();
+
     let curled = 0;
     for (const f of FINGERS) {
         const chain = names(side, f).map(findNode).filter(Boolean);
-        if (chain.length === 4) {
-            curled += closeFinger(chain, across, TARGET, centre, world, idx, palmPoint);
-        }
+        if (chain.length !== 4) continue;
+        if (f !== "Middle") adductToward(chain[0], chain[3], refDir, palmNormal, 0.7);
+        refresh(chain);
+        curled += closeFinger(chain, across, TARGET, centre, world, idx, palmPoint);
     }
 
     // The thumb OPPOSES rather than curls on a finger hinge: its own axis swings
@@ -139,19 +147,17 @@ function refresh(chain) {
 }
 
 /**
- * Swing a finger's base joint sideways about the palm normal `n` — the natural
- * abduction/adduction "wiggle" DOF — by `frac` of the angle that would aim the
- * fingertip straight at the rock. Makes the fingers converge on the stone
- * instead of curling in stiff parallel planes.
+ * Adduct a finger's base joint about the palm normal `n` so its direction turns
+ * toward `refDir` (the middle finger) by `frac` — the natural "wiggle" DOF, used
+ * here to CLOSE THE GAPS: real fingers converge as they grip rather than staying
+ * fanned. Bounded (aims at parallel, not at a far point), so it can't over-swing.
  */
-function aimLateral(mcp, tip, rockC, n, frac) {
+function adductToward(mcp, tip, refDir, n, frac) {
     mcp.computeWorldMatrix(true);
     tip.computeWorldMatrix(true);
-    const m = mcp.getAbsolutePosition();
-    const a = tip.getAbsolutePosition().subtract(m);
-    const b = rockC.subtract(m);
-    if (a.lengthSquared() < 1e-10 || b.lengthSquared() < 1e-10) return;
-    const ang = Math.atan2(Vector3.Dot(Vector3.Cross(a, b), n), Vector3.Dot(a, b));
+    const a = tip.getAbsolutePosition().subtract(mcp.getAbsolutePosition());
+    if (a.lengthSquared() < 1e-10) return;
+    const ang = Math.atan2(Vector3.Dot(Vector3.Cross(a, refDir), n), Vector3.Dot(a, refDir));
     mcp.rotate(n, ang * frac, Space.WORLD);
     mcp.computeWorldMatrix(true);
 }

@@ -161,11 +161,14 @@ async function main() {
         .map((n) => findNode(SIDE + "Hand" + n).getAbsolutePosition());
     const knuckleCentre = mcps.reduce((a, p) => a.addInPlace(p), new Vector3())
         .scale(1 / mcps.length);
+    // Seat in the thumb–index WEB — the natural crook between the thumb and the
+    // index — not out among the middle fingers. Bigger stones slide a little
+    // toward the palm centre for support.
     const idx1p = findNode(SIDE + "HandIndex1").getAbsolutePosition();
-    const idx2p = findNode(SIDE + "HandIndex2").getAbsolutePosition();
-    const front = Vector3.Lerp(idx1p, idx2p, 0.5);       // mid proximal phalanx of the index
+    const thumb2 = findNode(SIDE + "HandThumb2").getAbsolutePosition();
+    const web = Vector3.Lerp(idx1p, thumb2, 0.5);
     const sizeF = Math.min(1, Math.max(0, (rockSize - 0.05) / 0.08)); // 0 @5cm → 1 @13cm
-    const seat = Vector3.Lerp(front, knuckleCentre, sizeF);
+    const seat = Vector3.Lerp(web, knuckleCentre, sizeF * 0.4);
     const palm = seat.add(palmNormal.scale(-(rockR * 0.5)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
