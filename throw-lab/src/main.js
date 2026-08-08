@@ -33,6 +33,7 @@ import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
 import { buildRock } from "./rock.js";
 import { gripRock } from "./grip.js";
+import { setupPivots } from "./pivot.js";
 
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
@@ -287,6 +288,9 @@ async function main() {
     const reframe = () => cams.forEach((c) => c.fit());
     reframe();
     window.addEventListener("resize", () => { engine.resize(); reframe(); });
+
+    // --- per-joint pivot handles (the aim-pose editor) ----------------------
+    setupPivots({ scene, canvas, cams, findNode, side: SIDE });
 
     engine.runRenderLoop(() => scene.render());
 
