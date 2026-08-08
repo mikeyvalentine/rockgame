@@ -37,8 +37,25 @@ import { gripRock } from "./grip.js";
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
 
-/** Which arm we pose. The left is collapsed until we need two hands. */
-const SIDE = "Right";
+/**
+ * Which arm we pose (the other is collapsed until we support two hands).
+ * `?side=Right|Left` overrides. NOTE: swapping arms does NOT change these
+ * orthographic views — the two arms are mirror images across X and the side
+ * camera looks along X, so it flattens the very axis they differ on. Which
+ * FACE we see (inside vs outside) is set by the camera direction (FLIP), not
+ * by the arm. A left/right player-hand choice comes later.
+ */
+let SIDE = "Right";
+
+/**
+ * Show the arm's OUTSIDE face (back of the hand) while keeping it pointing the
+ * same way on screen. A camera alone can't do that — seeing the far face either
+ * points the arm the other way or turns it upside down (it's a reflection, an
+ * improper rotation). So we mirror the whole rig across X. Cost: the hand
+ * geometry is mirrored (a right hand reads as left-shaped); the real left/right
+ * player-hand choice comes later. `?mirror=0` disables.
+ */
+let MIRROR = true;
 
 /** Set once in main(), so findNode() can scan without threading scene around. */
 let _scene = null;
@@ -84,21 +101,27 @@ async function main() {
     }
     container.addAllToScene();
 
+    const q = new URLSearchParams(location.search);
+    if (q.get("side") === "Right" || q.get("side") === "Left") SIDE = q.get("side");
+    if (q.get("mirror") === "0") MIRROR = false;
+    console.log(`[throw-lab] SIDE=${SIDE} MIRROR=${MIRROR}`);
+
     // Force the world matrices so bone/node positions are real before framing.
     scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
     for (const m of scene.meshes) m.computeWorldMatrix(true);
 
-    // --- collapse the left arm ----------------------------------------------
-    // One skinned mesh covers both arms, so "hide the left" means collapsing the
-    // left shoulder bone: every left-side vertex is weighted to it and its
-    // children, so scaling it to ~zero folds the whole left arm into a point.
+    // --- collapse the OTHER arm ---------------------------------------------
+    // One skinned mesh covers both arms, so "hide" the arm we don't pose by
+    // collapsing its shoulder bone: every vertex on that side is weighted to it
+    // and its children, so scaling it to ~zero folds that whole arm into a point.
     // Not exactly zero — a singular bone matrix can NaN the skin.
-    const leftShoulder = findNode("LeftShoulder");
-    if (leftShoulder) {
-        leftShoulder.scaling.set(1e-3, 1e-3, 1e-3);
-        leftShoulder.computeWorldMatrix(true);
+    const otherSide = SIDE === "Right" ? "Left" : "Right";
+    const otherShoulder = findNode(otherSide + "Shoulder");
+    if (otherShoulder) {
+        otherShoulder.scaling.set(1e-3, 1e-3, 1e-3);
+        otherShoulder.computeWorldMatrix(true);
     } else {
-        console.warn("[throw-lab] LeftShoulder node not found — left arm not hidden");
+        console.warn(`[throw-lab] ${otherSide}Shoulder node not found — other arm not hidden`);
     }
 
     // --- resting pose: upper arm down, forearm forward (90° at the elbow) ----
@@ -124,7 +147,6 @@ async function main() {
     // will settle the fingers to it next.
     // `?rock=basalt&seed=3&size=0.08` swaps the stone — the grip re-fits to
     // whatever surface it gets, which is the whole point of doing it procedurally.
-    const q = new URLSearchParams(location.search);
     const rockSize = Number.parseFloat(q.get("size")) || 0.10;
     const rock = buildRock(scene, {
         name: q.get("rock") || "granite",
@@ -209,6 +231,27 @@ async function main() {
         scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
     }
 
+    // --- mirror the rig for the OUTSIDE view --------------------------------
+    // Done AFTER posing + grip (which depend on the rig's own handedness) so
+    // only the DISPLAY mirrors. Scale the rig root by -1 on X: the far/outside
+    // face now points at the cameras while the arm still points the same way.
+    if (MIRROR) {
+        let root = findNode(SIDE + "Shoulder");
+        while (root && root.parent) root = root.parent;
+        if (root) {
+            root.scaling.x *= -1;
+            // A reflection flips triangle winding, so front faces would be
+            // culled and the arm would render inside-out — draw both sides.
+            for (const m of scene.meshes) if (m.material) m.material.backFaceCulling = false;
+        } else {
+            console.warn("[throw-lab] mirror: rig root not found");
+        }
+        for (let pass = 0; pass < 2; pass++) {
+            scene.transformNodes.forEach((n) => n.computeWorldMatrix(true));
+            for (const m of scene.meshes) m.computeWorldMatrix(true);
+        }
+    }
+
     // --- frame from the right-arm bones -------------------------------------
     // The arm's real extent, not a guessed box: union the world positions of the
     // right-side joints from shoulder to fingertip.
@@ -224,9 +267,11 @@ async function main() {
         "Hand", "HandThumb1", "HandThumb4", "HandIndex4",
         "HandMiddle1", "HandMiddle4", "HandRing4", "HandPinky4",
     ]);
-    // Keep the rock in frame in both the wrist and the whole-arm panels.
-    wristPts.push(palm.clone());
-    armPts.push(palm.clone());
+    // Keep the rock in frame in both the wrist and the whole-arm panels. Read
+    // the rock's LIVE position (the pre-mirror `palm` would be on the wrong side).
+    const rockPos = rock.mesh.getAbsolutePosition().clone();
+    wristPts.push(rockPos);
+    armPts.push(rockPos.clone());
 
     // --- four orthographic cameras, 2x2 -------------------------------------
     // side = profile (look -X): screen right = +Z forward, up = +Y loft.
