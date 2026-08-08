@@ -215,6 +215,11 @@ export async function run(canvas) {
         // rebuild.
         density: rockDensityFromURL() ?? S.rockDensity,
         lod: numberFromURL("lod"),
+        // The rock field is bounded by the sandy clearing worldEnv inferred
+        // from the glb (near the spawn, water→treeline), densest by the terrain
+        // height above the waterline.
+        clearing: worldEnv?.clearing,
+        waterLevel: WATER_LEVEL_Y,
     });
     console.log(
         `[sand-sim] ${rocks.stones} stones across the shore ` +

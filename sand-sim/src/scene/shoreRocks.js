@@ -67,9 +67,6 @@ import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.j
 import { createBedArchetypes, castSequence } from "./siftingBeds.js";
 import { createBedMaterials } from "./rockMaterials.js";
 import { scatterShore } from "../../../shared/shoreScatter.js";
-import {
-    SHORE_HALF_ARC, SHORE_WIDTH, SHORE_DEPTH, shorePoint,
-} from "../../../shared/worldBounds.js";
 
 /**
  * Icosphere levels for the three rings: near, mid, far.
@@ -150,6 +147,12 @@ function writeMatrix(s, out, offset) {
  * @param opts     `seed`, `density`, `renderingGroupId`, `forgeMaterial`
  */
 export async function buildShoreRocks(scene, terrain, opts = {}) {
+    // No clearing (no glb / `?env=0`) means no beach to spread on — the field
+    // is inferred entirely from the glb now, so there is nothing to build.
+    if (!opts.clearing) {
+        console.warn("[sand-sim] no clearing — shore rocks skipped");
+        return emptyRocks();
+    }
     const { byFamily, photo, notes } = await createBedMaterials(scene, {
         forge: opts.forgeMaterial !== false,
     });
@@ -168,23 +171,32 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     );
     const archCount = nearArch.length;
 
+    // The clearing (worldEnv) bounds the field: rocks only on reachable sand
+    // around the spawn, densest near the water, none in the water or trees.
+    const clearing = opts.clearing;
     const field = scatterShore({
         seed: opts.seed,
         density: opts.density,
         cast: castSequence(opts),
         heightAt: (x, z) => terrain.heightAt(x, z),
+        waterLevel: opts.waterLevel ?? 0,
+        clearing,
     });
 
-    // Tiled in (arc, depth), like the scatter itself. Tiling in x/z would cut
-    // the curved strip into wedges of wildly different population.
-    const cols = Math.ceil(SHORE_WIDTH / TILE);
-    const rows = Math.ceil(SHORE_DEPTH / TILE);
+    // Tiled in world x/z over the clearing's bounding box (the field is a real
+    // patch of sand now, not a curved strip). One tile is either wholly in a
+    // ring or wholly out, so tiling is only for culling granularity.
+    const originX = clearing.origin.x;
+    const originZ = clearing.origin.z;
+    const span = clearing.res * clearing.cell;
+    const cols = Math.ceil(span / TILE);
+    const rows = Math.ceil(span / TILE);
 
     /** tile -> archetype -> stones. Kept, because the near set re-reads it. */
     const byTile = new Map();
     for (const s of field) {
-        const c = Math.min(cols - 1, Math.floor((s.arc + SHORE_HALF_ARC) / TILE));
-        const r = Math.min(rows - 1, Math.floor(s.depth / TILE));
+        const c = Math.min(cols - 1, Math.max(0, Math.floor((s.x - originX) / TILE)));
+        const r = Math.min(rows - 1, Math.max(0, Math.floor((s.z - originZ) / TILE)));
         const tile = r * cols + c;
         let arches = byTile.get(tile);
         if (!arches) byTile.set(tile, (arches = new Map()));
@@ -266,15 +278,15 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         nearMeshes.push(m);
     }
 
-    // Tile centres in WORLD space. Mapped through `shorePoint` because a tile's
-    // middle in (arc, depth) is not its middle in x/z once the shore bends.
+    // Tile centres in world x/z — the tiling is a plain x/z grid now.
     const tileCenters = new Map();
     for (const tile of byTile.keys()) {
         const c = tile % cols;
         const r = (tile - c) / cols;
-        tileCenters.set(tile, shorePoint(
-            -SHORE_HALF_ARC + (c + 0.5) * TILE, (r + 0.5) * TILE
-        ));
+        tileCenters.set(tile, {
+            x: originX + (c + 0.5) * TILE,
+            z: originZ + (r + 0.5) * TILE,
+        });
     }
 
     /** Tiles whose MID meshes are suppressed because the near set covers them. */
@@ -397,4 +409,12 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     }
 
     return built;
+}
+
+/** The no-op field, returned when there is no clearing to spread on. */
+function emptyRocks() {
+    return {
+        stones: 0, farStones: 0, meshes: 0, tiles: 0, nearCap: 0,
+        update() {}, setEnabled() {}, dispose() {},
+    };
 }
