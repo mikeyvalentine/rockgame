@@ -1,0 +1,27 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0b0d; }
+#view { width: 100vw; height: 100vh; display: block; outline: none; touch-action: none; }
+
+#controls {
+  position: fixed; top: 16px; left: 16px; width: 240px;
+  padding: 14px 16px 16px; border-radius: 10px;
+  background: rgba(18, 20, 24, 0.82); backdrop-filter: blur(6px);
+  color: #cdd3da; font: 13px/1.4 system-ui, sans-serif;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+#controls h1 {
+  margin: 0 0 12px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase; color: #8a929c;
+}
+.row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.row > span { width: 44px; color: #9aa2ac; flex: none; }
+.row input[type="range"] { flex: 1; accent-color: #d8a07a; }
+.row input[type="color"] { width: 34px; height: 22px; border: none; background: none; padding: 0; }
+.row input[type="checkbox"] { accent-color: #d8a07a; }
+#ageOut { width: 48px; text-align: right; color: #cdd3da; flex: none; font-variant-numeric: tabular-nums; }
+
+#err {
+  position: fixed; left: 16px; bottom: 16px; max-width: 60ch;
+  padding: 10px 12px; border-radius: 8px; background: #3a1113; color: #ffd9d9;
+  font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap;
+}

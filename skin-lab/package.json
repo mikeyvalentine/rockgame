@@ -1,0 +1,20 @@
+{
+  "name": "skin-lab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Skin customization lab — triplanar human-skin material on the arm rig, with a natural skin-tone + free colour control and an age slider (pores, AO, roughness, macro wrinkles).",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@babylonjs/core": "9.18.0",
+    "@babylonjs/loaders": "9.18.0"
+  },
+  "devDependencies": {
+    "vite": "^8.2.0"
+  }
+}
