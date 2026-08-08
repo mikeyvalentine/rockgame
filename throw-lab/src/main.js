@@ -169,6 +169,12 @@ async function main() {
     const palm = seat.add(palmNormal.scale(-(rockR * 0.5)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
+    // Held on edge, not flat in the palm: tilt the stone ~55° about the
+    // across-the-hand axis so a flat skipping face stands roughly perpendicular.
+    const tiltAxis = mcps[0].subtract(mcps[3]);
+    tiltAxis.normalize();
+    rock.mesh.rotate(tiltAxis, 55 * Math.PI / 180, Space.WORLD);
+    rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose
 
     // --- procedural grip: curl the fingers onto the rock --------------------
