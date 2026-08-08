@@ -109,22 +109,25 @@ export const MID_DISTANCE = 10;
 /**
  * Metres past which a tile is switched off entirely.
  *
- * Frustum culling drops the tiles behind you; this drops the ones in front and
- * far away, which on a 70 m beach is most of them. It is not a fade — a tile
- * of 6 cm pebbles at 45 m is a few pixels of noise, and popping is only visible
- * when there is something to see popping.
+ * Sized to cover the whole spawn clearing (worldEnv REACH_RADIUS 35 m, so ~70 m
+ * across) with margin, so no tile inside the beach the player walks ever
+ * switches off — a stone only ever changes DETAIL level with distance, it never
+ * appears or disappears. On the old 70 m open strip this was 40 m and tiles
+ * popped off as you walked; the field is a small local clearing now, so drawing
+ * all of it is affordable and worth the stability.
  */
-export const DRAW_DISTANCE = 40;
+export const DRAW_DISTANCE = 85;
 
 /**
  * One stone in this many survives into the far ring.
  *
- * The honest name for this is "we stop drawing most of the beach". It is
- * legitimate because at twenty metres a 6 cm pebble is under two pixels and the
- * field reads as texture rather than as stones — but it IS a lie about how many
- * rocks there are, so it is stated here and logged at build rather than buried.
+ * 1 — every stone is kept, because dropping 3 of 4 beyond MID_DISTANCE is
+ * exactly the "rocks pop in and out while walking" artifact: a tile crossing
+ * that boundary lost three quarters of its stones in one step. The far ring
+ * still cheapens them (level 0, 20 triangles), it just no longer deletes them.
+ * Affordable now the field is a local clearing rather than the whole shore.
  */
-export const FAR_STRIDE = 4;
+export const FAR_STRIDE = 1;
 
 const _rot = new Quaternion();
 const _pos = new Vector3();
