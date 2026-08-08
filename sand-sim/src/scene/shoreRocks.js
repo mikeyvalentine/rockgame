@@ -111,14 +111,18 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
     // The clearing (worldEnv) bounds the field: rocks only on reachable sand
     // around the spawn, densest near the water, none in the water or trees.
     const clearing = opts.clearing;
+    const cast = castSequence(opts);
     const field = scatterShore({
         seed: opts.seed,
         density: opts.density,
-        cast: castSequence(opts),
+        cast,
         heightAt: (x, z) => terrain.heightAt(x, z),
         waterLevel: opts.waterLevel ?? 0,
         clearing,
     });
+
+    /** Lazy: the high-LOD archetype set the inspect view holds up close. */
+    let examineArch = null;
 
     // Tiled in world x/z over the clearing's bounding box (the field is a real
     // patch of sand now, not a curved strip). One tile is either wholly in a
@@ -219,6 +223,68 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
             }
         },
 
+        /**
+         * The stone nearest the centre-screen ray, within `reach` metres, or
+         * null. Only the tiles the ray crosses are scanned, so this is cheap
+         * enough to run on a key press without a physics engine.
+         */
+        pickAlongRay(ox, oy, oz, dx, dy, dz, reach) {
+            let best = null;
+            let bestT = reach;
+            const seen = new Set();
+            for (let t = 0; t <= reach; t += TILE * 0.5) {
+                const c0 = Math.floor((ox + dx * t - originX) / TILE);
+                const r0 = Math.floor((oz + dz * t - originZ) / TILE);
+                for (let r = r0 - 1; r <= r0 + 1; r++) {
+                    for (let c = c0 - 1; c <= c0 + 1; c++) {
+                        if (c < 0 || r < 0 || c >= cols || r >= rows) continue;
+                        const tile = r * cols + c;
+                        if (seen.has(tile)) continue;
+                        seen.add(tile);
+                        const arches = byTile.get(tile);
+                        if (!arches) continue;
+                        for (const [archetype, list] of arches) {
+                            for (const s of list) {
+                                // Closest approach of the ray to the centre.
+                                const px = s.x - ox, py = s.y - oy, pz = s.z - oz;
+                                const along = px * dx + py * dy + pz * dz;
+                                if (along < 0.25 || along > bestT) continue;
+                                const qx = px - dx * along;
+                                const qy = py - dy * along;
+                                const qz = pz - dz * along;
+                                // A forgiving hit radius: a 6 cm pebble is a
+                                // small target from standing height.
+                                const hit = Math.max(s.radius * 1.35, 0.05);
+                                if (qx * qx + qy * qy + qz * qz > hit * hit) continue;
+                                best = { stone: s, archetype };
+                                bestT = along;
+                            }
+                        }
+                    }
+                }
+            }
+            return best;
+        },
+
+        /**
+         * The archetype at inspect fidelity (level 3, 1280 tris — the bed
+         * crouch's own LOD). Built lazily, once, on the first inspect.
+         */
+        examineData(archetype) {
+            if (!examineArch) {
+                examineArch = createBedArchetypes(
+                    scene, { ...opts, lod: 3 }, byFamily, photo
+                );
+                for (const a of examineArch) a.mesh?.setEnabled(false);
+            }
+            const a = examineArch[archetype];
+            return {
+                vertexData: a.vertexData, material: a.material,
+                family: a.family, name: a.name, sizeMetres: a.sizeMetres,
+                shape: cast[archetype]?.shape,
+            };
+        },
+
         setEnabled(on) {
             for (const list of midMeshes.values()) for (const m of list) m.setEnabled(on);
             carpet.setEnabled(on);
@@ -227,6 +293,7 @@ export async function buildShoreRocks(scene, terrain, opts = {}) {
         dispose() {
             for (const list of midMeshes.values()) for (const m of list) m.dispose();
             carpet.dispose();
+            if (examineArch) for (const a of examineArch) a.mesh?.dispose();
         },
     };
 

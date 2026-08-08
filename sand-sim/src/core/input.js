@@ -19,6 +19,7 @@ export const input = {
     lookY: 0,
 
     sprint: false, // shift
+    crouch: false, // ctrl or C, held
     dig: false,    // LMB held while locked — the dig tool reads this
 
     locked: false,
@@ -157,6 +158,7 @@ export function pollInput() {
     input.moveZ = z;
     input.moving = len > 0.001;
     input.sprint = !!(keys.ShiftLeft || keys.ShiftRight);
+    input.crouch = !!(keys.ControlLeft || keys.ControlRight || keys.KeyC);
 }
 
 /** Clear per-frame accumulators. Called at the very end of the frame. */

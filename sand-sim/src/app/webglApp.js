@@ -52,6 +52,8 @@ import {
 import { buildWater } from "../scene/water.js";
 import { buildShoreRocks } from "../scene/shoreRocks.js";
 import { buildWorldEnv } from "../scene/worldEnv.js";
+import { createInspect } from "../scene/inspect.js";
+import { expDamp } from "../core/camera.js";
 import { Crouch, spotAt } from "../scene/crouch.js";
 import { createCrouchPrompt } from "../scene/crouchPrompt.js";
 import { createSiftInteraction } from "../scene/siftInteraction.js";
@@ -287,6 +289,22 @@ export async function run(canvas) {
     if (deform) overlay.attach({ deform });
     initInput(canvas, { onToggleOverlay: () => overlay.toggle() });
 
+    // ---------------------------------------------------------------- inspect
+    // E (or a click) pulls the stone under the centre of the screen up to the
+    // camera; the mouse turns it over; E / Escape / click puts it back. Rated
+    // with the shared rockRating scoring — see scene/inspect.js.
+    const inspect = rocks.pickAlongRay
+        ? createInspect({ scene, rig, rocks })
+        : null;
+    window.addEventListener("keydown", (e) => {
+        if (!inspect || e.repeat) return;
+        if (e.code === "KeyE" && input.locked) inspect.toggle();
+    });
+
+    // Eye heights for the ctrl/C crouch. Feel numbers, damped in the loop.
+    const STAND_EYE = 1.62;
+    const CROUCH_EYE = 0.92;
+
     // ------------------------------------------------------------------ post
     // The stock pipeline stands in for the custom WGSL chain: ACES + grain.
     await loading.phase("post", 0.8);
@@ -397,8 +415,15 @@ export async function run(canvas) {
         // still only stepping because something is disturbing it; while sifting
         // that something is the bed rather than the boots.
         const knelt = crouch ? crouch.update(dt) : false;
+        // Inspecting freezes the walker and the view; the mouse turns the
+        // stone instead (see scene/inspect.js).
+        const inspecting = inspect ? inspect.update() : false;
+        // The ctrl/C crouch: sink the eye while held, stand back up after.
+        rig.eyeHeight = expDamp(
+            rig.eyeHeight, input.crouch ? CROUCH_EYE : STAND_EYE, 14, dt
+        );
         if (!knelt) {
-            character.update(dt, rig);
+            if (!inspecting) character.update(dt, rig);
             // Walk bound, inferred from the glb: the player is confined to the
             // sandy clearing worldEnv flood-filled from the spawn (bounded by
             // water, the treeline and a radius). A step that leaves it is
@@ -453,7 +478,7 @@ export async function run(canvas) {
     globalThis.SANDSIM = {
         renderer: "webgl2",
         engine, scene, rig, character, overlay, sky, water, ground, worldEnv,
-        deform, contact, scribble, rocks, beds, physics, crouch, sift, imprints,
+        deform, contact, scribble, rocks, inspect, beds, physics, crouch, sift, imprints,
         S, input, perfStats: stats,
     };
 }

@@ -110,7 +110,11 @@ export class CharacterController {
     }
 
     _walkStep(h) {
-        const maxSpeed = input.sprint ? RUN_SPEED : WALK_SPEED;
+        // Crouched movement is a careful shuffle — half pace, and it beats
+        // sprint (you cannot sprint while crouching).
+        const maxSpeed = input.crouch
+            ? WALK_SPEED * 0.5
+            : (input.sprint ? RUN_SPEED : WALK_SPEED);
 
         _wish.set(
             _fwd.x * input.moveZ + _right.x * input.moveX,
