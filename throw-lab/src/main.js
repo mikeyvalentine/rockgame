@@ -34,6 +34,7 @@ import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 import { buildRock } from "./rock.js";
 import { gripRock } from "./grip.js";
 import { setupPivots } from "./pivot.js";
+import { setupSwing } from "./swing.js";
 
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
@@ -320,6 +321,9 @@ async function main() {
 
     // --- per-joint pivot handles (the aim-pose editor) ----------------------
     setupPivots({ scene, canvas, cams, findNode, side: SIDE });
+
+    // --- swing gesture: wind-up arc + knob in the arm·side panel ------------
+    setupSwing({ scene, engine, canvas, cam: cams[0].cam, findNode, side: SIDE });
 
     engine.runRenderLoop(() => scene.render());
 
