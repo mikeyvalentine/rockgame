@@ -399,15 +399,17 @@ export async function run(canvas) {
         const knelt = crouch ? crouch.update(dt) : false;
         if (!knelt) {
             character.update(dt, rig);
-            // Keep out of the deep pond (glb-inferred, replaces the arc clamp).
-            if (terrain.heightAt(character.position.x, character.position.z)
-                < WATER_LEVEL_Y - WADE) {
-                character.position.x = lastWalkX;
-                character.position.z = lastWalkZ;
-            } else {
-                lastWalkX = character.position.x;
-                lastWalkZ = character.position.z;
-            }
+            // Walk bound, inferred from the glb: the player is confined to the
+            // sandy clearing worldEnv flood-filled from the spawn (bounded by
+            // water, the treeline and a radius). A step that leaves it is
+            // rejected back to the last good spot, sliding along the edge. With
+            // no clearing (no glb) fall back to just the deep-water bound.
+            const px = character.position.x, pz = character.position.z;
+            const ok = worldEnv?.clearing
+                ? worldEnv.clearing.contains(px, pz)
+                : terrain.heightAt(px, pz) >= WATER_LEVEL_Y - WADE;
+            if (ok) { lastWalkX = px; lastWalkZ = pz; }
+            else { character.position.x = lastWalkX; character.position.z = lastWalkZ; }
             if (contact) contact.update(dt);
         }
 

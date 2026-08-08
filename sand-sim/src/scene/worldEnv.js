@@ -44,7 +44,7 @@ import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
 import { POND_CENTER_X, POND_CENTER_Z } from "../../../shared/worldBounds.js";
-import { shoreProfileJS } from "../terrain/beachParams.js";
+import { shoreProfileJS, WATER_LEVEL_Y } from "../terrain/beachParams.js";
 import { bakeHeightGrid, makeHeightSampler } from "../../../shared/glbHeightfield.js";
 import { S, onChange } from "../core/settings.js";
 import { ENV_URL, ENV_OFFSET, DRACO_FILES } from "./worldEnvParams.js";
@@ -57,6 +57,25 @@ import { ENV_URL, ENV_OFFSET, DRACO_FILES } from "./worldEnvParams.js";
  */
 const TERRAIN_GRID_SIZE = 300;
 const TERRAIN_GRID_RES = 512;
+
+/**
+ * How close to a prop counts as "in the treeline", metres. The player is walled
+ * out within this of any trunk/boulder, and rocks are kept this clear of them,
+ * so the dense ring reads as a solid edge to the sandy clearing.
+ */
+const TREE_CLEAR = 1.4;
+
+/**
+ * The sandy clearing the player is confined to and rocks spread on: sand that
+ * is reachable on foot from the spawn without crossing water or the treeline,
+ * capped at this radius so it stays "the spawn beach" rather than running off
+ * along the shore. Flood-filled, so a gap between two trees does not leak the
+ * player into the forest — the wall is the connected edge, not each trunk.
+ */
+const REACH_RADIUS = 35;
+const REACH_CELL = 0.5;
+/** Sand starts this far below the waterline (a little wade), metres. */
+const REACH_WADE = 0.5;
 
 let registered = false;
 
@@ -184,6 +203,11 @@ export async function buildWorldEnv(scene, opts = {}) {
 
     const group = opts.renderingGroupId ?? 0;
     let instances = 0;
+    // Every instanced prop's world (x,z) — the ring of trees/boulders/shrubs.
+    // Collected here so the game can wall the player out of the treeline and
+    // keep rocks on the open sand, both inferred from the glb rather than a
+    // hardcoded shape.
+    const propXZ = [];
     for (const mesh of container.meshes) {
         mesh.renderingGroupId = group;
         mesh.isPickable = false;
@@ -196,12 +220,23 @@ export async function buildWorldEnv(scene, opts = {}) {
         // swaying trees eventually — just not shaded with.
         mesh.useVertexColors = false;
         if (mesh.thinInstanceCount > 0) {
-            groundInstances(mesh, groundHeightAt);
+            groundInstances(mesh, groundHeightAt, propXZ);
             instances += mesh.thinInstanceCount;
         } else {
             instances += 1;
         }
     }
+
+    // Spatial hash of the prop ring, for O(1) "is (x,z) up against the trees?"
+    // queries. Cell = clearance radius, so a query only looks at 3x3 cells.
+    const treeHash = buildPropHash(propXZ, TREE_CLEAR);
+    const blockedByTree = (x, z) => propHashHit(treeHash, propXZ, x, z);
+
+    // The reachable sandy clearing (flood-filled from the spawn). Needs the
+    // spawn + the ground + the tree wall, all of which exist by here.
+    const clearing = (spawn && ground)
+        ? buildReachable(spawn, ground.heightAt, blockedByTree)
+        : null;
     // The post-condition the sifting beds earned: a missing augmentation or a
     // silently dropped buffer shows up here as a count, not as an empty world.
     if (instances <= container.meshes.length) {
@@ -225,6 +260,12 @@ export async function buildWorldEnv(scene, opts = {}) {
         // `{ x, z, yaw }` from the export's camera, or null. Where the player
         // spawns and which way they face.
         spawn,
+        // True where (x,z) is within TREE_CLEAR of a prop — the raw treeline.
+        blockedByTree,
+        // The reachable sandy clearing: `{ contains(x,z), grid, origin, cell,
+        // res }`, or null with no spawn/terrain. The walk bound confines the
+        // player to it; the rocks spread across it.
+        clearing,
         setYaw,
         dispose() { container.dispose(); root.dispose(); },
     };
@@ -288,8 +329,9 @@ const SETTLE = 0.04;
  *
  * @param {import("@babylonjs/core/Meshes/mesh").Mesh} mesh
  * @param {(x:number,z:number)=>number} heightAt  the world's ground
+ * @param {number[]} collect  world (x,z) pairs are pushed here per instance
  */
-function groundInstances(mesh, heightAt) {
+function groundInstances(mesh, heightAt, collect) {
     const world = mesh.computeWorldMatrix(true);
     const inv = world.clone().invert();
     const src = mesh.thinInstanceGetWorldMatrices();
@@ -298,6 +340,7 @@ function groundInstances(mesh, heightAt) {
     for (const m of src) {
         m.getTranslationToRef(p);
         Vector3.TransformCoordinatesToRef(p, world, p);
+        collect.push(p.x, p.z);            // world footprint, for the tree wall
         p.y = heightAt(p.x, p.z) - SETTLE;
         Vector3.TransformCoordinatesToRef(p, inv, p);
         m.setTranslation(p);
@@ -307,4 +350,116 @@ function groundInstances(mesh, heightAt) {
     src.forEach((m, i) => m.copyToArray(data, i * 16));
     mesh.thinInstanceSetBuffer("matrix", data, 16, true);
     mesh.thinInstanceRefreshBoundingInfo();
+}
+
+// ------------------------------------------------------------ the clearing
+
+/**
+ * Flood-fill the sandy clearing the player spawns in: cells that are above the
+ * waterline, clear of the treeline, within REACH_RADIUS of the spawn, and
+ * connected to the spawn on foot. The flood is what makes the treeline a hard
+ * edge — a gap between trunks that leads nowhere is not reachable, so it is not
+ * walkable, and rocks do not spill through it either.
+ *
+ * @param {{x:number,z:number}} spawn
+ * @param {(x:number,z:number)=>number} heightAt
+ * @param {(x:number,z:number)=>boolean} blocked  in the treeline
+ */
+function buildReachable(spawn, heightAt, blocked) {
+    const size = (REACH_RADIUS + 3) * 2;
+    const res = Math.ceil(size / REACH_CELL);
+    const origin = { x: spawn.x - size / 2, z: spawn.z - size / 2 };
+    const r2 = REACH_RADIUS * REACH_RADIUS;
+
+    // Candidate sand: in radius, above water, not in the trees.
+    const sand = new Uint8Array(res * res);
+    for (let j = 0; j < res; j++) {
+        for (let i = 0; i < res; i++) {
+            const x = origin.x + (i + 0.5) * REACH_CELL;
+            const z = origin.z + (j + 0.5) * REACH_CELL;
+            const dx = x - spawn.x, dz = z - spawn.z;
+            if (dx * dx + dz * dz > r2) continue;
+            if (heightAt(x, z) < WATER_LEVEL_Y - REACH_WADE) continue;
+            if (blocked(x, z)) continue;
+            sand[j * res + i] = 1;
+        }
+    }
+
+    // BFS from the spawn cell (nearest sand cell if the spawn itself grazes an
+    // edge), 4-connected.
+    const reach = new Uint8Array(res * res);
+    let si = Math.floor((spawn.x - origin.x) / REACH_CELL);
+    let sj = Math.floor((spawn.z - origin.z) / REACH_CELL);
+    if (!sand[sj * res + si]) {
+        let best = -1, bestD = Infinity;
+        for (let j = 0; j < res; j++) for (let i = 0; i < res; i++) {
+            if (!sand[j * res + i]) continue;
+            const d = (i - si) ** 2 + (j - sj) ** 2;
+            if (d < bestD) { bestD = d; best = j * res + i; }
+        }
+        if (best < 0) return { contains: () => false, grid: reach, origin, cell: REACH_CELL, res };
+        si = best % res; sj = (best - si) / res;
+    }
+    const queue = [sj * res + si];
+    reach[sj * res + si] = 1;
+    for (let head = 0; head < queue.length; head++) {
+        const idx = queue[head];
+        const ci = idx % res, cj = (idx - ci) / res;
+        const nb = [idx + 1, idx - 1, idx + res, idx - res];
+        const ok = [ci < res - 1, ci > 0, cj < res - 1, cj > 0];
+        for (let k = 0; k < 4; k++) {
+            if (!ok[k]) continue;
+            const n = nb[k];
+            if (sand[n] && !reach[n]) { reach[n] = 1; queue.push(n); }
+        }
+    }
+
+    return {
+        grid: reach, origin, cell: REACH_CELL, res,
+        contains(x, z) {
+            const i = Math.floor((x - origin.x) / REACH_CELL);
+            const j = Math.floor((z - origin.z) / REACH_CELL);
+            if (i < 0 || j < 0 || i >= res || j >= res) return false;
+            return reach[j * res + i] === 1;
+        },
+    };
+}
+
+// --------------------------------------------------------------- tree wall
+
+/**
+ * Bucket prop (x,z) into a grid keyed by cell, cell size = the clearance
+ * radius. A point's neighbourhood is then just its own cell and the eight
+ * around it, so a hit test never scans more than a handful of props.
+ * @param {number[]} xz  flat [x0,z0, x1,z1, ...] world positions
+ * @param {number} cell  metres per cell (= TREE_CLEAR)
+ */
+function buildPropHash(xz, cell) {
+    const grid = new Map();
+    for (let i = 0; i < xz.length; i += 2) {
+        const key = ((xz[i] / cell) | 0) + "," + ((xz[i + 1] / cell) | 0);
+        let bucket = grid.get(key);
+        if (!bucket) grid.set(key, (bucket = []));
+        bucket.push(i);
+    }
+    return { grid, cell };
+}
+
+/** True if (x,z) is within `cell` (TREE_CLEAR) of any prop in the hash. */
+function propHashHit({ grid, cell }, xz, x, z) {
+    const cx = (x / cell) | 0;
+    const cz = (z / cell) | 0;
+    const r2 = cell * cell;
+    for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let gz = cz - 1; gz <= cz + 1; gz++) {
+            const bucket = grid.get(gx + "," + gz);
+            if (!bucket) continue;
+            for (const i of bucket) {
+                const dx = xz[i] - x;
+                const dz = xz[i + 1] - z;
+                if (dx * dx + dz * dz < r2) return true;
+            }
+        }
+    }
+    return false;
 }
