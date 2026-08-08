@@ -23,9 +23,26 @@ import { Quaternion } from "@babylonjs/core/Maths/math.vector";
 import { Space } from "@babylonjs/core/Maths/math.axis";
 
 const DEG = 180 / Math.PI;
-const NUDGE = 1 * Math.PI / 180;   // ± button step
-const HIT = 26;                    // px pick radius around a joint dot
+const RAD = Math.PI / 180;
+const NUDGE = 1 * RAD;             // ± button step
 const X = new Vector3(1, 0, 0), Y = new Vector3(0, 1, 0);
+
+/**
+ * Anatomical limits per DOF, degrees of CUMULATIVE rotation from the rest pose
+ * (upper arm down, elbow at 90°, hand forward). Signs are in the world-axis
+ * terms the readouts use, verified empirically in the lab:
+ *   X (side views): + swings the limb DOWN/BACK, − swings it UP/FORWARD.
+ *   Y (top views):  + swings it toward the body's midline, − away from it.
+ * The elbow's +90 is exactly "arm hangs straight"; past it would hyperextend.
+ */
+const LIMITS = {
+    "shoulder|X": [-170, 45],   // flexion way up forward ... a little extension back
+    "shoulder|Y": [-90, 90],    // horizontal aim sweep
+    "elbow|X": [-55, 90],       // deeper flex ... straight arm (no hyperextension)
+    "elbow|Y": [-80, 80],       // forearm sweep (really shoulder rotation, kept modest)
+    "wrist|X": [-70, 75],       // extension (knuckles up) ... flexion (palm in)
+    "wrist|Y": [-40, 40],       // radial/ulnar deviation — small by nature
+};
 
 export function setupPivots({ scene, canvas, cams, findNode, side }) {
     const node = {
@@ -153,6 +170,14 @@ export function setupPivots({ scene, canvas, cams, findNode, side }) {
         applyRotation(node[h.joint], h.panel.axis, key(h.joint, h.panel.axisName), delta);
     }
     function applyRotation(j, axis, k, delta) {
+        // Clamp to the DOF's anatomical range: apply only what fits, so the
+        // joint parks exactly at its limit instead of over-rotating.
+        const lim = LIMITS[k];
+        if (lim) {
+            const next = Math.min(lim[1] * RAD, Math.max(lim[0] * RAD, angle[k] + delta));
+            delta = next - angle[k];
+            if (delta === 0) return;
+        }
         j.rotate(axis, delta, Space.WORLD);
         j.computeWorldMatrix(true);
         angle[k] += delta;
@@ -170,6 +195,20 @@ export function setupPivots({ scene, canvas, cams, findNode, side }) {
         const d = Math.round(rad * DEG);
         h.val.textContent = (d > 0 ? "+" : "") + d + "°";
     }
+
+    // Console/automation access: LAB_PIVOT.rotate("elbow","X",40) drives the
+    // same clamped path as a drag; angles() reads the pose back in degrees.
+    globalThis.LAB_PIVOT = {
+        rotate: (joint, axisName, deg) => {
+            const j = node[joint];
+            if (!j || (axisName !== "X" && axisName !== "Y")) return null;
+            applyRotation(j, axisName === "X" ? X : Y, key(joint, axisName), deg * RAD);
+            return angle[key(joint, axisName)] * DEG;
+        },
+        angles: () => Object.fromEntries(
+            Object.entries(angle).map(([k, v]) => [k, +(v * DEG).toFixed(1)])),
+        limits: LIMITS,
+    };
 
     // --- per-frame: keep dots and readouts glued to the joints --------------
     scene.onBeforeRenderObservable.add(() => {
