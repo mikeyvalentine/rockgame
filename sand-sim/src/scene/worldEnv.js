@@ -144,6 +144,17 @@ export async function buildWorldEnv(scene, opts = {}) {
         if (!(mat instanceof PBRMaterial)) continue;
         if (mat.transparencyMode === PBRMaterial.PBRMATERIAL_ALPHATEST) {
             mat.backFaceCulling = false;
+            // The fine-leaf atlases — birch, and the conifers (fir / noble fir
+            // / pine / coniferous shrub all share "BranchMat") — carry leaf
+            // detail near one pixel, and pure alpha TEST on that is a
+            // hard-edged coin flip per frame: the static/noise you see in
+            // those trees as the camera moves. TEST-AND-BLEND keeps the crisp
+            // cutout up close and feathers the minified edges instead of
+            // flipping them. The broad-leaf atlases stay pure alpha-test — no
+            // shimmer there, and the blend pass is not free.
+            if (/birch|branchmat/i.test(mat.name)) {
+                mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATESTANDBLEND;
+            }
         }
     }
 
