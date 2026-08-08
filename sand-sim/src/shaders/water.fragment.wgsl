@@ -40,25 +40,17 @@ uniform terrainOrigin: vec2f;
 uniform terrainSize: f32;
 uniform waterLevelY: f32;
 
-// Scene depth of the opaque geometry BEHIND the water (rocks, shore), so foam
-// and the edge fade against real geometry instead of a flat band drawn over it.
-uniform useSceneDepth: f32;
-uniform sceneDepthFar: f32;
-
 var reflectionTex: texture_2d<f32>;
 var reflectionTexSampler: sampler;
 var terrainHeightTex: texture_2d<f32>;
 var terrainHeightTexSampler: sampler;
-var sceneDepthTex: texture_2d<f32>;
-var sceneDepthTexSampler: sampler;
 
-// The shore band widths, in metres of depth.
+// The shore band widths, in metres of depth. Foam is cut — the depth-buffer
+// foam experiment mis-reconstructed the gap and washed a huge band over the
+// shore, so it stays out until there is a verified depth source to hang it
+// on. The edge is carried by the fade alone.
 const SHALLOW_FADE: f32 = 0.12;  // water fades to nothing over this depth
 const SHALLOW_TINT: f32 = 0.6;   // shallows read lighter within this depth
-const FOAM_BAND: f32 = 0.05;     // foam sits within this depth of the edge
-// Scene-depth (soft-particle) widths, in metres of water in front of geometry.
-const SOFT_EDGE: f32 = 0.35;     // body fades out this near to anything behind
-const FOAM_GAP: f32 = 0.25;      // foam hugs geometry within this gap
 
 varying vWorld: vec3f;
 varying vClip: vec4f;
@@ -134,28 +126,8 @@ fn main(input: FragmentInputs) -> FragmentOutputs {
     // Shallows lift toward a lighter, greener colour before the edge.
     color = mix(vec3f(0.16, 0.30, 0.32), color, smoothstep(0.0, SHALLOW_TINT, depth));
 
-    // How near the surface is to whatever is behind it. With scene depth this
-    // is the true gap to the geometry (a rock's waterline, the shore), so foam
-    // and the fade hug real objects — the flat terrain band drew over rocks at
-    // a grazing angle. Falls back to the terrain-depth band when no depth map.
-    var edge = 1.0;          // 1 = open water, 0 = right against geometry
-    var foam = 0.0;
-    if (uniforms.useSceneDepth > 0.5) {
-        var suv = fragmentInputs.vClip.xy / fragmentInputs.vClip.w * 0.5 + 0.5;
-        suv.y = 1.0 - suv.y;
-        let sceneZ = textureSampleLevel(sceneDepthTex, sceneDepthTexSampler,
-                                        clamp(suv, vec2f(0.0), vec2f(1.0)), 0.0).r
-                     * uniforms.sceneDepthFar;
-        let gap = sceneZ - fragmentInputs.vClip.w; // metres of water before geometry
-        edge = smoothstep(0.0, SOFT_EDGE, gap);
-        foam = 1.0 - smoothstep(0.0, FOAM_GAP, gap);
-    } else if (depth > 0.0) {
-        foam = 1.0 - smoothstep(0.0, FOAM_BAND, depth);
-    }
-    color = mix(color, vec3f(0.92, 0.96, 1.0), foam * 0.8);
-
-    // Body fades softly as it meets geometry (no hard band over rocks); the
-    // foam sits on top of that fade, hugging the intersection.
-    let alpha = max(smoothstep(0.0, SHALLOW_FADE, depth) * edge, foam);
+    // Fade the surface out over the last few centimetres of depth so it ends
+    // on the shore contour with no rim. No foam term — see the note above.
+    let alpha = smoothstep(0.0, SHALLOW_FADE, depth);
     fragmentOutputs.color = vec4f(color, alpha);
 }

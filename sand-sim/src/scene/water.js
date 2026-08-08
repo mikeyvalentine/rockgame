@@ -141,9 +141,8 @@ export function buildWater(scene, opts = {}) {
                 "blurGain", "distortion",
                 "pondCenter", "pondRadius", "foreshoreSlope", "seabedDepth",
                 "useTerrainDepth", "terrainOrigin", "terrainSize", "waterLevelY",
-                "useSceneDepth", "sceneDepthFar",
             ],
-            samplers: ["reflectionTex", "terrainHeightTex", "sceneDepthTex"],
+            samplers: ["reflectionTex", "terrainHeightTex"],
             shaderLanguage: wgpu ? ShaderLanguage.WGSL : ShaderLanguage.GLSL,
         }
     );
@@ -189,14 +188,6 @@ export function buildWater(scene, opts = {}) {
         mat.setVector2("terrainOrigin", new Vector2(0, 0));
         mat.setFloat("terrainSize", 1);
     }
-    // Scene depth is bound later (setSceneDepth) once the app has a depth
-    // renderer; until then a 1x1 stand-in keeps the sampler valid and the
-    // feature off.
-    mat.setTexture("sceneDepthTex",
-        RawTexture.CreateRTexture(new Float32Array([1]), 1, 1, scene, false, false,
-            Constants.TEXTURE_NEAREST_SAMPLINGMODE, Constants.TEXTURETYPE_FLOAT));
-    mat.setFloat("useSceneDepth", 0);
-    mat.setFloat("sceneDepthFar", 1);
     mesh.material = mat;
 
     const windDir = new Vector2();
@@ -219,16 +210,6 @@ export function buildWater(scene, opts = {}) {
         /** Add scenery the water should reflect. Rocks are deliberately excluded. */
         setReflection(meshes) {
             for (const m of meshes) if (m) mirror.renderList.push(m);
-        },
-        /**
-         * Give the water the scene's depth (opaque geometry behind it) so its
-         * foam and edge fade against rocks and the shore instead of drawing a
-         * flat band over them. `far` is the camera's maxZ, for reconstruction.
-         */
-        setSceneDepth(depthTex, far) {
-            mat.setTexture("sceneDepthTex", depthTex);
-            mat.setFloat("sceneDepthFar", far);
-            mat.setFloat("useSceneDepth", 1);
         },
         /** Advance the surface and republish per-frame uniforms. */
         update(dt, camera) {

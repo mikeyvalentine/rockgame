@@ -233,15 +233,10 @@ export async function run(canvas) {
         ...(worldEnv ? worldEnv.root.getChildMeshes() : []),
     ]);
 
-    // Scene depth for the water's soft shore edge: the depth of the opaque
-    // geometry BEHIND the water (shore, rocks, trees), so its foam and edge
-    // fade against real objects instead of a flat band drawn over them. The
-    // water itself is excluded from the depth pass — it is the thing sampling
-    // it — so a static render list of everything else is set once.
-    const depthRenderer = scene.enableDepthRenderer(rig.camera, false, false);
-    const depthMap = depthRenderer.getDepthMap();
-    depthMap.renderList = scene.meshes.filter((m) => m !== water.mesh);
-    water.setSceneDepth(depthMap, rig.camera.maxZ);
+    // (The scene-depth pre-pass that fed the water's foam is gone: it re-drew
+    // the whole scene — trees plus thousands of rock meshes — every frame for a
+    // foam band whose depth reconstruction was wrong anyway. Foam is cut; the
+    // water edge is the terrain-height fade, which needs no second pass.)
 
     // The four sifting beds are unwired, not deleted.
     //
