@@ -39,24 +39,21 @@ import { mulberry32 } from "../rock-forge/src/forge/rng.js";
 export const SCATTER_SEED = 20260806;
 
 /**
- * Stones per square metre at the back of the strip, where the field is densest.
+ * Stones per square metre where the field is densest.
  *
  * A "decide in engine" number in the CLAUDE.md sense — how covered the beach
  * looks is a judgement made by standing on it, and it trades directly against
  * the triangle budget, so it is set by measuring rather than by arithmetic.
  *
- * This is what is ASKED for, per attempt, not what lands — most candidates are
- * rejected against a neighbour, and the harder the field is pushed the more of
- * them are. At 160 the back of the strip settles around 145 stones/m^2, and the
- * field is about 120,000 stones.
- *
- * The ceiling is geometric and it is not far above that. Stones of this size
- * mix jam at roughly 41% of the ground covered, around 170/m^2 — pushing the
- * multiplier past 8 buys single-digit percentages for linearly more work, and
- * past 16 the field gets slightly *worse* as the big stones crowd out the small
- * ones that were filling the gaps.
+ * This is what is ASKED for, per attempt, not what lands — candidates are
+ * rejected against neighbours. 60 matters more than it used to: the density
+ * now holds PEAK over the whole upper clearing (it was a narrow back-of-strip
+ * band before), so at the old 160 the field ballooned to ~350k stones and the
+ * detail ring alone was 7M triangles. 60 lands the field around 130k — still
+ * far more stones than a player could ever inspect, at a budget the floor
+ * machine can draw. (Geometric jam for this stone mix is ~170/m^2.)
  */
-export const PEAK_DENSITY = 160;
+export const PEAK_DENSITY = 60;
 
 /** A hair of clear sand right at the water, metres of HEIGHT above it. */
 export const ROCK_FREE_RISE = 0.03;
