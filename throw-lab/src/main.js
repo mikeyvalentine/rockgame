@@ -125,10 +125,11 @@ async function main() {
     // `?rock=basalt&seed=3&size=0.08` swaps the stone — the grip re-fits to
     // whatever surface it gets, which is the whole point of doing it procedurally.
     const q = new URLSearchParams(location.search);
+    const rockSize = Number.parseFloat(q.get("size")) || 0.10;
     const rock = buildRock(scene, {
         name: q.get("rock") || "granite",
         seed: Number.parseInt(q.get("seed"), 10) || 7,
-        size: Number.parseFloat(q.get("size")) || 0.10,
+        size: rockSize,
     });
     const handNode = findNode(SIDE + "Hand");
     const knuckle = findNode(SIDE + "HandMiddle1");
@@ -152,14 +153,20 @@ async function main() {
     for (let i = 0; i < rp.length; i += 3) {
         rockR = Math.max(rockR, Math.hypot(rp[i], rp[i + 1], rp[i + 2]));
     }
-    // Seat the rock in the FINGERS' closing plane: centre it on the knuckle line
-    // (average of the four finger MCPs), offset onto the palm by ~its radius so
-    // the curling fingers wrap onto its surface rather than closing beside it.
+    // Skipping grip (see reference): the stone is pinched at the FRONT of the
+    // hand between the thumb and the side of the index — not buried in the palm.
+    // Seat it along the index's proximal phalanx; a size factor slides bigger
+    // stones back toward the palm centre for support, as a real hand does.
     const mcps = ["Index1", "Middle1", "Ring1", "Pinky1"]
         .map((n) => findNode(SIDE + "Hand" + n).getAbsolutePosition());
     const knuckleCentre = mcps.reduce((a, p) => a.addInPlace(p), new Vector3())
         .scale(1 / mcps.length);
-    const palm = knuckleCentre.add(palmNormal.scale(-(rockR * 0.85)));
+    const idx1p = findNode(SIDE + "HandIndex1").getAbsolutePosition();
+    const idx2p = findNode(SIDE + "HandIndex2").getAbsolutePosition();
+    const front = Vector3.Lerp(idx1p, idx2p, 0.5);       // mid proximal phalanx of the index
+    const sizeF = Math.min(1, Math.max(0, (rockSize - 0.05) / 0.08)); // 0 @5cm → 1 @13cm
+    const seat = Vector3.Lerp(front, knuckleCentre, sizeF);
+    const palm = seat.add(palmNormal.scale(-(rockR * 0.5)));
     rock.mesh.position.copyFrom(palm);
     rock.mesh.computeWorldMatrix(true);
     rock.mesh.setParent(handNode); // follow the hand; setParent keeps world pose

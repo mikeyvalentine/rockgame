@@ -58,9 +58,20 @@ export function gripRock({ side, findNode, rockMesh, geometry, palmar }) {
         const chain = names(side, f).map(findNode).filter(Boolean);
         if (chain.length === 4) curled += closeFinger(chain, across, TARGET, centre, world, idx);
     }
-    // The thumb opposes: same hinge is a rough fit; refine later.
+    // The thumb OPPOSES rather than curls on the finger hinge: its own axis is
+    // the one that swings its tip toward the rock (cross of the thumb's reach
+    // and the direction to the rock), so its pad presses onto the top of the
+    // stone — the pinch in the reference grip.
     const thumb = names(side, "Thumb").map(findNode).filter(Boolean);
-    if (thumb.length === 4) curled += closeFinger(thumb, across, THUMB_TARGET, centre, world, idx);
+    if (thumb.length === 4) {
+        const tRel = thumb[3].getAbsolutePosition().subtract(thumb[0].getAbsolutePosition());
+        const toRock = centre.subtract(thumb[0].getAbsolutePosition());
+        const thumbAxis = Vector3.Cross(tRel, toRock);
+        if (thumbAxis.lengthSquared() > 1e-8) {
+            thumbAxis.normalize();
+            curled += closeFinger(thumb, thumbAxis, THUMB_TARGET, centre, world, idx);
+        }
+    }
     return curled;
 }
 
