@@ -33,7 +33,8 @@ Fairly realistic 3D, in the vein of Wii-era Nintendo sports games. Possibly a st
 | Skipping physics | WIP |
 | Map / environment | not started |
 | Player navigation | not started |
-| Aiming & throwing | not started |
+| Aiming & throwing | WIP — `throw-lab` (pose editor + swing + grip); see `paused-work-2026-08-08.md` |
+| Character skin / customization | WIP — `skin-lab` (tone/colour + age); see `paused-work-2026-08-08.md` |
 | Scoring | not started |
 | Skip camera | not started |
 | UI | not started |

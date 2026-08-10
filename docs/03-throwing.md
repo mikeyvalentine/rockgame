@@ -1,5 +1,12 @@
 # 03 · Aiming & Throwing
 
+> **Implementation status (2026-08-08):** being built in `throw-lab`. Layer-1 pose
+> = per-joint drag handles with anatomical limits (DIRECT manipulation, not IK —
+> resolves that OPEN); a deterministic wind-up→release swing (Model B, first
+> slice); and a size-banded procedural grip. Not yet joined into a `throwStone()`
+> call, and Layers 2–3 (sweet spot, attack-angle drift) and spin are not started.
+> Full state + where to put your hands: `paused-work-2026-08-08.md`.
+
 **Aiming is the game.** All difficulty lives here. Because of that, the pond stays open and simple.
 
 Reference: the swing system in *Normal Golf Game* (Luke Muscat). Take the multi-axis simultaneity and the drift. **Do not** take the deliberate unresponsiveness — that's comedy-frustration and it fights this game's mood.
