@@ -34,6 +34,7 @@ import { registerBuiltInLoaders } from "@babylonjs/loaders/dynamic";
 import { buildRock } from "./rock.js";
 import { gripRock } from "./grip.js";
 import { setupPivots } from "./pivot.js";
+import { setupSwing } from "./swing.js";
 
 const ARM_URL = "/assets/arms/FpsArmsLow-optimized.glb";
 const DRACO = "/assets/vendor/draco/";
@@ -259,29 +260,45 @@ async function main() {
     // Two point sets to frame on: the whole arm (shoulder→fingertips) and a
     // tight wrist/hand set. Cameras fit to the actual joint positions, so the
     // framing follows whatever pose the arm is in.
-    const armPts = collectPoints([
-        "Shoulder", "Arm", "ForeArm_", "ForearmRoll", "Hand",
-        "HandMiddle1", "HandMiddle4", "HandThumb4", "HandIndex4",
-        "HandRing4", "HandPinky4",
-    ]);
-    const wristPts = collectPoints([
-        "Hand", "HandThumb1", "HandThumb4", "HandIndex4",
-        "HandMiddle1", "HandMiddle4", "HandRing4", "HandPinky4",
-    ]);
-    // Keep the rock in frame in both the wrist and the whole-arm panels. Read
-    // the rock's LIVE position (the pre-mirror `palm` would be on the wrong side).
-    const rockPos = rock.mesh.getAbsolutePosition().clone();
-    wristPts.push(rockPos);
-    armPts.push(rockPos.clone());
+    // The whole-arm panels frame the REACHABLE ENVELOPE — a shoulder-centred
+    // box of radius one full arm length — not the current pose, so pivoting can
+    // never swing the hand out of frame.
+    // Reach = the SUM of the segment lengths (a straightened arm), not the
+    // shoulder→fingertip chord of the bent rest pose, which is shorter.
+    const shoulderP = findNode(SIDE + "Arm").getAbsolutePosition().clone();
+    const segNames = ["Arm", "ForeArm_", "Hand", "HandMiddle4"];
+    let reach = 0;
+    for (let i = 0; i < segNames.length - 1; i++) {
+        reach += Vector3.Distance(
+            findNode(SIDE + segNames[i]).getAbsolutePosition(),
+            findNode(SIDE + segNames[i + 1]).getAbsolutePosition());
+    }
+    reach *= 1.05;
+    const armPts = [];
+    for (const dx of [-reach, reach])
+        for (const dy of [-reach, reach])
+            for (const dz of [-reach, reach])
+                armPts.push(shoulderP.add(new Vector3(dx, dy, dz)));
+    // Wrist close-ups: an envelope centred ON the wrist, radius = the hand's
+    // own reach — so wherever the hand points (it pivots about the wrist), it
+    // stays fully in frame once the camera rides the wrist.
+    const wristP = findNode(SIDE + "Hand").getAbsolutePosition().clone();
+    const handReach = Vector3.Distance(wristP,
+        findNode(SIDE + "HandMiddle4").getAbsolutePosition()) * 1.3;
+    const wristPts = [];
+    for (const dx of [-handReach, handReach])
+        for (const dy of [-handReach, handReach])
+            for (const dz of [-handReach, handReach])
+                wristPts.push(wristP.add(new Vector3(dx, dy, dz)));
 
     // --- four orthographic cameras, 2x2 -------------------------------------
     // side = profile (look -X): screen right = +Z forward, up = +Y loft.
     // top  = overhead (look -Y): screen shows the left/right line + forward.
     const cams = [
-        makeOrthoCam("armSide", scene, canvas, armPts, "side", 1.25, new Viewport(0, 0.5, 0.5, 0.5)),
-        makeOrthoCam("armTop", scene, canvas, armPts, "top", 1.25, new Viewport(0.5, 0.5, 0.5, 0.5)),
-        makeOrthoCam("wristSide", scene, canvas, wristPts, "side", 1.35, new Viewport(0, 0, 0.5, 0.5)),
-        makeOrthoCam("wristTop", scene, canvas, wristPts, "top", 1.35, new Viewport(0.5, 0, 0.5, 0.5)),
+        makeOrthoCam("armSide", scene, canvas, armPts, "side", 1.02, new Viewport(0, 0.5, 0.5, 0.5)),
+        makeOrthoCam("armTop", scene, canvas, armPts, "top", 1.02, new Viewport(0.5, 0.5, 0.5, 0.5)),
+        makeOrthoCam("wristSide", scene, canvas, wristPts, "side", 1.02, new Viewport(0, 0, 0.5, 0.5)),
+        makeOrthoCam("wristTop", scene, canvas, wristPts, "top", 1.02, new Viewport(0.5, 0, 0.5, 0.5)),
     ];
     scene.activeCameras = cams.map((c) => c.cam);
 
@@ -289,8 +306,24 @@ async function main() {
     reframe();
     window.addEventListener("resize", () => { engine.resize(); reframe(); });
 
+    // Pin the wrist close-ups to the wrist joint: keep each camera's original
+    // wrist→centre offset (composition) but ride along as the pose swings, so
+    // the hand never leaves those frames.
+    const wristNode = findNode(SIDE + "Hand");
+    const wristAnchor = wristNode.getAbsolutePosition().clone();
+    const followers = [cams[2], cams[3]].map((c) => ({
+        c, offset: c.centroid.subtract(wristAnchor),
+    }));
+    scene.onBeforeRenderObservable.add(() => {
+        const w = wristNode.getAbsolutePosition();
+        for (const f of followers) f.c.recenter(w.add(f.offset));
+    });
+
     // --- per-joint pivot handles (the aim-pose editor) ----------------------
     setupPivots({ scene, canvas, cams, findNode, side: SIDE });
+
+    // --- swing gesture: wind-up arc + knob in the arm·side panel ------------
+    setupSwing({ scene, engine, canvas, cam: cams[0].cam, findNode, side: SIDE });
 
     engine.runRenderLoop(() => scene.render());
 
@@ -364,7 +397,12 @@ function makeOrthoCam(name, scene, canvas, points, plane, margin, viewport) {
         cam.orthoLeft = -halfW; cam.orthoRight = halfW;
         cam.orthoTop = halfH; cam.orthoBottom = -halfH;
     };
-    return { cam, fit };
+    // Re-aim at a new world point, keeping the ortho size (framing) as fitted.
+    const recenter = (point) => {
+        cam.position = point.add(axis.scale(dist));
+        cam.setTarget(point);
+    };
+    return { cam, fit, recenter, centroid: centroid.clone() };
 }
 
 /**
